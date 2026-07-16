@@ -1,0 +1,13 @@
+.git
+.claude
+.gitignore
+.github
+.workflow
+.laragon
+.idea
+.env
+.editorconfig
+venv/
+Dockerfile
+*.md
+LICENSE

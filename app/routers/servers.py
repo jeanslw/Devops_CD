@@ -1,0 +1,49 @@
+"""服务器管理路由"""
+
+from fastapi import APIRouter, HTTPException, Depends
+from app.database import Database
+from app.auth import get_db, verify_token
+from app.models import ServerRequest
+
+router = APIRouter(prefix="/api/servers", tags=["servers"])
+
+
+@router.get("")
+def list_servers(
+    db: Database = Depends(get_db),
+    username: str = Depends(verify_token),
+):
+    return [
+        dict(r)
+        for r in db.conn().execute("SELECT * FROM servers ORDER BY name").fetchall()
+    ]
+
+
+@router.post("")
+def add_server(
+    req: ServerRequest,
+    db: Database = Depends(get_db),
+    username: str = Depends(verify_token),
+):
+    conn = db.conn()
+    try:
+        conn.execute(
+            "INSERT INTO servers (name,host,port,user,password,type,tags) VALUES (?,?,?,?,?,?,?)",
+            (req.name, req.host, req.port, req.user, req.password, req.type, req.tags),
+        )
+        conn.commit()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/{sid}")
+def delete_server(
+    sid: int,
+    db: Database = Depends(get_db),
+    username: str = Depends(verify_token),
+):
+    conn = db.conn()
+    conn.execute("DELETE FROM servers WHERE id=?", (sid,))
+    conn.commit()
+    return {"success": True}

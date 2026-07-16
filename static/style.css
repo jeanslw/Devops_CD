@@ -1,0 +1,73 @@
+/* CD Service Dashboard — 暗色主题 */
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Segoe UI,Microsoft YaHei,sans-serif;background:#121212;color:#e0e0e0;min-height:100vh}
+
+/* ── 顶栏 ── */
+.topbar{background:#1e1e1e;padding:0 24px;height:48px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #333}
+.topbar h2{font-size:16px;color:#4caf50}
+.topbar a{color:#90caf9;text-decoration:none;font-size:13px;margin-left:16px}
+
+/* ── 侧栏 ── */
+.layout{display:flex;min-height:calc(100vh - 48px)}
+.sidebar{width:200px;background:#1a1a1a;border-right:1px solid #333;padding:12px 0;flex-shrink:0}
+.sidebar .item{display:flex;align-items:center;gap:8px;padding:10px 20px;cursor:pointer;font-size:13px;color:#999;border-left:3px solid transparent;user-select:none}
+.sidebar .item:hover{color:#e0e0e0;background:#222}
+.sidebar .item.active{color:#4caf50;background:#1e2a1e;border-left-color:#4caf50}
+.content{flex:1;padding:20px;overflow-y:auto}
+
+/* ── 卡片 ── */
+.card{background:#1e1e1e;border-radius:8px;padding:18px;margin-bottom:14px;border:1px solid #333}
+.card h3{font-size:14px;color:#4caf50;margin-bottom:12px}
+
+/* ── 表格 ── */
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:6px 8px;border-bottom:2px solid #333;color:#888;font-size:11px;text-transform:uppercase}
+td{padding:6px 8px;border-bottom:1px solid #2a2a2a}
+
+/* ── Badge ── */
+.badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600}
+.badge-jenkins{background:#3e2723;color:#ffcc80}
+.badge-gitlab{background:#1b2a47;color:#90caf9}
+.badge-ok{background:#1b3a1b;color:#81c784}
+.badge-err{background:#3e1a1a;color:#ef9a9a}
+.badge-pend{background:#3e3a1a;color:#ffd54f}
+.badge-running{background:#0d3b66;color:#90caf9}
+.badge-pending{background:#333;color:#888}
+
+/* ── 按钮 ── */
+.btn{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:12px;font-weight:600}
+.btn-green{background:#2e7d32;color:#fff}
+.btn-green:hover{background:#388e3c}
+.btn-blue{background:#1565c0;color:#fff}
+.btn-red{background:#c62828;color:#fff}
+.btn-sm{padding:4px 10px;font-size:11px}
+
+/* ── 表单 ── */
+input,select{width:100%;padding:7px 10px;border-radius:4px;border:1px solid #444;background:#2a2a2a;color:#e0e0e0;font-size:12px;margin-bottom:8px}
+input:focus,select:focus{outline:none;border-color:#4caf50}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+
+/* ── Toast ── */
+.toast{position:fixed;top:60px;right:20px;padding:10px 18px;border-radius:6px;font-size:13px;z-index:99;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast-ok{background:#1b5e20;color:#a5d6a7}
+.toast-err{background:#b71c1c;color:#ef9a9a}
+
+/* ── 登录 ── */
+.login-box{display:flex;justify-content:center;align-items:center;min-height:80vh}
+.login-card{background:#1e1e1e;border-radius:12px;padding:32px;width:360px;text-align:center;border:1px solid #333}
+.login-card h3{color:#4caf50;margin-bottom:4px}
+.login-card p{color:#888;font-size:13px;margin-bottom:16px}
+.login-err{color:#ef9a9a;font-size:12px;margin-top:6px;display:none}
+
+/* ── Panel ── */
+.panel{display:none}
+.panel.show{display:block}
+
+/* ── 部署面板 ── */
+.deploy-layout{display:flex;flex-direction:column;gap:16px}
+
+pre#deploy-out,pre#pipeline-out{margin-top:12px;font-size:13px;color:#00ff00;white-space:pre-wrap;max-height:350px;overflow-y:auto;background:#0a0a0a;padding:12px;border-radius:4px;font-family:'Cascadia Code',Consolas,monospace;line-height:1.5;border:1px solid #333}
+pre#deploy-out::before{content:'$ 部署输出\a';color:#888;font-size:11px}

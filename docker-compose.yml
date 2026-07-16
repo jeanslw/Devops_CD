@@ -1,0 +1,18 @@
+# CD Service — 和 PHP Devops-Glue 搭配使用
+# 共享数据库: sqlite (volume) 或 mysql (network)
+
+services:
+  cd-service:
+    build: .
+    container_name: cd-service
+    env_file:
+      - .env
+    volumes:
+      # SQLite 模式: 共享 PHP 的 data.db
+      - ../php_api/config/data:/php_api/config/data:rw
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    # MySQL 模式: 添加 networks，设置 DB_DRIVER=mysql in .env
+    # networks:
+    #   - devops-net
