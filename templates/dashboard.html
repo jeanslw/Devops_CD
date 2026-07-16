@@ -8,7 +8,6 @@
 </head>
 <body>
 
-<!-- 登录页（全屏遮罩） -->
 <div id="login-page" class="login-box">
   <div class="login-card">
     <h3>🔐 CD 部署登录</h3>
@@ -20,203 +19,112 @@
   </div>
 </div>
 
-<!-- 主界面（登录后显示） -->
 <div id="main-app" style="display:none">
-  <div class="topbar">
-    <h2>🚀 Devops-Glue CD</h2>
-    <div><a href="#" onclick="doLogout()">退出</a></div>
-  </div>
+  <div class="topbar"><h2>🚀 Devops-Glue CD</h2><div><a href="#" onclick="doLogout()">退出</a></div></div>
   <div class="layout">
     <div class="sidebar">
       <div class="item active" data-panel="ci" onclick="showPanel('ci')">📋 CI 系统状态</div>
       <div class="item" data-panel="servers" onclick="showPanel('servers')">🖥️ 服务器管理</div>
-      <div class="item" data-panel="deploy" onclick="showPanel('deploy')">🐳 部署到 Docker</div>
-      <div class="item" data-panel="k8s" onclick="showPanel('k8s')">☸️ 部署到 K8S</div>
+      <div class="item item-parent" onclick="toggleSubmenu(this)">🚀 部署管理 ▾</div>
+      <div class="item item-sub" data-panel="ssh" onclick="showPanel('ssh')" style="display:none;padding-left:30px">🖥️ 部署到单机</div>
+      <div class="item item-sub" data-panel="deploy" onclick="showPanel('deploy')" style="display:none;padding-left:30px">🐳 部署到 Docker</div>
+      <div class="item item-sub" data-panel="k8s" onclick="showPanel('k8s')" style="display:none;padding-left:30px">☸️ 部署到 K8S</div>
       <div class="item" data-panel="logs" onclick="showPanel('logs')">📜 部署记录</div>
       <div class="item" data-panel="shell" onclick="showPanel('shell')">🖥️ Web Shell</div>
       <div class="item" data-panel="bots" onclick="showPanel('bots')">🔔 通知管理</div>
     </div>
     <div class="content">
       <div class="toast" id="toast"></div>
-
       <div id="main-content">
 
-      <!-- CI 系统状态 -->
-      <div class="panel show" id="panel-ci">
-        <div class="card">
-          <h3>📋 CI 系统状态</h3>
-          <table>
-            <thead><tr><th>项目</th><th>CI源</th><th>Harbor仓库</th><th>最新Tag</th><th>Pipeline</th><th>操作</th></tr></thead>
-            <tbody id="ci-tbody"><tr><td colspan="6">加载中…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
+      <!-- CI -->
+      <div class="panel show" id="panel-ci"><div class="card"><h3>📋 CI 系统状态</h3>
+      <table><thead><tr><th>项目</th><th>CI源</th><th>Harbor仓库</th><th>最新Tag</th><th>Pipeline</th><th>操作</th></tr></thead>
+      <tbody id="ci-tbody"><tr><td colspan="6">加载中…</td></tr></tbody></table></div></div>
 
-      <!-- 服务器管理 -->
-      <div class="panel" id="panel-servers">
-        <div class="card">
-          <h3>🖥️ 服务器列表</h3>
-          <div class="grid3" style="margin-bottom:12px">
-            <input id="sv-name" placeholder="名称 (如 prod-web01)">
-            <input id="sv-host" placeholder="IP:端口 (如 192.168.1.10:22)">
-            <input id="sv-user" placeholder="用户 (默认 root)" value="root">
-            <input id="sv-pass" type="password" placeholder="SSH 密码（选填）">
-            <input id="sv-tags" placeholder="标签: prod,web,k8s">
-            <select id="sv-type"><option value="ssh">SSH</option><option value="compose">Compose</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option><option value="k8s">kubectl</option></select>
-          </div>
-          <button class="btn btn-green" onclick="addServer()">＋ 添加</button>
-          <div><label>快速筛选</label><input id="sv-filter" placeholder="输入标签筛选，如 prod" oninput="loadServers()" style="width:auto;display:inline;margin-left:8px"></div>
-          <table style="margin-top:12px">
-            <thead><tr><th>名称</th><th>主机</th><th>类型</th><th>标签</th><th>操作</th></tr></thead>
-            <tbody id="sv-tbody"></tbody>
-          </table>
-        </div>
+      <!-- Servers -->
+      <div class="panel" id="panel-servers"><div class="card"><h3>🖥️ 服务器列表</h3>
+      <div class="grid2" style="margin-bottom:12px">
+        <input id="sv-name" placeholder="名称"><input id="sv-host" placeholder="IP:端口"><input id="sv-user" value="root">
+        <input id="sv-pass" type="password" placeholder="SSH 密码"><input id="sv-tags" placeholder="标签: prod,k8s">
+        <select id="sv-type"><option value="ssh">SSH</option><option value="compose">Compose</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option><option value="k8s">kubectl</option></select>
       </div>
+      <button class="btn btn-green" onclick="addServer()">＋ 添加</button>
+      <div><label>筛选</label><input id="sv-filter" placeholder="标签如 prod" oninput="loadServers()" style="width:auto;display:inline;margin-left:8px"></div>
+      <table style="margin-top:12px"><thead><tr><th>名称</th><th>主机</th><th>类型</th><th>标签</th><th>操作</th></tr></thead><tbody id="sv-tbody"></tbody></table></div></div>
 
-      <!-- 部署 -->
-      <div class="panel" id="panel-deploy">
-        <div class="deploy-layout">
-          <div>
-            <div class="card" id="pipeline-status-card">
-              <h3>🔍 CI 构建状态</h3>
-              <div id="pipeline-stages">
-                <span style="color:#888;font-size:12px">选择项目后自动加载</span>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <div class="card">
-              <h3>🚀 执行部署</h3>
-              <div class="grid2">
-                <div><label>项目</label><select id="d-project"></select></div>
-                <div><label>Tag</label><select id="d-tag"></select></div>
-                <div><label>部署方式</label>
-                  <select id="d-type" onchange="toggleDeployType()">
-                    <option value="ssh">单机 SSH</option>
-                    <option value="compose">docker-compose</option>
-                  </select>
-                </div>
-                <div id="d-mode-wrap"><label>执行模式</label>
-                  <select id="d-mode" onchange="toggleDeployMode()"></select>
-                </div>
-                <div><label>目标服务器</label>
-                  <select id="d-server"><option value="0">— 请选择服务器 —</option></select>
-                </div>
-                <div id="d-path-wrap" style="display:none"><label id="d-path-label">路径</label><input id="d-path" placeholder="/opt/app/docker-compose.yml"></div>
-                <div><label>通知 BOT</label>
-                  <select id="d-bot"><option value="0">— 不通知 —</option></select>
-                </div>
-              </div>
-              <div id="d-yaml-wrap" style="display:none;margin-bottom:8px"><label>在线编写 YAML（可选，覆盖远程文件）</label><textarea id="d-yaml" rows="14" placeholder="version: '3'&#10;services:&#10;  app:&#10;    image: {image}&#10;    ports:&#10;      - '80:80'" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
-              <div id="d-cmd-wrap" style="display:none;margin-bottom:8px"><label>自定义命令</label><textarea id="d-cmds" rows="6" placeholder="docker pull {image}&#10;docker stop {project}&#10;docker run -d --name {project} {image}" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
-              <button class="btn btn-green" onclick="doDeploy()">🚀 部署</button>
-              <button class="btn btn-red" onclick="doStop()" style="margin-left:8px">🛑 停止</button>
-              <pre id="deploy-out"></pre>
-            </div>
-          </div>
-        </div>
+      <!-- SSH Deploy -->
+      <div class="panel" id="panel-ssh"><div class="deploy-layout"><div><div class="card" id="ssh-pipeline-card"><h3>🔍 CI 构建状态</h3><div id="ssh-pipeline-stages"><span style="color:#888;font-size:12px">选择项目后自动加载</span></div></div></div><div><div class="card"><h3>🖥️ 单机部署</h3>
+      <div class="grid2">
+        <div><label>项目</label><select id="s-project"></select></div>
+        <div><label>Tag</label><select id="s-tag"></select></div>
+        <div id="s-mode-wrap"><label>模式</label><select id="s-mode" onchange="toggleSshMode()"><option value="commands">自定义命令</option><option value="ansible">Ansible</option></select></div>
+        <div><label>服务器</label><select id="s-server"><option value="0">— 选择 —</option></select></div>
+        <div id="s-path-wrap" style="display:none"><label>Playbook</label><input id="s-path" placeholder="/opt/ansible/deploy.yml"></div>
+        <div><label>通知</label><select id="s-bot"><option value="0">— 不通知 —</option></select></div>
       </div>
+      <div id="s-cmd-wrap" style="margin-bottom:8px"><label>命令</label><textarea id="s-cmds" rows="6" placeholder="docker pull {image}&#10;docker stop {project}&#10;docker run -d --name {project} {image}" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
+      <button class="btn btn-green" onclick="doSshDeploy()">🚀 部署</button><pre id="ssh-out"></pre></div></div></div></div>
 
-      <div class="panel" id="panel-services">
-        <div class="card">
-          <div class="grid2" style="margin-bottom:12px">
-            <select id="svc-server"><option value="0">— 选择服务器 —</option></select>
-            <input id="svc-path" placeholder="服务路径 (如 /opt/app)">
-          </div>
-          <div style="margin-bottom:12px">
-            <button class="btn btn-blue" onclick="svcStatus()">📊 状态</button>
-            <button class="btn btn-green" onclick="svcStart()" style="margin-left:8px">▶ 启动</button>
-            <button class="btn btn-red" onclick="svcStop()" style="margin-left:8px">⏹ 停止</button>
-            <button class="btn btn-blue" onclick="svcRestart()" style="margin-left:8px">🔄 重启</button>
-          </div>
-          <div style="margin-bottom:8px">
-            <input id="svc-cmd" placeholder="自定义命令 (可直接输入 docker / kubectl 命令)">
-            <button class="btn btn-green btn-sm" onclick="svcExec()" style="margin-top:4px">▶ 执行</button>
-          </div>
-          <pre id="svc-out" style="font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto;background:#111;color:#81c784;padding:10px;border-radius:4px">等待操作…</pre>
-        </div>
+      <!-- Docker Deploy -->
+      <div class="panel" id="panel-deploy"><div class="deploy-layout"><div><div class="card" id="pipeline-status-card"><h3>🔍 CI 构建状态</h3><div id="pipeline-stages"><span style="color:#888;font-size:12px">选择项目后自动加载</span></div></div></div><div><div class="card"><h3>🐳 Docker 部署</h3>
+      <div class="grid2">
+        <div><label>项目</label><select id="d-project"></select></div>
+        <div><label>Tag</label><select id="d-tag"></select></div>
+        <div id="d-mode-wrap"><label>模式</label><select id="d-mode" onchange="toggleDeployMode()"><option value="remote">docker-compose.yml</option><option value="commands">自定义命令</option></select></div>
+        <div><label>服务器</label><select id="d-server"><option value="0">— 选择 —</option></select></div>
+        <div id="d-path-wrap" style="display:none"><label>路径</label><input id="d-path" placeholder="/opt/app"></div>
+        <div><label>通知</label><select id="d-bot"><option value="0">— 不通知 —</option></select></div>
       </div>
-      <!-- 部署到 K8S -->
+      <div id="d-yaml-wrap" style="display:none;margin-bottom:8px"><label>在线 YAML（可选）</label><textarea id="d-yaml" rows="14" placeholder="services:&#10;  app:&#10;    image: {image}&#10;    ports: ['80:80']" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
+      <div id="d-cmd-wrap" style="display:none;margin-bottom:8px"><label>命令</label><textarea id="d-cmds" rows="6" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
+      <button class="btn btn-green" onclick="doDeploy()">🚀 部署</button><button class="btn btn-red" onclick="doStop()" style="margin-left:8px">🛑 停止</button><pre id="deploy-out"></pre></div></div></div></div>
+
+      <!-- K8S Deploy -->
       <div class="panel" id="panel-k8s">
-        <div class="card">
-          <h3>☸️ 部署到 K8S</h3>
-          <div class="grid2" style="margin-bottom:12px">
-            <div><label>项目</label><select id="k-project"></select></div>
-            <div><label>Tag</label><select id="k-tag"></select></div>
-            <div><label>CD 类型</label>
-              <select id="k-cdtype" onchange="toggleK8sType()">
-                <option value="kubectl">kubectl SSH</option>
-                <option value="argocd">Argo CD</option>
-                <option value="fluxcd">Flux CD</option>
-              </select>
-            </div>
-            <div><label>目标集群</label><select id="k-cluster"><option value="0">— 选择 —</option></select></div>
-          </div>
-          <div id="k-path-wrap" style="margin-bottom:8px;display:none"><label>YAML 路径</label><input id="k-path" placeholder="/opt/k8s/deploy.yaml"></div>
-          <div id="k-api-wrap" style="margin-bottom:8px;display:none"><label>API 地址</label><input id="k-api" placeholder="http://argocd-server.argocd/api/v1"></div>
-          <div><label>通知 BOT</label><select id="k-bot"><option value="0">— 不通知 —</option></select></div>
-          <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button>
-          <pre id="k8s-out"></pre>
-        </div>
+      <div class="card" id="k-pipeline-card" style="margin-bottom:14px"><h3>🔍 CI 构建状态</h3><div id="k-pipeline-stages"><span style="color:#888;font-size:12px">选择项目后自动加载</span></div></div>
+      <div class="card"><h3>☸️ K8S 部署</h3>
+      <div class="grid2" style="margin-bottom:12px">
+        <div><label>项目</label><select id="k-project"></select></div>
+        <div><label>Tag</label><select id="k-tag"></select></div>
+        <div><label>CD 类型</label><select id="k-cdtype" onchange="toggleK8sType()"><option value="kubectl">kubectl SSH</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option></select></div>
+        <div><label>集群</label><select id="k-cluster"><option value="0">— 选择 —</option></select></div>
       </div>
+      <div id="k-path-wrap" style="margin-bottom:8px;display:none"><label>YAML 路径</label><input id="k-path" placeholder="/opt/k8s/deploy.yaml"></div>
+      <div id="k-api-wrap" style="margin-bottom:8px;display:none"><label>API 地址</label><input id="k-api" placeholder="https://argocd:30443"></div>
+      <div><label>通知</label><select id="k-bot"><option value="0">— 不通知 —</option></select></div>
+      <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><pre id="k8s-out"></pre></div></div>
+
+      <!-- Logs -->
+      <div class="panel" id="panel-logs"><div class="card"><h3>📜 部署记录</h3><table><thead><tr><th>时间</th><th>项目</th><th>Tag</th><th>方式</th><th>状态</th><th>详情</th></tr></thead><tbody id="log-tbody"></tbody></table></div></div>
+
+      <!-- Shell -->
+      <div class="panel" id="panel-shell"><div class="card"><h3>🖥️ Web Shell</h3>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <select id="shell-server" style="width:auto"><option value="0">— 选择 —</option></select>
+        <button class="btn btn-green btn-sm" onclick="connectShell()">🔌 连接</button>
+        <button class="btn btn-red btn-sm" onclick="disconnectShell()">⏹ 断开</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input type="file" id="scp-file" style="width:auto;margin:0;padding:4px">
+        <input id="scp-path" placeholder="远程路径" style="width:auto;margin:0" value="/tmp">
+        <button class="btn btn-green btn-sm" onclick="uploadFile()" style="margin:0">📤 上传</button>
+      </div>
+      <div id="terminal" style="height:550px;background:#000;border-radius:6px;padding:4px"></div></div></div>
+
+      <!-- Bots -->
+      <div class="panel" id="panel-bots"><div class="card"><h3>🔔 通知管理</h3>
+      <div class="grid3" style="margin-bottom:12px">
+        <input id="bot-name" placeholder="名称"><select id="bot-type"><option value="dingtalk">钉钉</option><option value="wecom">企业微信</option><option value="custom">自定义</option></select>
+        <input id="bot-url" placeholder="Webhook URL">
+      </div>
+      <button class="btn btn-green" onclick="addBot()">＋ 添加</button>
+      <table style="margin-top:12px"><thead><tr><th>名称</th><th>类型</th><th>URL</th><th>操作</th></tr></thead><tbody id="bot-tbody"></tbody></table></div></div>
 
       </div>
-
-      <!-- 部署记录 -->
-      <div class="panel" id="panel-logs">
-        <div class="card">
-          <h3>📜 部署记录</h3>
-          <table>
-            <thead><tr><th>时间</th><th>项目</th><th>Tag</th><th>方式</th><th>状态</th><th>详情</th></tr></thead>
-            <tbody id="log-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Web Shell -->
-      <div class="panel" id="panel-shell">
-        <div class="card">
-          <h3>🖥️ Web Shell</h3>
-          <div style="display:flex;gap:8px;margin-bottom:8px">
-            <select id="shell-server" style="width:auto"><option value="0">— 选择服务器 —</option></select>
-            <button class="btn btn-green btn-sm" onclick="connectShell()">🔌 连接</button>
-            <button class="btn btn-red btn-sm" onclick="disconnectShell()">⏹ 断开</button>
-          </div>
-          <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-            <input type="file" id="scp-file" style="width:auto;margin:0;padding:4px">
-            <input id="scp-path" placeholder="远程路径 (如 /opt/k8s)" style="width:auto;margin:0" value="/tmp">
-            <button class="btn btn-green btn-sm" onclick="uploadFile()" style="margin:0">📤 上传</button>
-          </div>
-          <div id="terminal" style="height:550px;background:#000;border-radius:6px;padding:4px"></div>
-        </div>
-      </div>
-
-      <!-- 通知管理 -->
-      <div class="panel" id="panel-bots">
-        <div class="card">
-          <h3>🔔 通知 BOT 管理</h3>
-          <div class="grid3" style="margin-bottom:12px">
-            <input id="bot-name" placeholder="名称 (如 钉钉产线群)">
-            <select id="bot-type">
-              <option value="dingtalk">钉钉</option>
-              <option value="wecom">企业微信</option>
-              <option value="custom">自定义 Webhook</option>
-            </select>
-            <input id="bot-url" placeholder="Webhook URL">
-          </div>
-          <button class="btn btn-green" onclick="addBot()">＋ 添加</button>
-          <table style="margin-top:12px">
-            <thead><tr><th>名称</th><th>类型</th><th>Webhook URL</th><th>操作</th></tr></thead>
-            <tbody id="bot-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
     </div>
   </div>
 </div>
-</div><!-- main-app -->
 
 <script src="/static/app.js"></script>
 </body>

@@ -54,6 +54,13 @@ function doLogout() {
 
 // ── Navigation ──
 
+function toggleSubmenu(el) {
+  const subs = el.parentElement.querySelectorAll(".item-sub");
+  const open = subs[0]?.style.display === "block";
+  subs.forEach(s => s.style.display = open ? "none" : "block");
+  el.textContent = open ? "🚀 部署管理 ▸" : "🚀 部署管理 ▾";
+}
+
 function showPanel(n) {
   document.querySelectorAll(".sidebar .item").forEach((i) => i.classList.remove("active"));
   document.querySelector(`[data-panel="${n}"]`).classList.add("active");
@@ -61,6 +68,7 @@ function showPanel(n) {
   document.getElementById("panel-" + n).classList.add("show");
   if (n === "ci") loadCI();
   if (n === "servers") loadServers();
+  if (n === "ssh") loadSshForm();
   if (n === "deploy") loadDeployForm();
   if (n === "k8s") loadK8sForm();
   if (n === "shell") loadShellServers();
@@ -90,60 +98,122 @@ async function loadCI() {
           <td>${p.latest_tag || "—"}</td>
           <td>${p.latest_pipeline ? "#" + p.latest_pipeline : "—"}</td>
           <td>
-            <button class="btn btn-green btn-sm" onclick="quickDeploy('${p.job_name}','${p.latest_tag}')">部署</button>
-            <button class="btn btn-blue btn-sm" onclick="viewPipeline('${p.job_name}')">CI状态</button>
+            <select onchange="quickDeploySelect(this,'${p.job_name}','${p.latest_tag}')" style="width:auto;display:inline;margin:0;padding:3px 6px">
+              <option value="">部署到…</option>
+              <option value="ssh">单机</option>
+              <option value="deploy">Docker</option>
+              <option value="k8s">K8S</option>
+            </select>
+            <button class="btn btn-blue btn-sm" onclick="viewPipelineRow(this,'${p.job_name}')">CI状态</button>
           </td>
         </tr>`
     )
     .join("");
 }
 
+
+function quickDeploySelect(sel, project, tag) {
+  const target = sel.value; if (!target) return;
+  sel.value = "";
+  const parent = document.querySelector(".item-parent");
+  if (parent && parent.textContent.includes("▸")) toggleSubmenu(parent);
+  showPanel(target);
+  setTimeout(() => {
+    const projId = target === "ssh" ? "s-project" : target === "k8s" ? "k-project" : "d-project";
+    const el = document.getElementById(projId);
+    if (el && el.options.length) { el.value = project; viewPipeline(project); }
+  }, 300);
+}
+
 // ── CI Pipeline 状态 ──
 
 let _vpSeq = 0;
 
+function _setCI(prefix, latest_tag, pipeline_iid, created_at) {
+  const card = document.getElementById(prefix + "pipeline-card");
+  const stages = document.getElementById(prefix + "pipeline-stages");
+  if (!stages) return;
+  if (card) card.style.display = "block";
+  if (latest_tag) {
+    const ptext = pipeline_iid ? 'Pipeline <b>#' + pipeline_iid + '</b> · ' : '';
+    stages.innerHTML =
+      '<div style="padding:10px;background:#1b3a1b;border-radius:6px;border:1px solid #388e3c">' +
+      '<span style="color:#81c784;font-weight:600">✅ CI 已完成</span>' +
+      '<div style="margin-top:4px;font-size:12px;color:#999">' + ptext + 'Tag <b>' + latest_tag + '</b>' +
+      (created_at ? ' · ' + created_at : '') + '</div></div>';
+  } else {
+    stages.innerHTML = '<span style="color:#888;font-size:12px">暂无 CI 数据</span>';
+  }
+}
+
+function _setTags(selId, tags) {
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  if (tags.length) {
+    sel.innerHTML = tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("");
+    sel.value = tags[0].tag;
+  } else {
+    sel.innerHTML = '<option value="">无可用 Tag</option>';
+  }
+}
+
+async function viewPipelineRow(btn, project) {
+  const tr = btn.closest("tr");
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains("ci-detail-row")) { existing.remove(); return; }
+
+  const detail = document.createElement("tr");
+  detail.className = "ci-detail-row";
+  detail.innerHTML = '<td colspan="6"><div style="padding:10px;color:#888;font-size:12px">加载中…</div></td>';
+  tr.parentNode.insertBefore(detail, tr.nextSibling);
+
+  try {
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`);
+    const d = await r.json();
+    if (d.latest_tag) {
+      const p = d.pipeline || {};
+      detail.innerHTML = '<td colspan="6"><div style="padding:10px;background:#1b3a1b;border-radius:4px;border:1px solid #388e3c">' +
+        '<span style="color:#81c784;font-weight:600">✅ CI 已完成</span>' +
+        '<span style="font-size:12px;color:#999;margin-left:8px">' +
+        (p.iid ? 'Pipeline #' + p.iid + ' · ' : '') + 'Tag ' + d.latest_tag +
+        (p.created_at ? ' · ' + p.created_at : '') + '</span></div></td>';
+    } else {
+      detail.innerHTML = '<td colspan="6"><div style="padding:10px;color:#888;font-size:12px">暂无 CI 数据</div></td>';
+    }
+  } catch(e) {
+    detail.innerHTML = '<td colspan="6"><div style="padding:10px;color:#888;font-size:12px">暂无 CI 数据</div></td>';
+  }
+}
+
 async function viewPipeline(project) {
   if (!project) return;
   const seq = ++_vpSeq;
-  document.getElementById("pipeline-status-card").style.display = "block";
-
-  const statusEl = document.getElementById("pipeline-stages");
-  statusEl.innerHTML = '<span style="color:#888;font-size:12px">加载中…</span>';
+  _setCI("", "", "", "", ""); _setCI("ssh-", "", "", "", ""); _setCI("k-", "", "", "", "");
+  _setTags("d-tag", []); _setTags("s-tag", []); _setTags("k-tag", []);
+  document.getElementById("s-tag").innerHTML = '<option value="">加载中…</option>';
   document.getElementById("d-tag").innerHTML = '<option value="">加载中…</option>';
+  document.getElementById("k-tag").innerHTML = '<option value="">加载中…</option>';
 
   try {
     const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`);
     const d = await r.json();
     if (seq !== _vpSeq) return;
-    if (r.ok && d.pipeline && d.latest_tag) {
-      const p = d.pipeline;
-      statusEl.innerHTML =
-        '<div style="padding:12px;background:#1b3a1b;border-radius:6px;border:1px solid #388e3c">' +
-        '<span style="color:#81c784;font-weight:600">✅ CI 已完成</span>' +
-        '<div style="margin-top:6px;font-size:12px;color:#999">' +
-        (p.iid ? 'Pipeline <b>#' + p.iid + '</b> · ' : '') +
-        'Tag <b>' + d.latest_tag + '</b>' +
-        (p.created_at ? ' · ' + p.created_at : '') +
-        '</div></div>';
-    } else {
-      statusEl.innerHTML = '<span style="color:#888;font-size:12px">暂无 CI 数据</span>';
-    }
+    const tag = d.latest_tag || "";
+    const iid = d.pipeline?.iid;
+    const created = d.pipeline?.created_at || "";
+    _setCI("", tag, iid, created);
+    _setCI("ssh-", tag, iid, created);
+    _setCI("k-", tag, iid, created);
+  } catch(e) {}
 
+  try {
     const tr = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`);
     const tags = await tr.json();
     if (seq !== _vpSeq) return;
-    const tagSel = document.getElementById("d-tag");
-    if (tags.length) {
-      tagSel.innerHTML = tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("");
-      tagSel.value = tags[0].tag;
-    } else {
-      tagSel.innerHTML = '<option value="">无可用 Tag</option>';
-    }
-  } catch(e) {
-    if (seq === _vpSeq) {
-      statusEl.innerHTML = '<span style="color:#888;font-size:12px">暂无 CI 数据</span>';
-    }
-  }
+    _setTags("d-tag", tags);
+    _setTags("s-tag", tags);
+    _setTags("k-tag", tags);
+  } catch(e) {}
 }
 
 // ── 服务器管理 ──
@@ -237,10 +307,10 @@ async function loadDeployForm() {
 document.addEventListener("DOMContentLoaded", () => {
   let _timer;
   document.addEventListener("change", (e) => {
-    if (e.target.id === "d-project") {
+    if (e.target.id === "d-project" || e.target.id === "s-project" || e.target.id === "k-project") {
       clearTimeout(_timer);
       _timer = setTimeout(() => {
-        document.getElementById("d-project").dataset.last = e.target.value;
+        e.target.dataset.last = e.target.value;
         viewPipeline(e.target.value);
       }, 100);
     }
@@ -248,16 +318,16 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function quickDeploy(project, tag) {
-  showPanel("deploy");
-  document.getElementById("d-project").value = project;
-  viewPipeline(project);  // 自动加载 CI 状态 + tag 列表
+  const parent = document.querySelector(".item-parent");
+  if (parent && parent.textContent.includes("▸")) toggleSubmenu(parent);
+  showPanel("ssh");
+  setTimeout(() => {
+    document.getElementById("s-project").value = project;
+    loadSshTags(project);
+  }, 100);
 }
 
 const MODE_OPTIONS = {
-  ssh: [
-    { value: "commands", label: "自定义命令" },
-    { value: "ansible", label: "Ansible Playbook" },
-  ],
   compose: [
     { value: "remote", label: "docker-compose.yml" },
     { value: "commands", label: "自定义命令" },
@@ -456,6 +526,61 @@ async function delBot(id) {
   loadBots();
 }
 
+// ── SSH 单机部署 ──
+
+function toggleSshMode() {
+  const m = document.getElementById("s-mode").value;
+  document.getElementById("s-cmd-wrap").style.display = m === "commands" ? "block" : "none";
+  document.getElementById("s-path-wrap").style.display = m === "ansible" ? "block" : "none";
+}
+
+async function loadSshForm() {
+  const r = await fetch("/api/projects");
+  const d = await r.json();
+  const sel = document.getElementById("s-project");
+  sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
+  sel.onchange = () => { loadSshTags(sel.value); viewPipeline(sel.value); };
+
+  const sr = await fetch("/api/servers", { headers: A() });
+  if (!handle401(sr)) {
+    const srv = await sr.json();
+    const ssel = document.getElementById("s-server");
+    ssel.innerHTML = '<option value="0">— 请选择 —</option>' +
+      srv.filter(s => ["ssh","compose"].includes(s.type)).map(s => `<option value="${s.id}">${s.name} (${s.host})</option>`).join("");
+  }
+  const br = await fetch("/api/bots", { headers: A() });
+  if (br.ok) { const bots = await br.json(); const bsel = document.getElementById("s-bot"); bsel.innerHTML = '<option value="0">— 不通知 —</option>' + bots.map(b => `<option value="${b.id}">${b.name}</option>`).join(""); }
+  toggleSshMode();
+  const el = document.getElementById("s-project");
+  const proj = el.value || (d[0]?.job_name);
+  if (proj) { loadSshTags(proj); viewPipeline(proj); }
+}
+
+async function loadSshTags(project) {
+  const sel = document.getElementById("s-tag"); sel.innerHTML = '<option value="">加载中…</option>';
+  try { const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`); const tags = await r.json();
+    sel.innerHTML = tags.length ? tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("") : '<option value="">无可用 Tag</option>';
+    if (tags.length) sel.value = tags[0].tag;
+  } catch(e) { sel.innerHTML = '<option value="">无可用 Tag</option>'; }
+}
+
+async function doSshDeploy() {
+  const tag = document.getElementById("s-tag").value; if (!tag) return toast("没有可用的 Tag", false);
+  const sid = parseInt(document.getElementById("s-server").value) || 0; if (!sid) return toast("请选择服务器", false);
+  const body = {
+    project: document.getElementById("s-project").value, tag, deploy_type: "ssh",
+    server_ids: String(sid), deploy_mode: document.getElementById("s-mode").value,
+    target_path: document.getElementById("s-path").value, commands: document.getElementById("s-cmds").value,
+    bot_id: parseInt(document.getElementById("s-bot").value) || 0,
+  };
+  const out = document.getElementById("ssh-out"); out.textContent = "$ 正在部署...\n";
+  const r = await fetch("/api/deploy", { method: "POST", headers: Object.assign({"Content-Type":"application/json"}, A()), body: JSON.stringify(body) });
+  const d = await r.json();
+  const results = d.results || [d.result || d];
+  let text = ""; results.forEach((r, i) => { text += `\n${r.status==="ok"?"✅":"❌"} [${r.host||"?"}] ${r.status}\n${r.output||""}\n`; });
+  out.textContent = text.trim(); toast(d.success ? "✅ 部署成功" : "❌ 部署失败", d.success);
+}
+
 // ── K8S 部署 ──
 
 function toggleK8sType() {
@@ -470,7 +595,7 @@ async function loadK8sForm() {
   const d = await r.json();
   const sel = document.getElementById("k-project");
   sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
-  sel.onchange = () => loadK8sTags(sel.value);
+  sel.onchange = () => { loadK8sTags(sel.value); viewPipeline(sel.value); };
 
   // 集群列表（过滤 K8s 相关类型）
   const sr = await fetch("/api/servers", { headers: A() });
@@ -491,7 +616,9 @@ async function loadK8sForm() {
   }
 
   toggleK8sType();
-  if (d.length) loadK8sTags(d[0].job_name);
+  const el = document.getElementById("k-project");
+  const proj = el.value || (d[0]?.job_name);
+  if (proj) { loadK8sTags(proj); viewPipeline(proj); }
 }
 
 async function loadK8sTags(project) {
