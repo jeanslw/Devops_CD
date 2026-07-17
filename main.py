@@ -32,6 +32,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ── Dashboard ──
 @app.get("/", response_class=HTMLResponse)
+def home():
+    template = Path(__file__).parent / "templates" / "index.html"
+    if template.exists():
+        return HTMLResponse(template.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>首页文件丢失</h1>")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     template = Path(__file__).parent / "templates" / "dashboard.html"
     if template.exists():

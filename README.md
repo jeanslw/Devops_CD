@@ -12,15 +12,38 @@ FastAPI 持续部署服务，与 [Devops-Glue PHP API](https://github.com/jeansl
 
 ## 环境要求
 
+**Python 依赖**
+
 | 组件 | 版本 | 说明 |
 |------|------|------|
-| Python | 3.11+ | |
+| Python | 3.11+ | 运行环境 |
+| fastapi | 0.115+ | Web 框架 |
+| uvicorn | 0.34+ | ASGI 服务器 |
 | paramiko | 3.5+ | SSH/SFTP 连接 |
-| kubernetes | 32.0+ | K8s Python 客户端（可选） |
-| pymysql | 1.1+ | MySQL 驱动（可选） |
+| kubernetes | 32.0+ | K8s Python 客户端 |
+| pymysql | 1.1+ | MySQL 驱动 |
 | pydantic-settings | 2.0+ | 环境配置管理 |
 | bcrypt | 4.2+ | 密码验证 |
-| xterm.js | 5.3 | Web Shell 终端（CDN 按需加载） |
+| requests | 2.31+ | HTTP 客户端 |
+| python-multipart | 0.0.9+ | 文件上传 |
+
+**前端**
+
+| 组件 | 说明 |
+|------|------|
+| xterm.js 5.3 | Web Shell 终端（CDN 按需加载，不影响登录速度） |
+
+**服务器端（可选）**
+
+| 组件 | 说明 |
+|------|------|
+| Docker / docker-compose | 单机 & compose 部署目标 |
+| Kubernetes 1.28+ | K8S 集群 |
+| Argo CD v2.9+ | GitOps CD（可选） |
+| Flux CD | GitOps CD（可选） |
+| Helm 3+ | K8S 包管理（可选） |
+| Ansible | 自动化部署（可选） |
+| MySQL 8.0+ | 数据库（可选，默认 SQLite） |
 
 ## 架构
 
@@ -73,6 +96,7 @@ cd_service/
 | docker-compose | 在线编写 YAML | SFTP 上传 + 自动创建目录 + docker compose up |
 | docker-compose | 自定义命令 | 自定义 compose 脚本 |
 | K8S kubectl | SSH apply | SSH 到 master `kubectl apply -f` |
+| K8S Helm | SSH kubectl | helm upgrade --install → 版本验证 |
 | K8S Argo CD | REST API | PATCH image → sync → 轮询 Healthy |
 | K8S Flux CD | SSH kubectl | PATCH Kustomization/HelmRelease → wait ready |
 

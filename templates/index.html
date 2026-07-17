@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>Devops-Glue CD</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#0a0a0f;color:#c0caf0;overflow-x:hidden;min-height:100vh}
+
+.bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0}
+.bg canvas{display:block}
+
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(10,10,15,.92);backdrop-filter:blur(20px);border-bottom:1px solid rgba(100,255,100,.15);display:flex;align-items:center;justify-content:space-between;padding:0 48px;height:56px}
+.nav-brand{font-size:20px;font-weight:700;background:linear-gradient(135deg,#00ff88,#00c6ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;gap:24px;align-items:center}
+.nav-links a{color:#8892b0;text-decoration:none;font-size:14px;transition:color .3s}
+.nav-links a:hover{color:#00ff88}
+.nav-btn{background:linear-gradient(135deg,#00c853,#00bfa5);color:#000;padding:8px 20px;border-radius:6px;font-weight:600;font-size:13px;text-decoration:none;transition:transform .2s,box-shadow .2s}
+.nav-btn:hover{transform:translateY(-1px);box-shadow:0 4px 20px rgba(0,255,136,.3)}
+
+.hero{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;padding:100px 80px 80px;text-align:center}
+.hero h1{font-size:52px;font-weight:800;line-height:1.2;margin-bottom:48px}
+.hero h1 .glow{background:linear-gradient(135deg,#00ff88,#00c6ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.cards{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:900px;margin:0 auto}
+.card{background:rgba(15,15,25,.85);border:1px solid rgba(100,255,100,.06);border-radius:14px;padding:24px 28px;text-align:center;transition:border-color .3s,transform .3s}
+.card:hover{border-color:rgba(0,255,136,.25);transform:translateY(-4px)}
+.card-icon{font-size:36px;margin-bottom:10px}
+.card h3{font-size:15px;color:#e0e0e0;margin-bottom:6px}
+.card p{font-size:12px;color:#667;line-height:1.6}
+
+.footer{position:relative;z-index:1;padding:32px 48px;text-align:center;font-size:14px;color:#444}
+
+@media(min-width:1920px){
+  .hero h1{font-size:60px}
+  .hero{padding:100px 160px 80px}
+}
+@media(max-width:900px){
+  .hero h1{font-size:32px}
+  .hero{padding:100px 24px 40px}
+  .cards{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-brand">🚀 Devops-Glue CD</div>
+  <div class="nav-links">
+    <a href="#">首页</a>
+    <a href="mailto:jeanslw@qq.com">技术支持</a>
+    <a class="nav-btn" href="/dashboard">🔐 登录</a>
+  </div>
+</div>
+
+<div class="hero">
+  <h1><span class="glow">Build Tag</span> → <span class="glow">Deploy Anywhere</span></h1>
+  <div class="cards">
+    <div class="card">
+      <div class="card-icon">🖥️</div>
+      <h3>单机部署</h3>
+      <p>SSH + 自定义命令 / Ansible Playbook<br>5 种预设模板</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🐳</div>
+      <h3>Docker Compose</h3>
+      <p>远程 YAML / 在线编写<br>自动写 .env 固化版本</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">☸️</div>
+      <h3>Kubernetes</h3>
+      <p>kubectl / Helm / Argo CD<br>Flux CD 四模合一</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔍</div>
+      <h3>版本验证</h3>
+      <p>部署前后自动对比<br>版本不对即报失败</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🖥️</div>
+      <h3>Web Shell</h3>
+      <p>浏览器内终端 + 文件上传<br>无需 SSH 客户端</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔔</div>
+      <h3>钉钉/企微</h3>
+      <p>部署完成自动推送<br>群消息实时通知</p>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Copyright &copy; 2026 by <a href="mailto:jeanslw@qq.com" style="color:#444">Blues.Inc </a> </div>
+
+<div class="bg"><canvas id="particles"></canvas></div>
+<script>
+(function(){
+  const c=document.getElementById("particles"),ctx=c.getContext("2d");
+  let W,H,particles=[];
+  function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+  resize();window.addEventListener("resize",resize);
+  for(let i=0;i<60;i++)particles.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.5+.5,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3,c:`rgba(0,${180+Math.random()*75},${120+Math.random()*136},${.15+Math.random()*.25})`});
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    particles.forEach(p=>{
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=p.c;ctx.fill();
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<0)p.x=W;if(p.x>W)p.x=0;if(p.y<0)p.y=H;if(p.y>H)p.y=0
+    });
+    requestAnimationFrame(draw)
+  }
+  draw()
+})();
+</script>
+</body>
+</html>
