@@ -1,14 +1,15 @@
 # Devops-Glue CD Service
 
-FastAPI 持续部署服务，与 [Devops-Glue PHP API](https://github.com/jeanslw/Devops-Glue) 配套使用，负责将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
+FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue) 配套使用，负责将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 ## 基础
 
+	- **主页**：https://github.com/jeanslw/Devops-CD
 	- **语言**: Python 3.11+
 	- **框架**: FastAPI + uvicorn
 	- **数据库**: SQLite / MySQL 8.0+（通过 DB_DRIVER 切换）
 	- **端口**: 8081
-	- **认证**: 与 PHP CI 系统共享 `admin_users` 表，bcrypt + Bearer token
+	- **认证**: 与 Devops-Glue API 系统共享数据库，bcrypt + Bearer token，不可单独使用。
 
 ## 环境要求
 
@@ -158,7 +159,7 @@ FastAPI 持续部署服务，与 [Devops-Glue PHP API](https://github.com/jeansl
 	# 或 DB_DRIVER=mysql (独立部署，需先建库)
 
 	python main.py
-	# 访问 http://localhost:8081
+	# 访问 http://localhost
 	```
 
 ## 配置说明
