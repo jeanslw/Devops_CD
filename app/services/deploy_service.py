@@ -23,10 +23,10 @@ class DeployService:
                 ids = [int(x.strip()) for x in server_ids.split(",") if x.strip().isdigit()]
                 placeholders = ",".join("?" * len(ids))
                 rows = conn.execute(
-                    f"SELECT * FROM servers WHERE id IN ({placeholders})", ids
+                    f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids
                 ).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM servers ORDER BY name").fetchall()
+                rows = conn.execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
 
             return [
                 (r["id"], DeployTarget(
@@ -101,7 +101,7 @@ class DeployService:
         try:
             for r in results:
                 conn.execute(
-                    "INSERT INTO deploy_logs (project,tag,image,deploy_type,target,status,output) "
+                    "INSERT INTO cd_deploy_logs (project,tag,image,deploy_type,target,status,output) "
                     "VALUES (?,?,?,?,?,?,?)",
                     (project_key, tag, image, deploy_type, f"#{r['server_id']} {r['host']}",
                      r["status"], r["output"][:settings.log_truncate_chars]),
@@ -117,7 +117,7 @@ class DeployService:
         if bot_id:
             conn = self._db.conn()
             try:
-                bot = conn.execute("SELECT * FROM bots WHERE id=?", (bot_id,)).fetchone()
+                bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
                 if bot: send_webhook(bot["webhook_url"], msg)
             finally:
                 conn.close()
@@ -130,12 +130,12 @@ class DeployService:
         try:
             if project:
                 rows = conn.execute(
-                    "SELECT * FROM deploy_logs WHERE project=? ORDER BY created_at DESC LIMIT 50",
+                    "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY created_at DESC LIMIT 50",
                     (project,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM deploy_logs ORDER BY created_at DESC LIMIT 100"
+                    "SELECT * FROM cd_deploy_logs ORDER BY created_at DESC LIMIT 100"
                 ).fetchall()
             return [dict(r) for r in rows]
         finally:

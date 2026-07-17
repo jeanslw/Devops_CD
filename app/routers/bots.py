@@ -15,7 +15,7 @@ def list_bots(
 ):
     return [
         dict(r)
-        for r in db.conn().execute("SELECT * FROM bots ORDER BY name").fetchall()
+        for r in db.conn().execute("SELECT * FROM cd_bots ORDER BY name").fetchall()
     ]
 
 
@@ -28,7 +28,7 @@ def add_bot(
     conn = db.conn()
     try:
         conn.execute(
-            "INSERT INTO bots (name,type,webhook_url) VALUES (?,?,?)",
+            "INSERT INTO cd_bots (name,type,webhook_url) VALUES (?,?,?)",
             (req.name, req.type, req.webhook_url),
         )
         conn.commit()
@@ -44,6 +44,6 @@ def delete_bot(
     username: str = Depends(verify_token),
 ):
     conn = db.conn()
-    conn.execute("DELETE FROM bots WHERE id=?", (bid,))
+    conn.execute("DELETE FROM cd_bots WHERE id=?", (bid,))
     conn.commit()
     return {"success": True}

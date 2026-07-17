@@ -77,7 +77,7 @@ class Database:
         NOW  = "NOW()" if is_mysql else "datetime('now','localtime')"
         ENG  = " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4" if is_mysql else ""
 
-        conn.execute(f"""CREATE TABLE IF NOT EXISTS servers (
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_servers (
             id {PK},
             name VARCHAR(255) UNIQUE,
             host VARCHAR(255),
@@ -88,12 +88,12 @@ class Database:
             tags VARCHAR(255) DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         ){ENG}""")
-        try: conn.execute("ALTER TABLE servers ADD COLUMN password VARCHAR(255) DEFAULT ''")
+        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN password VARCHAR(255) DEFAULT ''")
         except: pass
-        try: conn.execute("ALTER TABLE servers ADD COLUMN tags VARCHAR(255) DEFAULT ''")
+        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN tags VARCHAR(255) DEFAULT ''")
         except: pass
 
-        conn.execute(f"""CREATE TABLE IF NOT EXISTS deploy_logs (
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_deploy_logs (
             id {PK},
             project VARCHAR(255),
             tag VARCHAR(255),
@@ -105,7 +105,7 @@ class Database:
             created_at TEXT DEFAULT ({NOW})
         ){ENG}""")
 
-        conn.execute(f"""CREATE TABLE IF NOT EXISTS bots (
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (
             id {PK},
             name VARCHAR(255) UNIQUE,
             type VARCHAR(32) DEFAULT 'custom',
@@ -115,8 +115,8 @@ class Database:
 
         # ── 索引 ──
         for name, tbl, col in [
-            ("idx_dl_project", "deploy_logs", "project"),
-            ("idx_dl_created", "deploy_logs", "created_at"),
+            ("idx_cdl_project", "cd_deploy_logs", "project"),
+            ("idx_cdl_created", "cd_deploy_logs", "created_at"),
             ("idx_pt_project", "ci_pipeline_tags", "project"),
             ("idx_pt_created", "ci_pipeline_tags", "created_at"),
             ("idx_jgm_path", "ci_job_git_map", "current_path"),

@@ -49,7 +49,7 @@ def stop(
         raise HTTPException(400, "请选择目标服务器")
     conn = db.conn()
     sid = int(req.server_ids.split(",")[0])
-    srv = conn.execute("SELECT * FROM servers WHERE id=?", (sid,)).fetchone()
+    srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:
         raise HTTPException(400, "服务器不存在")
     target = DeployTarget(

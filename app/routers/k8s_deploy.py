@@ -39,7 +39,7 @@ def deploy_k8s(
     # 查集群
     if req.cluster_id:
         conn = db.conn()
-        srv = conn.execute("SELECT * FROM servers WHERE id=?", (req.cluster_id,)).fetchone()
+        srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (req.cluster_id,)).fetchone()
         if not srv:
             raise HTTPException(400, "集群不存在")
         host, port, user, pwd = srv["host"], srv["port"], srv["user"], srv["password"] or ""
@@ -58,7 +58,7 @@ def deploy_k8s(
     # 记录日志
     conn = db.conn()
     conn.execute(
-        "INSERT INTO deploy_logs (project,tag,image,deploy_type,target,status,output) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO cd_deploy_logs (project,tag,image,deploy_type,target,status,output) VALUES (?,?,?,?,?,?,?)",
         (project_key, req.tag, image, f"k8s/{req.cd_type}", host,
          "ok" if result["success"] else "failed",
          result["output"][:settings.log_truncate_chars] if result["output"] else ""),

@@ -16,7 +16,7 @@ async def terminal(websocket: WebSocket, server_id: int):
     # 查服务器
     db = Database()
     conn = db.conn()
-    srv = conn.execute("SELECT * FROM servers WHERE id=?", (server_id,)).fetchone()
+    srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
         await websocket.send_text("\r\n❌ 服务器不存在\r\n")
         await websocket.close()
@@ -92,7 +92,7 @@ async def upload_file(
     """上传文件到目标服务器"""
     db = Database()
     conn = db.conn()
-    srv = conn.execute("SELECT * FROM servers WHERE id=?", (server_id,)).fetchone()
+    srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
         raise HTTPException(400, "服务器不存在")
 

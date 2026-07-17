@@ -15,7 +15,7 @@ def list_servers(
 ):
     return [
         dict(r)
-        for r in db.conn().execute("SELECT * FROM servers ORDER BY name").fetchall()
+        for r in db.conn().execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
     ]
 
 
@@ -28,7 +28,7 @@ def add_server(
     conn = db.conn()
     try:
         conn.execute(
-            "INSERT INTO servers (name,host,port,user,password,type,tags) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO cd_servers (name,host,port,user,password,type,tags) VALUES (?,?,?,?,?,?,?)",
             (req.name, req.host, req.port, req.user, req.password, req.type, req.tags),
         )
         conn.commit()
@@ -44,6 +44,6 @@ def delete_server(
     username: str = Depends(verify_token),
 ):
     conn = db.conn()
-    conn.execute("DELETE FROM servers WHERE id=?", (sid,))
+    conn.execute("DELETE FROM cd_servers WHERE id=?", (sid,))
     conn.commit()
     return {"success": True}
