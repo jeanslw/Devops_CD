@@ -1,10 +1,11 @@
-# Devops-Glue CD Service
+# 概述
+Devops-Glue CD Service 提供持续部署服务的简单应用。
 
 FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue) 配套使用，负责将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 ## 基础
 
-	- **主页**：https://github.com/jeanslw/Devops-CD或https://gitee.com/jeanslw/Devops-CD
+	- **主页**：https://github.com/jeanslw/Devops-Glue.git 或 https://gitee.com/jeanslw/devops_cd.git
 	- **语言**: Python 3.11+
 	- **框架**: FastAPI + uvicorn
 	- **数据库**: SQLite / MySQL 8.0+（通过 DB_DRIVER 切换）
