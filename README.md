@@ -4,7 +4,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 
 ## 基础
 
-	- **主页**：https://github.com/jeanslw/Devops-CD
+	- **主页**：https://github.com/jeanslw/Devops-CD或https://gitee.com/jeanslw/Devops-CD
 	- **语言**: Python 3.11+
 	- **框架**: FastAPI + uvicorn
 	- **数据库**: SQLite / MySQL 8.0+（通过 DB_DRIVER 切换）
