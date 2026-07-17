@@ -1,8 +1,0 @@
-image:
-  repository: 192.168.137.5/mycode/diagnosis-runtime
-  tag: latest
-
-service:
-  type: NodePort
-  port: 80
-  nodePort: 30080
