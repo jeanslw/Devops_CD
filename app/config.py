@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     container_restart_policy: str = "always"
 
     # ── 日志 ──
-    log_truncate_chars: int = 500
+    log_truncate_chars: int = 2000
     notify_truncate_chars: int = 200
 
     class Config:

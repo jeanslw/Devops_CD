@@ -1,0 +1,4 @@
+apiVersion: v2
+name: static
+description: Static Vue app
+version: 0.1.0

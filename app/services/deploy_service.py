@@ -64,7 +64,21 @@ class DeployService:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         options = {}
-        if commands: options["commands"] = commands
+        if commands:
+            cmds = commands
+            if "|FILTER|" in cmds:
+                fp = cmds.split("|FILTER|", 1)
+                cmds = fp[0]
+                options["filter"] = fp[1]
+            if "|INV|" in cmds:
+                parts = cmds.split("|INV|", 1)
+                cmds = parts[0]
+                options["inventory"] = parts[1]
+            if "|VERIFY|" in cmds:
+                vp = cmds.split("|VERIFY|", 1)
+                cmds = vp[0]
+                options["verify"] = vp[1]
+            options["commands"] = cmds
         if yaml_content: options["yaml_content"] = yaml_content
         if k8s_ns: options["namespace"] = k8s_ns
         if k8s_deploy: options["deployment"] = k8s_deploy

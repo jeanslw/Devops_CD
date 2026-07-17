@@ -69,5 +69,5 @@ input:focus,select:focus{outline:none;border-color:#4caf50}
 /* ── 部署面板 ── */
 .deploy-layout{display:flex;flex-direction:column;gap:16px}
 
-pre#deploy-out,pre#pipeline-out{margin-top:12px;font-size:13px;color:#00ff00;white-space:pre-wrap;max-height:350px;overflow-y:auto;background:#0a0a0a;padding:12px;border-radius:4px;font-family:'Cascadia Code',Consolas,monospace;line-height:1.5;border:1px solid #333}
-pre#deploy-out::before{content:'$ 部署输出\a';color:#888;font-size:11px}
+pre#deploy-out,pre#ssh-out,pre#k8s-out,pre#shell-out{margin-top:12px;font-size:13px;color:#00ff00;white-space:pre-wrap;max-height:350px;overflow-y:auto;background:#0a0a0a;padding:12px;border-radius:4px;font-family:'Cascadia Code',Consolas,monospace;line-height:1.5;border:1px solid #333}
+pre#deploy-out::before,pre#ssh-out::before,pre#k8s-out::before{content:'$ 部署输出\a';color:#888;font-size:11px}

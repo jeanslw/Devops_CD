@@ -74,3 +74,33 @@ def stop(
         return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
     except Exception as e:
         return {"success": False, "output": str(e)}
+
+
+@router.post("/stop-k8s")
+def stop_k8s(
+    req: DeployRequest,
+    db: Database = Depends(get_db),
+    username: str = Depends(verify_token),
+):
+    """K8S 停止: kubectl delete -f YAML 或 kubectl delete deployment"""
+    if not req.server_ids:
+        raise HTTPException(400, "请选择目标集群")
+    sid = int(req.server_ids.split(",")[0])
+    conn = db.conn()
+    srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
+    if not srv:
+        raise HTTPException(400, "集群不存在")
+
+    target = DeployTarget(host=srv["host"], port=srv["port"], user=srv["user"], password=srv["password"] or "")
+    project = req.project
+
+    cmd = f"kubectl delete -f {req.target_path}" if req.target_path else f"kubectl delete deployment/{project}"
+    try:
+        ssh = ssh_connect(target, settings.ssh_timeout)
+        _, stdout, stderr = ssh.exec_command(cmd)
+        out = stdout.read().decode().strip()
+        err = stderr.read().decode().strip()
+        ssh.close()
+        return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+    except Exception as e:
+        return {"success": False, "output": str(e)}

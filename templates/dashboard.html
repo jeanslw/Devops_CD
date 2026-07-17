@@ -61,19 +61,26 @@
         <div id="s-mode-wrap"><label>模式</label><select id="s-mode" onchange="toggleSshMode()"><option value="commands">自定义命令</option><option value="ansible">Ansible</option></select></div>
         <div><label>服务器</label><select id="s-server"><option value="0">— 选择 —</option></select></div>
         <div id="s-path-wrap" style="display:none"><label>Playbook</label><input id="s-path" placeholder="/opt/ansible/deploy.yml"></div>
+                <div id="s-inv-wrap" style="display:none"><label>Inventory</label><input id="s-inv" placeholder="留空则需主机预配 /etc/ansible/hosts"></div>
         <div><label>通知</label><select id="s-bot"><option value="0">— 不通知 —</option></select></div>
       </div>
-      <div id="s-cmd-wrap" style="margin-bottom:8px"><label>命令</label><textarea id="s-cmds" rows="6" placeholder="docker pull {image}&#10;docker stop {project}&#10;docker run -d --name {project} {image}" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
-      <button class="btn btn-green" onclick="doSshDeploy()">🚀 部署</button><pre id="ssh-out"></pre></div></div></div></div>
+      <div id="s-cmd-wrap" style="margin-bottom:8px">
+              <label>命令</label>
+              <select onchange="pickSshTemplate(this)" style="margin-bottom:4px"><option value="">— 预设模板 —</option><option value="docker">Docker 部署（重建）</option><option value="docker-run">Docker 部署（仅启动）</option><option value="compose">docker-compose</option><option value="kubectl">kubectl set image</option><option value="helm">Helm upgrade</option></select>
+              <textarea id="s-cmds" rows="6" placeholder="docker pull {image}&#10;docker stop {project}&#10;docker run -d --name {project} {image}" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
+              <div id="s-verify-wrap" style="margin-bottom:8px;display:none"><label>验证命令（可选,exit 0=成功）</label><input id="s-verify" placeholder="docker ps --format '{{.Image}}' | grep {tag}"></div>
+              <div id="s-filter-wrap" style="margin-bottom:8px"><label>过滤规则（可选）</label><input id="s-filter" placeholder="{project} 或留空显示全部"></div>
+      <button class="btn btn-green" onclick="doSshDeploy()">🚀 部署</button><button class="btn btn-red" onclick="doSshStop()" style="margin-left:8px">🛑 停止</button><pre id="ssh-out"></pre></div></div></div></div>
 
       <!-- Docker Deploy -->
       <div class="panel" id="panel-deploy"><div class="deploy-layout"><div><div class="card" id="pipeline-status-card"><h3>🔍 CI 构建状态</h3><div id="pipeline-stages"><span style="color:#888;font-size:12px">选择项目后自动加载</span></div></div></div><div><div class="card"><h3>🐳 Docker 部署</h3>
+      <select id="d-type" style="display:none"><option value="compose" selected></option></select>
       <div class="grid2">
         <div><label>项目</label><select id="d-project"></select></div>
         <div><label>Tag</label><select id="d-tag"></select></div>
         <div id="d-mode-wrap"><label>模式</label><select id="d-mode" onchange="toggleDeployMode()"><option value="remote">docker-compose.yml</option><option value="commands">自定义命令</option></select></div>
         <div><label>服务器</label><select id="d-server"><option value="0">— 选择 —</option></select></div>
-        <div id="d-path-wrap" style="display:none"><label>路径</label><input id="d-path" placeholder="/opt/app"></div>
+        <div id="d-path-wrap" style="display:none"><label>应用路径</label><input id="d-path" placeholder="/opt/app"></div>
         <div><label>通知</label><select id="d-bot"><option value="0">— 不通知 —</option></select></div>
       </div>
       <div id="d-yaml-wrap" style="display:none;margin-bottom:8px"><label>在线 YAML（可选）</label><textarea id="d-yaml" rows="14" placeholder="services:&#10;  app:&#10;    image: {image}&#10;    ports: ['80:80']" style="width:100%;resize:vertical;font-family:monospace"></textarea></div>
@@ -87,13 +94,13 @@
       <div class="grid2" style="margin-bottom:12px">
         <div><label>项目</label><select id="k-project"></select></div>
         <div><label>Tag</label><select id="k-tag"></select></div>
-        <div><label>CD 类型</label><select id="k-cdtype" onchange="toggleK8sType()"><option value="kubectl">kubectl SSH</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option></select></div>
+        <div><label>CD 类型</label><select id="k-cdtype" onchange="toggleK8sType()"><option value="kubectl">kubectl SSH</option><option value="helm">Helm</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option></select></div>
         <div><label>集群</label><select id="k-cluster"><option value="0">— 选择 —</option></select></div>
       </div>
       <div id="k-path-wrap" style="margin-bottom:8px;display:none"><label>YAML 路径</label><input id="k-path" placeholder="/opt/k8s/deploy.yaml"></div>
       <div id="k-api-wrap" style="margin-bottom:8px;display:none"><label>API 地址</label><input id="k-api" placeholder="https://argocd:30443"></div>
       <div><label>通知</label><select id="k-bot"><option value="0">— 不通知 —</option></select></div>
-      <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><pre id="k8s-out"></pre></div></div>
+      <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><button class="btn btn-red" onclick="doK8sStop()" style="margin-left:8px">🛑 停止</button><pre id="k8s-out"></pre></div></div>
 
       <!-- Logs -->
       <div class="panel" id="panel-logs"><div class="card"><h3>📜 部署记录</h3><table><thead><tr><th>时间</th><th>项目</th><th>Tag</th><th>方式</th><th>状态</th><th>详情</th></tr></thead><tbody id="log-tbody"></tbody></table></div></div>

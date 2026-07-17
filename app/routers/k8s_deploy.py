@@ -52,6 +52,8 @@ def deploy_k8s(
         result = deploy_argocd(req, image, project_key, host, pwd)
     elif req.cd_type == "fluxcd":
         result = deploy_fluxcd(req, image, project_key, host, pwd)
+    elif req.cd_type == "helm":
+        result = deploy_helm(req, image, project_key, host, port, user, pwd)
     else:
         result = deploy_kubectl(req, image, project_key, host, port, user, pwd)
 
@@ -68,31 +70,56 @@ def deploy_k8s(
     return result
 
 
+def _kubectl_pods(ssh, project=""):
+    """获取 K8S pod 列表，可选按项目名过滤"""
+    cmd = "kubectl get pods -o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,STATUS:.status.phase --no-headers 2>/dev/null"
+    if project:
+        cmd += f" | grep '{project}'"
+    _, stdout, stderr = ssh.exec_command(cmd)
+    out = stdout.read().decode().strip()
+    return out or stderr.read().decode().strip()
+
+
 def deploy_kubectl(req, image, project, host, port, user, pwd):
     if not req.path:
         raise HTTPException(400, "kubectl 模式需要 YAML 路径")
 
     target = DeployTarget(host=host, port=port, user=user, password=pwd)
 
+    tag = req.tag
+    filter_name = project.split("/")[-1]
     cmds = [
-        f"kubectl apply -f {req.path}",
-        "sleep 5",
-        f"kubectl get pods -o wide",
+        f"sed 's/{{TAG}}/{tag}/g' {req.path} | kubectl apply -f -",
+        "sleep 8",
+        f"kubectl get pods -o wide | grep '{filter_name}'",
     ]
 
     ssh = ssh_connect(target, settings.ssh_timeout)
-    output = []
+    deploy_log = []
     try:
+        # 部署前查看当前版本
+        before = _kubectl_pods(ssh, filter_name)
+        before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
+
+        # 部署
         for c in cmds:
             _, stdout, stderr = ssh.exec_command(c)
             o = stdout.read().decode().strip()
             e = stderr.read().decode().strip()
-            if o: output.append(o)
-            elif e: output.append(e)
+            if o: deploy_log.append(o)
+            elif e: deploy_log.append(e)
+
+        # 部署后查看新版本
+        after = _kubectl_pods(ssh, filter_name)
+
         ssh.close()
-        text = "\n".join(output)
-        return {"success": "Running" in text or "created" in text.lower(),
-                "output": text[:settings.log_truncate_chars]}
+
+        # 验证：after 中包含目标 tag 且状态为 Running
+        matched = 1 if (after and req.tag in after and "Running" in after) else 0
+
+        result = f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log) + f"\n\n部署完成！\n\n当前运行新版本:\n{after or '(无)'}"
+        result += f"\n\n验证部署: {'✅ 部署成功！' if matched > 0 else '❌ 部署失败！(版本不匹配)'}"
+        return {"success": matched > 0, "output": result[:settings.log_truncate_chars]}
     except Exception as e:
         return {"success": False, "output": str(e)}
 
@@ -154,6 +181,38 @@ def deploy_argocd(req, image, project, host, token):
             output.append(f"Status: {health}, Sync: {sync}")
 
         return {"success": True, "output": "\n".join(output)}
+    except Exception as e:
+        return {"success": False, "output": str(e)}
+
+
+def deploy_helm(req, image, project, host, port, user, pwd):
+    """Helm: helm upgrade --install"""
+    target = DeployTarget(host=host, port=port, user=user, password=pwd)
+    tag = req.tag
+    chart = req.path or f"/opt/helm/{project}"
+    ns = "default"
+    cmds = [
+        f"helm upgrade --install {project} {chart} --set image.tag={tag} --set image.repository={image.split(':')[0]} -n {ns} --wait --timeout 120s --force --recreate-pods",
+        "sleep 5",
+        f"kubectl get pods -o wide | grep '{project.split('/')[-1]}'"
+    ]
+    ssh = ssh_connect(target, settings.ssh_timeout)
+    try:
+        before = _kubectl_pods(ssh, project.split("/")[-1])
+        deploy_log = []
+        for c in cmds:
+            _, stdout, stderr = ssh.exec_command(c)
+            o = stdout.read().decode().strip()
+            e = stderr.read().decode().strip()
+            if o: deploy_log.append(o)
+            elif e: deploy_log.append(e)
+        after = _kubectl_pods(ssh, project.split("/")[-1])
+        ssh.close()
+        matched = 1 if (after and tag in after and "Running" in after) else 0
+        before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
+        result = f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log) + f"\n\n部署完成！\n\n当前运行新版本:\n{after or '(无)'}"
+        result += f"\n\n验证部署: {'✅ 部署成功！' if matched > 0 else '❌ 部署失败！(版本不匹配)'}"
+        return {"success": matched > 0, "output": result[:settings.log_truncate_chars]}
     except Exception as e:
         return {"success": False, "output": str(e)}
 

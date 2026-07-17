@@ -372,7 +372,7 @@ function toggleDeployMode() {
     pathInput.placeholder = "/opt/ansible/deploy.yml";
   } else if (t === "compose" && m === "remote") {
     pathWrap.style.display = "block";
-    pathLabel.textContent = "目录路径";
+    pathLabel.textContent = "应用路径";
     pathInput.placeholder = "/opt/app （不存在则自动创建）";
     document.getElementById("d-yaml-wrap").style.display = "block";
   } else if (t === "k8s" && m === "apply") {
@@ -445,36 +445,35 @@ async function doStop() {
 
 // ── 部署记录 ──
 
+let _logData = [];
+
 async function loadLogs() {
   const r = await fetch("/api/deploy-logs");
   const d = await r.json();
+  _logData = d;
   document.getElementById("log-tbody").innerHTML = d
     .map(
-      (l) =>
-        `<tr style="cursor:pointer" onclick="showLogDetail(this, '${escape(l.output || '')}')">
+      (l, idx) =>
+        `<tr style="cursor:pointer" data-log-idx="${idx}">
           <td>${l.created_at}</td><td>${l.project}</td><td>${l.tag}</td><td>${l.deploy_type}</td>
           <td><span class="badge badge-${l.status === "ok" ? "ok" : l.status === "failed" ? "err" : "pend"}">${l.status}</span></td>
           <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.output || ""}</td>
         </tr>`
     )
     .join("");
-}
 
-function showLogDetail(tr, output) {
-  // 如果已展开，收起
-  const existing = tr.nextElementSibling;
-  if (existing && existing.classList.contains("log-detail")) {
-    existing.remove();
-    return;
-  }
-  const detail = document.createElement("tr");
-  detail.className = "log-detail";
-  detail.innerHTML = `<td colspan="6"><pre style="margin:8px 0;font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto;background:#111;color:#00ff00;padding:10px;border-radius:4px;font-family:monospace">${output || "(无输出)"}</pre></td>`;
-  tr.parentNode.insertBefore(detail, tr.nextSibling);
-}
-
-function escape(s) {
-  return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n").replace(/\r/g, "");
+  document.getElementById("log-tbody").onclick = function(e) {
+    const tr = e.target.closest("tr");
+    if (!tr || tr.dataset.logIdx === undefined) return;
+    const existing = tr.nextElementSibling;
+    if (existing && existing.classList.contains("log-detail")) { existing.remove(); return; }
+    const output = _logData[parseInt(tr.dataset.logIdx)]?.output || "(无输出)";
+    const escaped = output.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const detail = document.createElement("tr");
+    detail.className = "log-detail";
+    detail.innerHTML = `<td colspan="6"><pre style="margin:8px 0;font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto;background:#111;color:#00ff00;padding:10px;border-radius:4px;font-family:monospace">${escaped}</pre></td>`;
+    tr.parentNode.insertBefore(detail, tr.nextSibling);
+  };
 }
 
 // ── 通知 BOT 管理 ──
@@ -528,10 +527,25 @@ async function delBot(id) {
 
 // ── SSH 单机部署 ──
 
+function pickSshTemplate(sel) {
+  const templates = {
+    docker: "docker pull {image}\ndocker stop {project} 2>/dev/null; docker rm {project} 2>/dev/null\ndocker run -d --name {project} --restart=always {image}",
+    "docker-run": "docker pull {image}\ndocker run -d --name {project} --restart=always {image}",
+    compose: "cd /opt/{project} && sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG={tag}/' .env 2>/dev/null; grep -q IMAGE_TAG .env 2>/dev/null || echo IMAGE_TAG={tag} >> .env; IMAGE_TAG={tag} docker compose pull && IMAGE_TAG={tag} docker compose up -d --force-recreate",
+    kubectl: "kubectl set image deployment/{project} {project}={image} && kubectl rollout status deployment/{project}",
+    helm: "helm upgrade --install {project} /opt/helm/{project} --set image.tag={tag} --wait",
+  };
+  const v = sel.value;
+  if (v) document.getElementById("s-cmds").value = templates[v];
+  sel.value = "";
+}
+
 function toggleSshMode() {
   const m = document.getElementById("s-mode").value;
   document.getElementById("s-cmd-wrap").style.display = m === "commands" ? "block" : "none";
   document.getElementById("s-path-wrap").style.display = m === "ansible" ? "block" : "none";
+  document.getElementById("s-inv-wrap").style.display = m === "ansible" ? "block" : "none";
+  document.getElementById("s-verify-wrap").style.display = m === "commands" ? "block" : "none";
 }
 
 async function loadSshForm() {
@@ -570,14 +584,25 @@ async function doSshDeploy() {
   const body = {
     project: document.getElementById("s-project").value, tag, deploy_type: "ssh",
     server_ids: String(sid), deploy_mode: document.getElementById("s-mode").value,
-    target_path: document.getElementById("s-path").value, commands: document.getElementById("s-cmds").value,
+    target_path: document.getElementById("s-path").value,
+    commands: document.getElementById("s-cmds").value
+      + (document.getElementById("s-inv").value ? "|INV|" + document.getElementById("s-inv").value : "")
+      + (document.getElementById("s-verify").value ? "|VERIFY|" + document.getElementById("s-verify").value : "")
+      + "|FILTER|" + (document.getElementById("s-filter").value || ""),
     bot_id: parseInt(document.getElementById("s-bot").value) || 0,
   };
   const out = document.getElementById("ssh-out"); out.textContent = "$ 正在部署...\n";
   const r = await fetch("/api/deploy", { method: "POST", headers: Object.assign({"Content-Type":"application/json"}, A()), body: JSON.stringify(body) });
   const d = await r.json();
+  const filterVal = (document.getElementById("s-filter").value || "").replace("{project}", body.project).replace("{name}", body.project.split("/").pop()).replace("{tag}", body.tag);
   const results = d.results || [d.result || d];
-  let text = ""; results.forEach((r, i) => { text += `\n${r.status==="ok"?"✅":"❌"} [${r.host||"?"}] ${r.status}\n${r.output||""}\n`; });
+  let text = ""; results.forEach((r, i) => {
+    let output = r.output || "";
+    if (filterVal) {
+      output = output.split("\n").filter(l => l.includes(filterVal)).join("\n") || output;
+    }
+    text += `\n${r.status==="ok"?"✅":"❌"} [${r.host||"?"}] ${r.status}\n${output}\n`;
+  });
   out.textContent = text.trim(); toast(d.success ? "✅ 部署成功" : "❌ 部署失败", d.success);
 }
 
@@ -585,8 +610,8 @@ async function doSshDeploy() {
 
 function toggleK8sType() {
   const t = document.getElementById("k-cdtype").value;
-  document.getElementById("k-path-wrap").style.display = t === "kubectl" ? "block" : "none";
-  document.getElementById("k-api-wrap").style.display = t === "argocd" || t === "fluxcd" ? "block" : "none";
+  document.getElementById("k-path-wrap").style.display = (t === "kubectl" || t === "helm") ? "block" : "none";
+  document.getElementById("k-api-wrap").style.display = (t === "argocd" || t === "fluxcd") ? "block" : "none";
 }
 
 async function loadK8sForm() {
@@ -619,6 +644,24 @@ async function loadK8sForm() {
   const el = document.getElementById("k-project");
   const proj = el.value || (d[0]?.job_name);
   if (proj) { loadK8sTags(proj); viewPipeline(proj); }
+}
+
+async function doSshStop() {
+  if (!confirm("确定停止？")) return;
+  const sid = parseInt(document.getElementById("s-server").value) || 0; if (!sid) return toast("请选择服务器", false);
+  const body = { project: document.getElementById("s-project").value, deploy_type: "ssh", server_ids: String(sid), target_path: document.getElementById("s-path").value };
+  document.getElementById("ssh-out").textContent = "停止中…";
+  const r = await fetch("/api/stop", { method: "POST", headers: Object.assign({"Content-Type":"application/json"}, A()), body: JSON.stringify(body) });
+  const d = await r.json(); document.getElementById("ssh-out").textContent = d.output || ""; toast(d.success ? "✅ 已停止" : "❌ 失败", d.success);
+}
+
+async function doK8sStop() {
+  if (!confirm("确定停止？")) return;
+  const sid = parseInt(document.getElementById("k-cluster").value) || 0; if (!sid) return toast("请选择集群", false);
+  const body = { project: document.getElementById("k-project").value, deploy_type: "k8s", server_ids: String(sid), target_path: document.getElementById("k-path").value };
+  document.getElementById("k8s-out").textContent = "停止中…";
+  const r = await fetch("/api/stop-k8s", { method: "POST", headers: Object.assign({"Content-Type":"application/json"}, A()), body: JSON.stringify(body) });
+  const d = await r.json(); document.getElementById("k8s-out").textContent = d.output || ""; toast(d.success ? "✅ 已停止" : "❌ 失败", d.success);
 }
 
 async function loadK8sTags(project) {

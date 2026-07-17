@@ -27,8 +27,6 @@ class ComposeDeployer(Deployer):
         else:
             if not target.path:
                 return DeployResult(image=image, status="failed", output="缺少 compose 路径")
-
-            # 在线编写的 YAML → 先上传到服务器
             if yaml_content:
                 content = yaml_content.replace("{image}", image).replace("{tag}", tag).replace("{project}", project)
                 err = self._upload_file(target, content)
@@ -36,14 +34,45 @@ class ComposeDeployer(Deployer):
                     return DeployResult(image=image, status="failed", output=f"YAML 上传失败: {err}")
 
             login = f"echo {settings.harbor_password} | docker login {settings.harbor_registry} -u {settings.harbor_user} --password-stdin 2>/dev/null; " if settings.harbor_password else ""
+            # 同时写入 .env，手动重启也保留版本
             cmd = (
                 f"{login}"
                 f"cd {target.path} && "
+                f"sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG={tag}/' .env 2>/dev/null; "
+                f"grep -q IMAGE_TAG .env 2>/dev/null || echo IMAGE_TAG={tag} >> .env; "
                 f"IMAGE_TAG={tag} docker compose pull && "
-                f"docker compose up -d --force-recreate"
+                f"IMAGE_TAG={tag} docker compose up -d --force-recreate"
             )
 
-        return self._ssh_run(target, cmd, image)
+        # 部署前查看当前运行版本
+        before = self._ssh_run(target,
+            f"cd {target.path} && docker compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Config.Image}}}}' 2>/dev/null",
+            image)
+
+        result = self._ssh_run(target, cmd, image)
+        deploy_text = result.output
+
+        # 查看应用新版本
+        self._ssh_run(target, "sleep 3", image)
+        running = self._ssh_run(target,
+            f"cd {target.path} && docker compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null",
+            image)
+        if not running.output.strip():
+            running = self._ssh_run(target,
+                f"docker ps --format '{{{{.Names}}}} {{{{.Image}}}}' 2>/dev/null", image)
+
+        result.output = f"当前运行版本:\n{before.output or '(无)'}\n\n开始部署:\n{deploy_text}\n\n部署完成！\n\n查看应用新版本:\n{running.output or '(无运行中容器)'}"
+
+        if running.output and tag in running.output:
+            result.status = "ok"
+            result.output += f"\n\n验证部署: ✅ 部署成功！"
+        elif all(s not in deploy_text.lower() for s in ["up", "starting", "started", "created"]):
+            result.status = "failed"
+            result.output += f"\n\n验证部署: ❌ 部署失败！"
+        else:
+            result.status = "failed"
+            result.output += f"\n\n验证部署: ❌ 部署失败！(版本不匹配)"
+        return result
 
     def _upload_file(self, target: DeployTarget, content: str) -> str | None:
         """SFTP 写文件。返回 None=成功，返回 str=错误信息"""
