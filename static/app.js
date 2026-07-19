@@ -611,7 +611,7 @@ async function doSshDeploy() {
 function toggleK8sType() {
   const t = document.getElementById("k-cdtype").value;
   document.getElementById("k-path-wrap").style.display = (t === "kubectl" || t === "helm") ? "block" : "none";
-  document.getElementById("k-api-wrap").style.display = (t === "argocd" || t === "fluxcd") ? "block" : "none";
+  document.getElementById("k-api-wrap").style.display = t === "argocd" ? "block" : "none";
 }
 
 async function loadK8sForm() {

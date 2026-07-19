@@ -97,7 +97,8 @@
         <div><label>CD 类型</label><select id="k-cdtype" onchange="toggleK8sType()"><option value="kubectl">kubectl SSH</option><option value="helm">Helm</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option></select></div>
         <div><label>集群</label><select id="k-cluster"><option value="0">— 选择 —</option></select></div>
       </div>
-      <div id="k-path-wrap" style="margin-bottom:8px;display:none"><label>YAML 路径</label><input id="k-path" placeholder="/opt/k8s/deploy.yaml"></div>
+      <div style="margin-bottom:8px;font-size:11px;color:#667">💡 Namespace 请在 YAML 中声明，留空不传 -n</div>
+              <div id="k-path-wrap" style="margin-bottom:8px;display:none"><label>YAML 路径</label><input id="k-path" placeholder="/opt/k8s/deploy.yaml"></div>
       <div id="k-api-wrap" style="margin-bottom:8px;display:none"><label>API 地址</label><input id="k-api" placeholder="https://argocd:30443"></div>
       <div><label>通知</label><select id="k-bot"><option value="0">— 不通知 —</option></select></div>
       <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><button class="btn btn-red" onclick="doK8sStop()" style="margin-left:8px">🛑 停止</button><pre id="k8s-out"></pre></div></div>

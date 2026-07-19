@@ -19,6 +19,7 @@ class K8sDeployRequest(BaseModel):
     cluster_id: int = 0
     path: str = ""              # YAML path for kubectl mode
     api_url: str = ""           # Argo CD / Flux API base
+    k8s_ns: str = ""            # 留空不传 -n，namespace 在 YAML 中声明
     bot_id: int = 0
 
 
@@ -35,6 +36,7 @@ def deploy_k8s(
 
     image = f"{settings.harbor_registry}/{harbor_repo}:{req.tag}"
     project_key = svc.resolve_project_key(req.project) or req.project
+    project_short = project_key.split("/")[-1]  # php/devops-glue → devops-glue
 
     # 查集群
     if req.cluster_id:
@@ -49,13 +51,13 @@ def deploy_k8s(
 
     # 路由到对应 deployer
     if req.cd_type == "argocd":
-        result = deploy_argocd(req, image, project_key, host, pwd)
+        result = deploy_argocd(req, image, project_short, host, pwd)
     elif req.cd_type == "fluxcd":
-        result = deploy_fluxcd(req, image, project_key, host, pwd)
+        result = deploy_fluxcd(req, image, project_short, host, pwd)
     elif req.cd_type == "helm":
-        result = deploy_helm(req, image, project_key, host, port, user, pwd)
+        result = deploy_helm(req, image, project_short, host, port, user, pwd)
     else:
-        result = deploy_kubectl(req, image, project_key, host, port, user, pwd)
+        result = deploy_kubectl(req, image, project_short, host, port, user, pwd)
 
     # 记录日志
     conn = db.conn()
@@ -81,16 +83,51 @@ def _kubectl_pods(ssh, project=""):
 
 
 def deploy_kubectl(req, image, project, host, port, user, pwd):
-    if not req.path:
-        raise HTTPException(400, "kubectl 模式需要 YAML 路径")
-
     target = DeployTarget(host=host, port=port, user=user, password=pwd)
 
     tag = req.tag
     filter_name = project.split("/")[-1]
+
+    # YAML 来源：master 本地路径 或 远程 URL
+    yaml_content = ""
+    if not req.path:
+        raise HTTPException(400, "kubectl 模式需要 YAML 路径或 URL")
+    if req.path.startswith("http"):
+        # CD 拉取远程 YAML
+        import requests
+        r = requests.get(req.path, timeout=10)
+        if r.status_code != 200:
+            raise HTTPException(400, f"无法获取远程 YAML: {req.path}")
+        yaml_content = r.text
+    else:
+        # master 本地路径
+        try:
+            ssh = ssh_connect(target, settings.ssh_timeout)
+            _, stdout, _ = ssh.exec_command(f"cat {req.path}")
+            yaml_content = stdout.read().decode()
+            ssh.close()
+        except Exception:
+            raise HTTPException(400, f"无法读取远程 YAML: {req.path}")
+
+    # 替换 {TAG} 和 {IMAGE}
+    yaml_content = yaml_content.replace("{TAG}", tag).replace("{IMAGE}", image)
+
+    tmp = f"/tmp/k8s-{filter_name}.yaml"
+
+    # SFTP 写临时 YAML
+    try:
+        ssh2 = ssh_connect(target, settings.ssh_timeout)
+        sftp = ssh2.open_sftp()
+        with sftp.file(tmp, "w") as f:
+            f.write(yaml_content)
+        sftp.close()
+        ssh2.close()
+    except Exception as e:
+        raise HTTPException(400, f"YAML 上传失败: {e}")
+
     cmds = [
-        f"sed 's/{{TAG}}/{tag}/g' {req.path} | kubectl apply -f -",
-        "sleep 8",
+        f"kubectl apply -f {tmp} && kubectl rollout restart deployment/{filter_name}",
+        "sleep 10",
         f"kubectl get pods -o wide | grep '{filter_name}'",
     ]
 
@@ -115,7 +152,7 @@ def deploy_kubectl(req, image, project, host, port, user, pwd):
         ssh.close()
 
         # 验证：after 中包含目标 tag 且状态为 Running
-        matched = 1 if (after and req.tag in after and "Running" in after) else 0
+        matched = 1 if (after and tag in after and "Running" in after) else 0
 
         result = f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log) + f"\n\n部署完成！\n\n当前运行新版本:\n{after or '(无)'}"
         result += f"\n\n验证部署: {'✅ 部署成功！' if matched > 0 else '❌ 部署失败！(版本不匹配)'}"
@@ -160,11 +197,11 @@ def deploy_argocd(req, image, project, host, token):
             patch = {"spec": {"source": {"helm": {"parameters": params}}}}
 
         r = requests.put(f"{base}/api/v1/applications/{project}", json=patch, headers=headers, timeout=10, verify=False)
-        output.append(f"Patch: {r.status_code}")
+        output.append(f"更新镜像配置: {'✅ 成功' if r.status_code == 200 else '❌ 失败 (' + str(r.status_code) + ')'}")
 
         # 3. Sync
         r = requests.post(f"{base}/api/v1/applications/{project}/sync", json={}, headers=headers, timeout=10, verify=False)
-        output.append(f"Sync: {r.status_code}")
+        output.append(f"触发同步 (Sync): {'✅ 已触发' if r.status_code == 200 else '❌ 失败 (' + str(r.status_code) + ')'}")
 
         # 4. 等待 healthy
         import time
@@ -175,10 +212,10 @@ def deploy_argocd(req, image, project, host, token):
             health = a.get("status", {}).get("health", {}).get("status", "")
             sync = a.get("status", {}).get("sync", {}).get("status", "")
             if health == "Healthy":
-                output.append(f"Status: Healthy, Sync: {sync}")
+                output.append(f"部署状态: 🟢 Healthy | 同步状态: {sync}")
                 break
         else:
-            output.append(f"Status: {health}, Sync: {sync}")
+            output.append(f"部署状态: {health or '未知'} | 同步状态: {sync or '未知'}")
 
         return {"success": True, "output": "\n".join(output)}
     except Exception as e:
@@ -190,9 +227,11 @@ def deploy_helm(req, image, project, host, port, user, pwd):
     target = DeployTarget(host=host, port=port, user=user, password=pwd)
     tag = req.tag
     chart = req.path or f"/opt/helm/{project}"
-    ns = "default"
+    ns = req.k8s_ns
+    ns_flag = f" -n {ns}" if ns else ""
     cmds = [
-        f"helm upgrade --install {project} {chart} --set image.tag={tag} --set image.repository={image.split(':')[0]} -n {ns} --wait --timeout 120s --force --recreate-pods",
+        f"kubectl delete svc/{project}{ns_flag} --ignore-not-found 2>/dev/null; kubectl delete deploy/{project}{ns_flag} --ignore-not-found 2>/dev/null; sleep 2",
+        f"helm upgrade --install {project} {chart} --set image.tag={tag} --set image.repository={image.split(':')[0]}{ns_flag} --wait --timeout 120s --recreate-pods",
         "sleep 5",
         f"kubectl get pods -o wide | grep '{project.split('/')[-1]}'"
     ]
@@ -220,26 +259,39 @@ def deploy_helm(req, image, project, host, port, user, pwd):
 def deploy_fluxcd(req, image, project, host, pwd):
     """Flux CD: patch HelmRelease/Kustomization + watch status"""
     target = DeployTarget(host=host, port=22, user="root", password=pwd)
+    tag = req.tag
+    filter_name = project.split("/")[-1]
 
+    img_name = image.split(":")[0]  # hub.abc.com/mycode/devops-glue
     cmds = [
-        f"kubectl patch helmrelease {project} -n flux-system --type=merge -p '{{\"spec\":{{\"values\":{{\"image\":{{\"tag\":\"{image.split(':')[-1] if ':' in image else 'latest'}\"}}}}}}}}' 2>/dev/null || kubectl patch kustomization {project} -n flux-system --type=merge -p '{{\"spec\":{{\"images\":[{{\"name\":\"{project}\",\"newTag\":\"{image.split(':')[-1] if ':' in image else 'latest'}\"}}]}}}}'",
-        f"kubectl wait helmrelease/{project} -n flux-system --for=condition=ready --timeout=120s 2>/dev/null || kubectl wait kustomization/{project} -n flux-system --for=condition=ready --timeout=120s",
-        f"sleep 3",
-        f"kubectl get pods -o wide | grep {project} || kubectl get pods -o wide",
+        f"kubectl patch helmrelease.helm.toolkit.fluxcd.io {project} -n flux-system --type=merge -p '{{\"spec\":{{\"values\":{{\"image\":{{\"tag\":\"{tag}\"}}}}}}}}' 2>/dev/null || kubectl patch kustomization.kustomize.toolkit.fluxcd.io {project} -n flux-system --type=merge -p '{{\"spec\":{{\"images\":[{{\"name\":\"{img_name}\",\"newTag\":\"{tag}\"}}]}}}}'",
+        f"kubectl annotate kustomization {project} -n flux-system reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite 2>/dev/null",
+        "sleep 15",
+        f"kubectl get pods -o wide | grep '{filter_name}'",
     ]
 
     try:
         ssh = ssh_connect(target, settings.ssh_timeout)
-        output = []
+        before = _kubectl_pods(ssh, filter_name)
+        before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
+
+        deploy_log = []
         for c in cmds:
             _, stdout, stderr = ssh.exec_command(c)
             o = stdout.read().decode().strip()
             e = stderr.read().decode().strip()
-            if o: output.append(o)
-            elif e: output.append(e)
+            if o: deploy_log.append(o)
+            elif e: deploy_log.append(e)
+
+        after = _kubectl_pods(ssh, filter_name)
         ssh.close()
-        text = "\n".join(output)
-        return {"success": "Running" in text or "ready" in text.lower(),
-                "output": text[:settings.log_truncate_chars]}
+
+        # 只比较新 pod（排除旧 pod 残留）
+        new_pods = [l for l in after.split("\n") if not before or l.split()[0] not in [b.split()[0] for b in before.split("\n")]]
+        new_after = "\n".join(new_pods) if new_pods else after
+        matched = 1 if (new_after and tag in new_after and "Running" in new_after) else 0
+        result = f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log) + f"\n\n部署完成！\n\n当前运行新版本:\n{new_after or '(无)'}"
+        result += f"\n\n验证部署: {'✅ 部署成功！' if matched > 0 else '❌ 部署失败！(版本不匹配)'}"
+        return {"success": matched > 0, "output": result[:settings.log_truncate_chars]}
     except Exception as e:
         return {"success": False, "output": str(e)}
