@@ -3,16 +3,30 @@
 
 services:
   cd-service:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: cd-service
     env_file:
       - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DB_DRIVER: sqlite
+      DB_PATH: /php_api/config/data/data.db
+      HOST: 0.0.0.0
+      PORT: 8081
     volumes:
       # SQLite 模式: 共享 PHP 的 data.db
       - ../php_api/config/data:/php_api/config/data:rw
     ports:
       - "8081:8081"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     # MySQL 模式: 添加 networks，设置 DB_DRIVER=mysql in .env
     # networks:
     #   - devops-net

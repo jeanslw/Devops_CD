@@ -8,6 +8,18 @@ from .ci_service import CiService
 from .notification import send_webhook
 
 
+def _parse_server_ids(server_ids: str) -> list[int]:
+    """安全地解析 server_ids，忽略空值和非法内容。"""
+    if not server_ids:
+        return []
+    ids: list[int] = []
+    for item in server_ids.split(","):
+        value = item.strip()
+        if value.isdigit():
+            ids.append(int(value))
+    return ids
+
+
 class DeployService:
     """部署编排：整合 CI 查询 + Deployer 执行 + 日志记录 + 通知"""
 
@@ -20,7 +32,9 @@ class DeployService:
         conn = self._db.conn()
         try:
             if server_ids:
-                ids = [int(x.strip()) for x in server_ids.split(",") if x.strip().isdigit()]
+                ids = _parse_server_ids(server_ids)
+                if not ids:
+                    return []
                 placeholders = ",".join("?" * len(ids))
                 rows = conn.execute(
                     f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids

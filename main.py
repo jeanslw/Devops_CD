@@ -15,6 +15,7 @@ from app.routers import auth, projects, servers, deploy, logs, bots, terminal, k
 
 # ── 创建 app ──
 app = FastAPI(title="Devops-Glue CD", version="0.2.0")
+BASE_DIR = Path(__file__).parent
 
 # 注册路由
 app.include_router(auth.router)
@@ -27,13 +28,13 @@ app.include_router(terminal.router)
 app.include_router(k8s_deploy.router)
 
 # 静态文件
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
 # ── Dashboard ──
 @app.get("/", response_class=HTMLResponse)
 def home():
-    template = Path(__file__).parent / "templates" / "index.html"
+    template = BASE_DIR / "templates" / "index.html"
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>首页文件丢失</h1>")
@@ -41,7 +42,7 @@ def home():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
-    template = Path(__file__).parent / "templates" / "dashboard.html"
+    template = BASE_DIR / "templates" / "dashboard.html"
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>模板文件丢失</h1>")
@@ -50,13 +51,12 @@ def dashboard():
 # ── 健康检查 ──
 @app.get("/health")
 def health():
-    from pathlib import Path
-    db_path = Path(settings.db_path)
+    db_path = Path(settings.db_path or "")
     return {
         "status": "ok",
         "version": "0.2.0",
-        "db": str(db_path),
-        "db_exists": db_path.exists(),
+        "db": str(db_path) if str(db_path) else "",
+        "db_exists": db_path.exists() if str(db_path) else False,
     }
 
 

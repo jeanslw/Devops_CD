@@ -716,7 +716,7 @@ function _loadXtermCSS() {
     const link = document.createElement("link");
     link.id = "xterm-css";
     link.rel = "stylesheet";
-    link.href = "https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css";
+    link.href = "/static/vendor/xterm/xterm.min.css";
     document.head.appendChild(link);
   }
 }
@@ -725,7 +725,7 @@ function _loadXtermJS() {
   return new Promise((resolve) => {
     if (window.Terminal) return resolve();
     const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js";
+    s.src = "/static/vendor/xterm/xterm.min.js";
     s.onload = resolve;
     document.head.appendChild(s);
   });
