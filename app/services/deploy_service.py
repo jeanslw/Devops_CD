@@ -10,14 +10,24 @@ from .notification import send_webhook
 
 def _parse_server_ids(server_ids: str) -> list[int]:
     """安全地解析 server_ids，忽略空值和非法内容。"""
-    if not server_ids:
-        return []
-    ids: list[int] = []
-    for item in server_ids.split(","):
-        value = item.strip()
-        if value.isdigit():
-            ids.append(int(value))
-    return ids
+    return [int(s) for s in (server_ids or "").split(",") if s.strip().isdigit()]
+
+
+def _parse_command_options(commands: str) -> dict:
+    """解析命令字符串中的 |FILTER| / |INV| 标记。
+
+    格式: <commands>[|FILTER|<filter>][|INV|<inventory>]
+    """
+    options: dict = {}
+    if not commands:
+        return options
+    cmds = commands
+    for marker, key in (("|FILTER|", "filter"), ("|INV|", "inventory")):
+        if marker in cmds:
+            cmds, value = cmds.split(marker, 1)
+            options[key] = value
+    options["commands"] = cmds
+    return options
 
 
 class DeployService:
@@ -67,6 +77,7 @@ class DeployService:
         k8s_deploy: str = "",
         k8s_container: str = "",
         bot_id: int = 0,
+        callback=None,
     ) -> dict:
         """批量部署到一台或多台服务器"""
         harbor_repo = self._ci.resolve_harbor_repo(project)
@@ -77,22 +88,7 @@ class DeployService:
         project_key = self._ci.resolve_project_key(project) or project
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        options = {}
-        if commands:
-            cmds = commands
-            if "|FILTER|" in cmds:
-                fp = cmds.split("|FILTER|", 1)
-                cmds = fp[0]
-                options["filter"] = fp[1]
-            if "|INV|" in cmds:
-                parts = cmds.split("|INV|", 1)
-                cmds = parts[0]
-                options["inventory"] = parts[1]
-            if "|VERIFY|" in cmds:
-                vp = cmds.split("|VERIFY|", 1)
-                cmds = vp[0]
-                options["verify"] = vp[1]
-            options["commands"] = cmds
+        options = _parse_command_options(commands) if commands else {}
         if yaml_content: options["yaml_content"] = yaml_content
         if k8s_ns: options["namespace"] = k8s_ns
         if k8s_deploy: options["deployment"] = k8s_deploy
@@ -119,19 +115,21 @@ class DeployService:
                 continue
 
             try:
-                r = deployer.deploy(target, image, project_key, tag)
+                r = deployer.deploy(target, image, project_key, tag, callback=callback)
                 results.append({"server_id": sid, "host": target.host, "status": r.status, "output": r.output})
             except Exception as e:
                 results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
 
-        # 记录日志
+        # 记录日志（生成递增 deploy_id，同一次部署共享）
         conn = self._db.conn()
         try:
+            row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
+            deploy_id = row["next_id"] if row else 1
             for r in results:
                 conn.execute(
-                    "INSERT INTO cd_deploy_logs (project,tag,image,deploy_type,target,status,output) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (project_key, tag, image, deploy_type, f"#{r['server_id']} {r['host']}",
+                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (deploy_id, project_key, tag, image, deploy_type, f"#{r['server_id']} {r['host']}",
                      r["status"], r["output"][:settings.log_truncate_chars]),
                 )
             conn.commit()
@@ -141,7 +139,7 @@ class DeployService:
         # 通知
         ok_count = sum(1 for r in results if r["status"] == "ok")
         servers = ", ".join(r.get("host", "?") for r in results)
-        msg = f"[服务器部署] [{now}] {project_key} {tag} → {ok_count}/{len(results)} 成功\n服务器: {servers}\n镜像: {image}"
+        msg = f"[服务器部署] [#{deploy_id}] [{now}] {project_key} {tag} → {ok_count}/{len(results)} 成功\n服务器: {servers}\n镜像: {image}"
         if bot_id:
             conn = self._db.conn()
             try:
@@ -150,7 +148,7 @@ class DeployService:
             finally:
                 conn.close()
 
-        return {"success": ok_count == len(results), "message": msg, "results": results}
+        return {"success": ok_count == len(results), "deploy_id": deploy_id, "message": msg, "results": results}
 
     def list_logs(self, project: str = "") -> list[dict]:
         """查询部署记录"""

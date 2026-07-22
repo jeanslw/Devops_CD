@@ -51,12 +51,12 @@ def dashboard():
 # ── 健康检查 ──
 @app.get("/health")
 def health():
-    db_path = Path(settings.db_path or "")
+    db_path = Path(settings.db_path) if settings.db_path else None
     return {
         "status": "ok",
         "version": "0.2.0",
-        "db": str(db_path) if str(db_path) else "",
-        "db_exists": db_path.exists() if str(db_path) else False,
+        "db": str(db_path) if db_path else "",
+        "db_exists": db_path.exists() if db_path else False,
     }
 
 

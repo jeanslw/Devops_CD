@@ -1,6 +1,9 @@
 """Web Shell + SCP 文件上传"""
 
 import asyncio
+import json
+import os
+import shlex
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends
 from app.database import Database
 from app.auth import verify_token
@@ -45,7 +48,6 @@ async def terminal(websocket: WebSocket, server_id: int):
 
     async def ssh_to_ws():
         """SSH 输出 → WebSocket"""
-        buf = b""
         while not chan.closed:
             try:
                 if chan.recv_ready():
@@ -57,13 +59,23 @@ async def terminal(websocket: WebSocket, server_id: int):
                 break
 
     async def ws_to_ssh():
-        """WebSocket 输入 → SSH"""
+        """WebSocket 输入 → SSH，支持终端尺寸自适应"""
         while not chan.closed:
             try:
                 data = await asyncio.wait_for(websocket.receive(), timeout=0.05)
                 if data["type"] == "websocket.receive":
                     if "text" in data:
-                        chan.send(data["text"])
+                        text = data["text"]
+                        # 终端尺寸自适应（前端 xterm.js 发送 JSON resize 事件）
+                        if text.startswith("{"):
+                            try:
+                                msg = json.loads(text)
+                                if msg.get("type") == "resize":
+                                    chan.resize_pty(width=msg.get("cols", 100), height=msg.get("rows", 28))
+                                    continue
+                            except Exception:
+                                pass
+                        chan.send(text)
                     elif "bytes" in data:
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
@@ -96,6 +108,17 @@ async def upload_file(
     if not srv:
         raise HTTPException(400, "服务器不存在")
 
+    # 安全校验：文件名防路径穿越
+    safe_filename = os.path.basename(file.filename)
+    if not safe_filename:
+        raise HTTPException(400, "无效文件名")
+
+    # 安全校验：路径必须为绝对路径
+    if not path.startswith("/"):
+        raise HTTPException(400, "路径必须为绝对路径，如 /tmp")
+
+    target = path.rstrip("/") + "/" + safe_filename
+
     import paramiko
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -107,10 +130,9 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(400, f"SSH 连接失败: {e}")
 
-    target = path.rstrip("/") + "/" + file.filename
     try:
         sftp = ssh.open_sftp()
-        ssh.exec_command(f"mkdir -p {path}")
+        ssh.exec_command(f"mkdir -p {shlex.quote(path)}")
         with sftp.file(target, "w") as f:
             while True:
                 chunk = await file.read(65536)

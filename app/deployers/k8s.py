@@ -5,7 +5,7 @@
 2. kubectl set image       — 直接改镜像版本（快速迭代）
 """
 
-from .base import Deployer, DeployTarget, DeployResult
+from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from app.config import settings
 
 
@@ -16,7 +16,8 @@ class K8sDeployer(Deployer):
         return "k8s"
 
     def deploy(
-        self, target: DeployTarget, image: str, project: str, tag: str
+        self, target: DeployTarget, image: str, project: str, _tag: str,
+        callback=None,
     ) -> DeployResult:
         if not target.host:
             return DeployResult(image=image, status="failed", output="缺少 K8s 节点主机")
@@ -26,14 +27,12 @@ class K8sDeployer(Deployer):
         container_name = target.options.get("container", project)
 
         if target.path:
-            # YAML apply 模式：apply + 通用 pod 查看
             cmds = [
                 f"kubectl apply -f {target.path}",
                 "sleep 2",
                 f"kubectl get pods -n {namespace} -o wide | grep {project}",
             ]
         else:
-            # set image 模式
             cmds = [
                 f"kubectl set image deployment/{deployment_name} {container_name}={image} -n {namespace}",
                 f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=120s",
@@ -41,19 +40,26 @@ class K8sDeployer(Deployer):
             ]
 
         try:
-            from .base import ssh_connect
-            ssh = ssh_connect(target, settings.ssh_timeout)
-            output_lines = []
-            for c in cmds:
-                _, stdout, stderr = ssh.exec_command(c)
-                o = stdout.read().decode().strip()
-                e = stderr.read().decode().strip()
-                if o: output_lines.append(o)
-                elif e: output_lines.append(e)
-            ssh.close()
+            with ssh_session(target, settings.ssh_timeout) as ssh:
+                self._log(callback, "开始部署 K8s...")
+                output_lines = []
+                for i, c in enumerate(cmds):
+                    self._log(callback, f"\n执行命令 {i+1}: {c}")
+                    o, e = _exec_on(ssh, c)
+                    if o:
+                        output_lines.append(o)
+                        self._log(callback, o)
+                    elif e:
+                        output_lines.append(e)
+                        self._log(callback, e)
 
             output = "\n".join(output_lines)
             is_ok = "successfully rolled out" in output or "Running" in output or "created" in output
+
+            if is_ok:
+                self._log(callback, "\n✅ K8s 部署成功！")
+            else:
+                self._log(callback, "\n❌ K8s 部署失败！")
 
             return DeployResult(
                 image=image,
@@ -61,6 +67,7 @@ class K8sDeployer(Deployer):
                 output=output[:settings.log_truncate_chars],
             )
         except Exception as e:
+            self._log(callback, f"\n❌ K8s 部署失败: {e}")
             return DeployResult(image=image, status="failed", output=str(e))
 
     def validate(self, target: DeployTarget) -> str | None:

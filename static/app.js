@@ -229,20 +229,119 @@ async function loadServers() {
       (s) =>
         `<tr><td>${s.name}</td><td>${s.host}:${s.port}</td><td>${s.type}</td>
          <td>${(s.tags||"").split(",").filter(Boolean).map(t=>`<span class="badge badge-gitlab" style="margin:1px">${t}</span>`).join("")}</td>
-         <td><button class="btn btn-red btn-sm" onclick="delServer(${s.id})">删除</button></td></tr>`
+         <td><button class="btn btn-edit btn-sm" style="margin-right:4px" onclick="editServer(${s.id})">编辑</button><button class="btn btn-red btn-sm" onclick="delServer(${s.id})">删除</button></td></tr>`
     )
     .join("");
   // 部署面板多选
-  const sel = document.getElementById("d-server");
-  if (sel) {
-    sel.innerHTML =
-      '<option value="0">— 请选择 —</option>' +
-      '<option value="*">🔄 全部服务器</option>' +
-      d.map((s) => `<option value="${s.id}">${s.name} (${s.host})</option>`).join("");
+  const list = document.getElementById("d-server-list");
+  if (list) {
+    list.innerHTML = d
+      .map(
+        (s) =>
+          `<div class="multi-select-item" onclick="toggleServerItem('d', this)">
+            <input type="checkbox" value="${s.id}" data-tags="${(s.tags || '').toLowerCase()}" onchange="updateServerSelection('d')">
+            <label>${s.name} (${s.host})</label>
+          </div>`
+      )
+      .join("");
+    // 填充标签栏
+    populateTags('d', d);
+    updateServerSelection('d');
   }
 }
 
+// ── 服务器多选下拉 ──
+
+function toggleServerDropdown(prefix) {
+  const wrap = document.getElementById(prefix + "-server-wrap");
+  if (wrap) wrap.classList.toggle("open");
+}
+
+function toggleServerItem(prefix, el) {
+  const cb = el.querySelector("input[type='checkbox']");
+  cb.checked = !cb.checked;
+  updateServerSelection(prefix);
+}
+
+function toggleSelectAllServers(prefix, checked) {
+  document.querySelectorAll(`#${prefix}-server-list input[type='checkbox']`).forEach((cb) => {
+    cb.checked = checked;
+  });
+  updateServerSelection(prefix);
+}
+
+function updateServerSelection(prefix) {
+  const cbs = document.querySelectorAll(`#${prefix}-server-list input[type='checkbox']:checked`);
+  const ids = Array.from(cbs).map((cb) => cb.value);
+  const allCbs = document.querySelectorAll(`#${prefix}-server-list input[type='checkbox']`);
+  const allCheck = document.getElementById(prefix + "-server-all");
+  const text = document.getElementById(prefix + "-server-text");
+  if (!text) return;
+
+  if (allCheck) allCheck.checked = allCbs.length > 0 && cbs.length === allCbs.length;
+
+  if (ids.length === 0) {
+    text.textContent = "— 请选择 —";
+    text.classList.remove("has-selection");
+  } else if (ids.length === allCbs.length) {
+    text.textContent = `已选全部 (${ids.length})`;
+    text.classList.add("has-selection");
+  } else {
+    const names = [];
+    cbs.forEach((cb) => {
+      const label = cb.parentElement.querySelector("label");
+      if (label) names.push(label.textContent.split(" (")[0]);
+    });
+    text.textContent = names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
+    text.classList.add("has-selection");
+  }
+}
+
+function getSelectedServerIds(prefix) {
+  const cbs = document.querySelectorAll(`#${prefix}-server-list input[type='checkbox']:checked`);
+  const ids = Array.from(cbs).map((cb) => cb.value);
+  return ids.length > 0 ? ids.join(",") : "";
+}
+
+function populateTags(prefix, servers) {
+  const tagsEl = document.getElementById(prefix + "-server-tags");
+  if (!tagsEl) return;
+  const tagSet = new Set();
+  servers.forEach((s) => {
+    (s.tags || "").split(",").filter(Boolean).forEach((t) => tagSet.add(t.trim().toLowerCase()));
+  });
+  if (tagSet.size === 0) { tagsEl.innerHTML = ""; return; }
+  const tags = Array.from(tagSet).sort();
+  tagsEl.innerHTML = tags
+    .map((t) => `<span class="multi-select-tag" onclick="selectByTag('${prefix}', '${t}', this)" data-tag="${t}">${t}</span>`)
+    .join("");
+}
+
+function selectByTag(prefix, tag, el) {
+  el.classList.toggle("active");
+  const active = el.classList.contains("active");
+  const cbs = document.querySelectorAll(`#${prefix}-server-list input[type='checkbox']`);
+  cbs.forEach((cb) => {
+    const tags = cb.dataset.tags || "";
+    if (tags.split(",").map((t) => t.trim()).includes(tag)) {
+      cb.checked = active;
+    }
+  });
+  updateServerSelection(prefix);
+}
+
+// 点击外部关闭下拉
+document.addEventListener("click", function (e) {
+  ["d-server-wrap", "s-server-wrap"].forEach(function(id) {
+    const wrap = document.getElementById(id);
+    if (wrap && !wrap.contains(e.target)) {
+      wrap.classList.remove("open");
+    }
+  });
+});
+
 async function addServer() {
+  const editId = document.getElementById("sv-edit-id").value;
   const n = document.getElementById("sv-name").value.trim();
   const h = document.getElementById("sv-host").value.trim();
   const u = document.getElementById("sv-user").value.trim() || "root";
@@ -250,8 +349,12 @@ async function addServer() {
   const t = document.getElementById("sv-tags").value.trim();
   const tp = document.getElementById("sv-type").value;
   if (!n || !h) return toast("填名称和主机", false);
-  const r = await fetch("/api/servers", {
-    method: "POST",
+
+  const isEdit = !!editId;
+  const url = isEdit ? `/api/servers/${editId}` : "/api/servers";
+  const method = isEdit ? "PUT" : "POST";
+  const r = await fetch(url, {
+    method: method,
     headers: Object.assign({ "Content-Type": "application/json" }, A()),
     body: JSON.stringify({
       name: n,
@@ -265,8 +368,40 @@ async function addServer() {
   });
   if (handle401(r)) return;
   const d = await r.json();
-  toast(d.success ? "已添加" : "失败", d.success);
-  if (d.success) loadServers();
+  toast(d.success ? (isEdit ? "已更新" : "已添加") : "失败", d.success);
+  if (d.success) { cancelEdit(); loadServers(); }
+}
+
+async function editServer(id) {
+  // 从当前表格中找到对应行数据，重新 fetch 获取完整信息
+  const r = await fetch("/api/servers", { headers: A() });
+  if (handle401(r)) return;
+  const servers = await r.json();
+  const s = servers.find(srv => srv.id === id);
+  if (!s) return toast("找不到该服务器", false);
+
+  document.getElementById("sv-edit-id").value = s.id;
+  document.getElementById("sv-name").value = s.name;
+  document.getElementById("sv-host").value = s.host + ":" + s.port;
+  document.getElementById("sv-user").value = s.user;
+  document.getElementById("sv-pass").value = s.password || "";
+  document.getElementById("sv-tags").value = s.tags || "";
+  document.getElementById("sv-type").value = s.type || "ssh";
+
+  document.getElementById("sv-save-btn").textContent = "💾 保存";
+  document.getElementById("sv-cancel-btn").style.display = "inline-block";
+}
+
+function cancelEdit() {
+  document.getElementById("sv-edit-id").value = "";
+  document.getElementById("sv-name").value = "";
+  document.getElementById("sv-host").value = "";
+  document.getElementById("sv-user").value = "root";
+  document.getElementById("sv-pass").value = "";
+  document.getElementById("sv-tags").value = "";
+  document.getElementById("sv-type").value = "ssh";
+  document.getElementById("sv-save-btn").textContent = "＋ 添加";
+  document.getElementById("sv-cancel-btn").style.display = "none";
 }
 
 async function delServer(id) {
@@ -387,12 +522,13 @@ function toggleDeployMode() {
 async function doDeploy() {
   const tag = document.getElementById("d-tag").value;
   if (!tag) return toast("没有可用的 Tag，请先运行 CI 构建", false);
-  const sid = document.getElementById("d-server").value;
+  const sid = getSelectedServerIds('d');
+  if (!sid) return toast("请选择至少一台服务器", false);
   const body = {
     project: document.getElementById("d-project").value,
     tag: tag,
     deploy_type: document.getElementById("d-type").value,
-    server_ids: sid === "*" ? "" : sid,   // * = 全部, 空字符串 = all
+    server_ids: sid,
     target_path: document.getElementById("d-path").value,
     deploy_mode: document.getElementById("d-mode").value,
     commands: document.getElementById("d-cmds").value,
@@ -401,27 +537,52 @@ async function doDeploy() {
   };
   const out = document.getElementById("deploy-out");
   out.textContent = "$ 正在部署...\n";
-  const r = await fetch("/api/deploy", {
-    method: "POST",
-    headers: Object.assign({ "Content-Type": "application/json" }, A()),
-    body: JSON.stringify(body),
-  });
-  const d = await r.json();
-  const results = d.results || [d.result || d];
-  let text = "";
-  results.forEach((r, i) => {
-    const host = r.host || r.server_id || "?";
-    const icon = r.status === "ok" ? "✅" : "❌";
-    text += `\n${icon} [${host}] ${r.status}\n`;
-    if (r.output) {
-      r.output.split("\n").forEach(line => {
-        text += line.startsWith("[") ? `  ${line}\n` : `  > ${line}\n`;
-      });
+
+  try {
+    const r = await fetch("/api/deploy-stream", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, A()),
+      body: JSON.stringify(body),
+    });
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      while (buffer.includes("\n\n")) {
+        const idx = buffer.indexOf("\n\n");
+        const line = buffer.substring(0, idx);
+        buffer = buffer.substring(idx + 2);
+
+        if (!line.startsWith("data: ")) continue;
+        const data = line.substring(6);
+
+        if (data.startsWith("ERROR:")) {
+          out.textContent += "\n❌ " + data.substring(6);
+          toast("❌ 部署失败", false);
+          return;
+        } else if (data.startsWith("END:")) {
+          const parts = data.substring(4).split(":");
+          const success = parts[1] === "true";
+          toast(success ? "✅ 部署成功" : "❌ 部署失败", success);
+          if (success) loadLogs();
+          return;
+        } else if (data === ".") {
+          continue;
+        } else {
+          out.textContent += data + "\n";
+          out.scrollTop = out.scrollHeight;
+        }
+      }
     }
-  });
-  out.textContent = text.trim();
-  toast(d.success ? "✅ 部署成功" : "❌ 部署失败", d.success);
-  if (d.success) loadLogs();
+  } catch (e) {
+    out.textContent += "\n❌ " + e.message;
+    toast("❌ 部署失败", false);
+  }
 }
 
 async function doStop() {
@@ -429,7 +590,7 @@ async function doStop() {
   const body = {
     project: document.getElementById("d-project").value,
     deploy_type: document.getElementById("d-type").value,
-    server_ids: document.getElementById("d-server").value,
+    server_ids: getSelectedServerIds('d'),
     target_path: document.getElementById("d-path").value,
   };
   document.getElementById("deploy-out").textContent = "停止中…";
@@ -448,32 +609,43 @@ async function doStop() {
 let _logData = [];
 
 async function loadLogs() {
-  const r = await fetch("/api/deploy-logs");
-  const d = await r.json();
-  _logData = d;
-  document.getElementById("log-tbody").innerHTML = d
-    .map(
-      (l, idx) =>
-        `<tr style="cursor:pointer" data-log-idx="${idx}">
-          <td>${l.created_at}</td><td>${l.project}</td><td>${l.tag}</td><td>${l.deploy_type}</td>
-          <td><span class="badge badge-${l.status === "ok" ? "ok" : l.status === "failed" ? "err" : "pend"}">${l.status}</span></td>
-          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.output || ""}</td>
-        </tr>`
-    )
-    .join("");
+  try {
+    const r = await fetch("/api/deploy-logs", { headers: A() });
+    if (handle401(r)) return;
+    const d = await r.json();
+    _logData = d;
+    if (!d || !d.length) {
+      document.getElementById("log-tbody").innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888">暂无部署记录</td></tr>';
+      return;
+    }
+    document.getElementById("log-tbody").innerHTML = d
+      .map(
+        (l, idx) =>
+          `<tr style="cursor:pointer" data-log-idx="${idx}">
+            <td><span style="color:#81c784;font-weight:bold">#${l.deploy_id || l.id}</span></td>
+            <td>${l.created_at}</td><td>${l.project}</td><td>${l.tag}</td><td>${l.deploy_type}</td>
+            <td><span class="badge badge-${l.status === "ok" ? "ok" : l.status === "failed" ? "err" : "pend"}">${l.status}</span></td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.output || ""}</td>
+          </tr>`
+      )
+      .join("");
 
-  document.getElementById("log-tbody").onclick = function(e) {
-    const tr = e.target.closest("tr");
-    if (!tr || tr.dataset.logIdx === undefined) return;
-    const existing = tr.nextElementSibling;
-    if (existing && existing.classList.contains("log-detail")) { existing.remove(); return; }
-    const output = _logData[parseInt(tr.dataset.logIdx)]?.output || "(无输出)";
-    const escaped = output.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const detail = document.createElement("tr");
-    detail.className = "log-detail";
-    detail.innerHTML = `<td colspan="6"><pre style="margin:8px 0;font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto;background:#111;color:#00ff00;padding:10px;border-radius:4px;font-family:monospace">${escaped}</pre></td>`;
-    tr.parentNode.insertBefore(detail, tr.nextSibling);
-  };
+    document.getElementById("log-tbody").onclick = function(e) {
+      const tr = e.target.closest("tr");
+      if (!tr || tr.dataset.logIdx === undefined) return;
+      const existing = tr.nextElementSibling;
+      if (existing && existing.classList.contains("log-detail")) { existing.remove(); return; }
+      const output = _logData[parseInt(tr.dataset.logIdx)]?.output || "(无输出)";
+      const escaped = output.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      const detail = document.createElement("tr");
+      detail.className = "log-detail";
+      detail.innerHTML = `<td colspan="7"><pre style="margin:8px 0;font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto;background:#111;color:#00ff00;padding:10px;border-radius:4px;font-family:monospace">${escaped}</pre></td>`;
+      tr.parentNode.insertBefore(detail, tr.nextSibling);
+    };
+  } catch(e) {
+    console.error("加载部署记录失败:", e);
+    document.getElementById("log-tbody").innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888">加载失败</td></tr>';
+  }
 }
 
 // ── 通知 BOT 管理 ──
@@ -527,25 +699,11 @@ async function delBot(id) {
 
 // ── SSH 单机部署 ──
 
-function pickSshTemplate(sel) {
-  const templates = {
-    docker: "docker pull {image}\ndocker stop {project} 2>/dev/null; docker rm {project} 2>/dev/null\ndocker run -d --name {project} --restart=always {image}",
-    "docker-run": "docker pull {image}\ndocker run -d --name {project} --restart=always {image}",
-    compose: "cd /opt/{project} && sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG={tag}/' .env 2>/dev/null; grep -q IMAGE_TAG .env 2>/dev/null || echo IMAGE_TAG={tag} >> .env; IMAGE_TAG={tag} docker compose pull && IMAGE_TAG={tag} docker compose up -d --force-recreate",
-    kubectl: "kubectl set image deployment/{project} {project}={image} && kubectl rollout status deployment/{project}",
-    helm: "helm upgrade --install {project} /opt/helm/{project} --set image.tag={tag} --wait",
-  };
-  const v = sel.value;
-  if (v) document.getElementById("s-cmds").value = templates[v];
-  sel.value = "";
-}
-
 function toggleSshMode() {
   const m = document.getElementById("s-mode").value;
   document.getElementById("s-cmd-wrap").style.display = m === "commands" ? "block" : "none";
   document.getElementById("s-path-wrap").style.display = m === "ansible" ? "block" : "none";
   document.getElementById("s-inv-wrap").style.display = m === "ansible" ? "block" : "none";
-  document.getElementById("s-verify-wrap").style.display = m === "commands" ? "block" : "none";
 }
 
 async function loadSshForm() {
@@ -558,9 +716,20 @@ async function loadSshForm() {
   const sr = await fetch("/api/servers", { headers: A() });
   if (!handle401(sr)) {
     const srv = await sr.json();
-    const ssel = document.getElementById("s-server");
-    ssel.innerHTML = '<option value="0">— 请选择 —</option>' +
-      srv.filter(s => ["ssh","compose"].includes(s.type)).map(s => `<option value="${s.id}">${s.name} (${s.host})</option>`).join("");
+    const filtered = srv.filter(s => ["ssh","docker"].includes(s.type));
+    const list = document.getElementById("s-server-list");
+    if (list) {
+      list.innerHTML = filtered
+        .map((s) =>
+          `<div class="multi-select-item" onclick="toggleServerItem('s', this)">
+            <input type="checkbox" value="${s.id}" data-tags="${(s.tags || '').toLowerCase()}" onchange="updateServerSelection('s')">
+            <label>${s.name} (${s.host})</label>
+          </div>`
+        )
+        .join("");
+      populateTags('s', filtered);
+      updateServerSelection('s');
+    }
   }
   const br = await fetch("/api/bots", { headers: A() });
   if (br.ok) { const bots = await br.json(); const bsel = document.getElementById("s-bot"); bsel.innerHTML = '<option value="0">— 不通知 —</option>' + bots.map(b => `<option value="${b.id}">${b.name}</option>`).join(""); }
@@ -580,30 +749,63 @@ async function loadSshTags(project) {
 
 async function doSshDeploy() {
   const tag = document.getElementById("s-tag").value; if (!tag) return toast("没有可用的 Tag", false);
-  const sid = parseInt(document.getElementById("s-server").value) || 0; if (!sid) return toast("请选择服务器", false);
+  const sid = getSelectedServerIds('s'); if (!sid) return toast("请选择至少一台服务器", false);
   const body = {
     project: document.getElementById("s-project").value, tag, deploy_type: "ssh",
-    server_ids: String(sid), deploy_mode: document.getElementById("s-mode").value,
+    server_ids: sid, deploy_mode: document.getElementById("s-mode").value,
     target_path: document.getElementById("s-path").value,
     commands: document.getElementById("s-cmds").value
       + (document.getElementById("s-inv").value ? "|INV|" + document.getElementById("s-inv").value : "")
-      + (document.getElementById("s-verify").value ? "|VERIFY|" + document.getElementById("s-verify").value : "")
       + "|FILTER|" + (document.getElementById("s-filter").value || ""),
     bot_id: parseInt(document.getElementById("s-bot").value) || 0,
   };
   const out = document.getElementById("ssh-out"); out.textContent = "$ 正在部署...\n";
-  const r = await fetch("/api/deploy", { method: "POST", headers: Object.assign({"Content-Type":"application/json"}, A()), body: JSON.stringify(body) });
-  const d = await r.json();
-  const filterVal = (document.getElementById("s-filter").value || "").replace("{project}", body.project).replace("{name}", body.project.split("/").pop()).replace("{tag}", body.tag);
-  const results = d.results || [d.result || d];
-  let text = ""; results.forEach((r, i) => {
-    let output = r.output || "";
-    if (filterVal) {
-      output = output.split("\n").filter(l => l.includes(filterVal)).join("\n") || output;
+
+  try {
+    const r = await fetch("/api/deploy-stream", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, A()),
+      body: JSON.stringify(body),
+    });
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      while (buffer.includes("\n\n")) {
+        const idx = buffer.indexOf("\n\n");
+        const line = buffer.substring(0, idx);
+        buffer = buffer.substring(idx + 2);
+
+        if (!line.startsWith("data: ")) continue;
+        const data = line.substring(6);
+
+        if (data.startsWith("ERROR:")) {
+          out.textContent += "\n❌ " + data.substring(6);
+          toast("❌ 部署失败", false);
+          return;
+        } else if (data.startsWith("END:")) {
+          const parts = data.substring(4).split(":");
+          const success = parts[1] === "true";
+          toast(success ? "✅ 部署成功" : "❌ 部署失败", success);
+          if (success) loadLogs();
+          return;
+        } else if (data === ".") {
+          continue;
+        } else {
+          out.textContent += data + "\n";
+          out.scrollTop = out.scrollHeight;
+        }
+      }
     }
-    text += `\n${r.status==="ok"?"✅":"❌"} [${r.host||"?"}] ${r.status}\n${output}\n`;
-  });
-  out.textContent = text.trim(); toast(d.success ? "✅ 部署成功" : "❌ 部署失败", d.success);
+  } catch (e) {
+    out.textContent += "\n❌ " + e.message;
+    toast("❌ 部署失败", false);
+  }
 }
 
 // ── K8S 部署 ──
@@ -648,8 +850,8 @@ async function loadK8sForm() {
 
 async function doSshStop() {
   if (!confirm("确定停止？")) return;
-  const sid = parseInt(document.getElementById("s-server").value) || 0; if (!sid) return toast("请选择服务器", false);
-  const body = { project: document.getElementById("s-project").value, deploy_type: "ssh", server_ids: String(sid), target_path: document.getElementById("s-path").value };
+  const sid = getSelectedServerIds('s'); if (!sid) return toast("请选择服务器", false);
+  const body = { project: document.getElementById("s-project").value, deploy_type: "ssh", server_ids: sid, target_path: document.getElementById("s-path").value };
   document.getElementById("ssh-out").textContent = "停止中…";
   const r = await fetch("/api/stop", { method: "POST", headers: Object.assign({"Content-Type":"application/json"}, A()), body: JSON.stringify(body) });
   const d = await r.json(); document.getElementById("ssh-out").textContent = d.output || ""; toast(d.success ? "✅ 已停止" : "❌ 失败", d.success);
@@ -696,15 +898,52 @@ async function doK8sDeploy() {
   };
 
   const out = document.getElementById("k8s-out");
-  out.textContent = "部署中…";
-  const r = await fetch("/api/deploy-k8s", {
-    method: "POST",
-    headers: Object.assign({ "Content-Type": "application/json" }, A()),
-    body: JSON.stringify(body),
-  });
-  const d = await r.json();
-  out.textContent = d.output || JSON.stringify(d, null, 2);
-  toast(d.success ? "✅ 部署成功" : "❌ 部署失败", d.success);
+  out.textContent = "$ 正在部署 K8s...\n";
+
+  try {
+    const r = await fetch("/api/deploy-k8s-stream", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, A()),
+      body: JSON.stringify(body),
+    });
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      while (buffer.includes("\n\n")) {
+        const idx = buffer.indexOf("\n\n");
+        const line = buffer.substring(0, idx);
+        buffer = buffer.substring(idx + 2);
+
+        if (!line.startsWith("data: ")) continue;
+        const data = line.substring(6);
+
+        if (data.startsWith("ERROR:")) {
+          out.textContent += "\n❌ " + data.substring(6);
+          toast("❌ 部署失败", false);
+          return;
+        } else if (data.startsWith("END:")) {
+          const parts = data.substring(4).split(":");
+          const success = parts[1] === "true";
+          toast(success ? "✅ 部署成功" : "❌ 部署失败", success);
+          return;
+        } else if (data === ".") {
+          continue;
+        } else {
+          out.textContent += data + "\n";
+          out.scrollTop = out.scrollHeight;
+        }
+      }
+    }
+  } catch (e) {
+    out.textContent += "\n❌ " + e.message;
+    toast("❌ 部署失败", false);
+  }
 }
 
 // ── Web Shell ──
@@ -758,12 +997,13 @@ function connectShell() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   shellWs = new WebSocket(`${proto}://${location.host}/ws/terminal/${sid}`);
 
-  shellWs.onopen = () => { term.clear(); term.focus(); };
+  shellWs.onopen = () => { term.clear(); term.focus(); shellWs.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows})); };
   shellWs.onmessage = (e) => { if (e.data instanceof Blob) e.data.text().then(t => term.write(t)); else term.write(e.data); };
   shellWs.onclose = () => { term.writeln("\r\n🔌 已断开"); shellWs = null; };
   shellWs.onerror = () => { term.writeln("\r\n❌ 连接失败"); };
 
   term.onData(data => { if (shellWs && shellWs.readyState === WebSocket.OPEN) shellWs.send(data); });
+  term.onResize(({cols, rows}) => { if (shellWs && shellWs.readyState === WebSocket.OPEN) shellWs.send(JSON.stringify({type:"resize",cols,rows})); });
 }
 
 function disconnectShell() {

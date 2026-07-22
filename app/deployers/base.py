@@ -1,8 +1,9 @@
 """部署器抽象基类"""
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple
 
 
 def ssh_connect(target: "DeployTarget", timeout: int):
@@ -10,14 +11,27 @@ def ssh_connect(target: "DeployTarget", timeout: int):
     import paramiko
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    kwargs = dict(
-        hostname=target.host, port=target.port, username=target.user,
-        timeout=timeout,
-    )
     if target.password:
-        kwargs["password"] = target.password
-    ssh.connect(**kwargs)
+        ssh.connect(hostname=target.host, port=target.port, username=target.user, timeout=timeout, password=target.password)
+    else:
+        ssh.connect(hostname=target.host, port=target.port, username=target.user, timeout=timeout)
     return ssh
+
+
+@contextmanager
+def ssh_session(target: "DeployTarget", timeout: int):
+    """SSH 会话上下文管理器，复用同一连接执行多条命令"""
+    ssh = ssh_connect(target, timeout)
+    try:
+        yield ssh
+    finally:
+        ssh.close()
+
+
+def _exec_on(ssh, cmd: str) -> Tuple[str, str]:
+    """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr)"""
+    _, stdout, stderr = ssh.exec_command(cmd)
+    return stdout.read().decode().strip(), stderr.read().decode().strip()
 
 
 @dataclass
@@ -65,15 +79,23 @@ class Deployer(ABC):
 
     @abstractmethod
     def deploy(
-        self, target: DeployTarget, image: str, project: str, tag: str
+        self, target: DeployTarget, image: str, project: str, tag: str,
+        callback=None,
     ) -> DeployResult:
-        """执行部署，同步方法（由调用方负责线程池包装）"""
+        """执行部署，同步方法（由调用方负责线程池包装）
+        callback: 可选回调函数，用于实时推送部署进度，签名: callback(message)
+        """
         ...
 
-    def validate(self, target: DeployTarget) -> Optional[str]:
+    def validate(self, _target: DeployTarget) -> Optional[str]:
         """校验目标参数是否有效，返回 None 通过，否则返回错误信息"""
         return None
 
     def supports(self, deploy_type: str) -> bool:
         """是否匹配部署类型"""
         return deploy_type == self.name()
+
+    def _log(self, callback, message):
+        """辅助方法：调用回调输出日志，如果 callback 为 None 则忽略"""
+        if callable(callback):
+            callback(message)

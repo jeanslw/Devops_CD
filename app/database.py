@@ -27,6 +27,7 @@ class Database:
     """统一数据库连接，CD 表自动建"""
 
     DRIVERS = ("sqlite", "mysql")
+    _tables_ensured = False  # 类变量：建表只执行一次
 
     def __init__(self, db_path: str = ""):
         self._driver = settings.db_driver
@@ -43,7 +44,9 @@ class Database:
             conn = _MysqlWrapper(raw)
         else:
             conn = self._connect_sqlite()
-        self._ensure_cd_tables(conn)
+        if not Database._tables_ensured:
+            self._ensure_cd_tables(conn)
+            Database._tables_ensured = True
         return conn
 
     # ── SQLite ──
@@ -95,6 +98,7 @@ class Database:
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_deploy_logs (
             id {PK},
+            deploy_id INTEGER DEFAULT 0,
             project VARCHAR(255),
             tag VARCHAR(255),
             image VARCHAR(512),
@@ -104,6 +108,8 @@ class Database:
             output TEXT,
             created_at TEXT DEFAULT ({NOW})
         ){ENG}""")
+        try: conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
+        except: pass
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (
             id {PK},
