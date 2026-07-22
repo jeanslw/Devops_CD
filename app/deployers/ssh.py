@@ -22,7 +22,7 @@ class SSHDeployer(Deployer):
         else:
             cmd = self._build_commands(target, image, project, tag)
 
-        project_short = project.split("/")[-1]
+        image_name = image.split(":")[0]  # hub.abc.com/mycode/devops-glue
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 if target.path:
@@ -34,8 +34,9 @@ class SSHDeployer(Deployer):
                     self._log(callback, f"✅ 路径验证通过: {target.path}")
 
                 self._log(callback, "正在查看当前运行版本...")
+                # 按镜像名精确过滤，不靠容器名猜
                 before = self._ssh_exec(ssh,
-                    f"docker ps --format '{{{{.Names}}}} {{{{.Image}}}}' 2>/dev/null | grep -F '{project_short}'", image)
+                    f"docker ps --filter ancestor={image_name} --format '{{{{.Names}}}} {{{{.Image}}}}' 2>/dev/null", image)
                 self._log(callback, f"当前运行版本:\n{before.output or '(无)'}")
 
                 self._log(callback, "\n正在验证应用一致性...")
@@ -43,12 +44,12 @@ class SSHDeployer(Deployer):
                     all_containers = self._ssh_exec(ssh, "docker ps --format '{{{{.Names}}}}' 2>/dev/null", image)
                     running_names = all_containers.output.strip()
                     if running_names:
-                        self._log(callback, f"❌ 部署失败：未找到应用 [{project_short}]，当前运行的容器：\n{running_names}")
-                        return DeployResult(image=image, status="failed", output=f"部署失败：未找到应用 [{project_short}]，当前运行的容器：\n{running_names}")
+                        self._log(callback, f"❌ 部署失败：未找到镜像 [{image_name}] 的运行中容器，当前容器：\n{running_names}")
+                        return DeployResult(image=image, status="failed", output=f"部署失败：未找到镜像 [{image_name}] 的运行中容器，当前容器：\n{running_names}")
                     else:
-                        self._log(callback, f"⚠️ 未检测到运行中的容器，将首次部署 [{project_short}]")
+                        self._log(callback, f"⚠️ 未检测到运行中的容器，将首次部署 [{project.split('/')[-1]}]")
                 else:
-                    self._log(callback, f"✅ 应用 [{project_short}] 验证通过")
+                    self._log(callback, f"✅ 镜像 [{image_name}] 验证通过")
 
                 self._log(callback, "\n开始部署...")
                 deploy_text = self._ssh_exec_stream(ssh, cmd, callback)

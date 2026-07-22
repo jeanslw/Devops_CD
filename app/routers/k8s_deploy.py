@@ -72,17 +72,25 @@ def deploy_k8s(
     return result
 
 
-def _kubectl_pods(ssh, project=""):
-    """获取 K8S pod 列表，可选按项目名过滤"""
+def _ssh_cmd(ssh, cmd):
+    """执行 SSH 命令，返回 stdout+stderr 合并字符串"""
+    _, stdout, stderr = ssh.exec_command(cmd)
+    o = stdout.read().decode().strip()
+    e = stderr.read().decode().strip()
+    return o or e
+
+
+def _kubectl_pods(ssh, deploy_name=""):
+    """获取 K8S pod 列表，按 Deployment 名前缀匹配，不盲猜子串"""
     cmd = (
         "kubectl get pods -o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,"
         "STATUS:.status.phase,REASON:.status.reason,DELETING:.metadata.deletionTimestamp --no-headers 2>/dev/null"
     )
-    if project:
-        cmd += f" | grep '{project}'"
-    _, stdout, stderr = ssh.exec_command(cmd)
-    out = stdout.read().decode().strip()
-    return out or stderr.read().decode().strip()
+    if deploy_name:
+        # 前缀匹配：K8s Pod 命名规则 = {deploy}-{rs-hash}-{pod-hash}
+        # grep "^{name}-" 避免 app 误匹配 app-backend
+        cmd += f" | grep -E '^{deploy_name}-[a-f0-9]'"
+    return _ssh_cmd(ssh, cmd)
 
 
 def _parse_pod_line(line: str) -> dict | None:
@@ -115,13 +123,31 @@ def _parse_pod_line(line: str) -> dict | None:
 
 def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     image_parts = image.rsplit(":", 1)
-    image_name = image_parts[0]
+    full_image_name = image_parts[0]
+    reg = settings.harbor_registry
+    # 剥离原始 registry，只保留镜像路径（如 mycode/diagnosis-runtime）
+    if reg and full_image_name.startswith(reg + "/"):
+        image_name = full_image_name[len(reg) + 1:]
+    else:
+        image_name = full_image_name
+    # 统一以 .env 的 registry 拼接最终镜像地址
+    final_image = f"{reg}/{image_name}:{tag}" if reg else f"{image_name}:{tag}"
+    final_image_name = f"{reg}/{image_name}" if reg else image_name
+
     if "{IMAGE}:{TAG}" in yaml_content:
-        yaml_content = yaml_content.replace("{IMAGE}:{TAG}", f"{image_name}:{tag}")
-    return yaml_content.replace("{TAG}", tag).replace("{IMAGE}", image).replace("{IMAGE_NAME}", image_name)
+        yaml_content = yaml_content.replace("{IMAGE}:{TAG}", final_image)
+    # 注意：{IMAGE} 顺序必须在 {IMAGE_NAME} 之前，避免误替换
+    return yaml_content.replace("{IMAGE}", final_image).replace("{IMAGE_NAME}", final_image_name).replace("{TAG}", tag)
 
 
-def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas: int, max_wait: int = 20, interval: int = 3) -> dict:
+def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas: int,
+                   before_pods: set = None, max_wait: int = 20, interval: int = 3) -> dict:
+    """轮询等待 Pod 就绪。
+
+    before_pods 不为 None 时：以 Pod 名变更判断部署成功（新 Pod Running = 成功），
+    不再依赖镜像名匹配（部署名/Pod名/镜像名三者独立）。
+    before_pods 为 None 时（如 FluxCD）：回退到旧的镜像名匹配逻辑。
+    """
     import time
 
     start_ts = time.monotonic()
@@ -135,6 +161,7 @@ def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas:
         "InvalidImageName", "ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff",
         "RunContainerError", "CreateContainerError", "CreateContainerConfigError",
     ]
+    use_pod_name = before_pods is not None
 
     for _ in range(max_wait):
         time.sleep(interval)
@@ -158,12 +185,22 @@ def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas:
             image_text = pod["image"]
             status = pod["status"]
             reason = pod["reason"]
-            if desired_image in image_text and status == "Running":
-                correct_ready += 1
+            is_new = (not use_pod_name) or (pod["name"] not in before_pods)
+
+            # 判断正确版本：Pod 名模式只看新 Pod 是否 Running；镜像模式对比镜像名
+            if use_pod_name:
+                if is_new and status == "Running":
+                    correct_ready += 1
+            else:
+                if desired_image in image_text and status == "Running":
+                    correct_ready += 1
 
             detail = f"{pod['name']}: {image_text} | {status}" + (f" ({reason})" if reason else "")
             pod_details.append(detail)
 
+            # 仅对新 Pod（或使用镜像模式时对所有 Pod）检测错误
+            if not is_new:
+                continue
             error_reason = (reason or "").strip().lower()
             normalized_status = (status or "").strip().lower()
             is_true_failure = normalized_status in {"failed", "unknown", "terminating"}
@@ -189,6 +226,16 @@ def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas:
         "elapsed": elapsed,
         "max_wait_seconds": max_wait * interval,
     }
+
+
+def _get_deployment_name_from_yaml(ssh, yaml_path, fallback=""):
+    """从 YAML 文件中提取第一个 Deployment 名称，不盲猜等于项目名"""
+    _, stdout, _ = ssh.exec_command(
+        f"kubectl get -f {yaml_path} -o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}}' 2>/dev/null"
+    )
+    raw = stdout.read().decode().strip()
+    names = [n for n in raw.split() if n]
+    return names[0] if names else fallback
 
 
 def _log(callback, message):
@@ -242,29 +289,40 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
     ssh = ssh_connect(target, settings.ssh_timeout)
     deploy_log = []
     try:
-        _log(callback, "正在查看当前运行版本...")
-        before = _kubectl_pods(ssh, filter_name)
+        # ── 从 YAML 中提取实际 Deployment 名称 ──
+        actual_deploy = _get_deployment_name_from_yaml(ssh, tmp, filter_name)
+        deploy_name = actual_deploy or filter_name
+
+        before = _kubectl_pods(ssh, deploy_name)
         before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
         before_pods = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
 
         _log(callback, "\n正在验证应用一致性...")
+
+        # ── 校验项目名与 YAML 部署名严格相等 ──
+        if filter_name != deploy_name:
+            _log(callback, f"❌ 项目 [{filter_name}] 与 YAML 部署名 [{deploy_name}] 不匹配！")
+            _log(callback, f"请确认选择的 YAML 文件属于项目 [{filter_name}]，或更换正确的 YAML 路径。")
+            ssh.close()
+            return {"success": False, "output": f"项目 [{filter_name}] 与 YAML 部署名 [{deploy_name}] 不匹配，请检查 YAML 路径。"}
+
         if not before.strip():
             all_pods = _kubectl_pods(ssh, "")
             running_pods = all_pods.strip()
             if running_pods:
-                _log(callback, f"❌ 部署失败：未找到应用 [{filter_name}]，当前运行的 Pod：\n{running_pods}")
+                _log(callback, f"❌ 部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}")
                 ssh.close()
-                return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{filter_name}]，当前运行的 Pod：\n{running_pods}"}
+                return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}"}
             else:
-                _log(callback, f"⚠️ 未检测到运行中的 Pod，将首次部署 [{filter_name}]")
+                _log(callback, f"⚠️ 未检测到运行中的 Pod，将首次部署 [{deploy_name}]")
         else:
-            _log(callback, f"✅ 应用 [{filter_name}] 验证通过")
+            _log(callback, f"✅ 应用 [{deploy_name}] 验证通过")
         _log(callback, before_text)
 
         _log(callback, "\n开始部署...")
         cmds = [
             f"kubectl apply -f {tmp}",
-            f"kubectl rollout restart deployment/{filter_name}",
+            f"kubectl rollout restart deployment/{deploy_name}",
         ]
         for i, c in enumerate(cmds):
             _log(callback, f"\n执行命令 {i+1}: {c}")
@@ -279,10 +337,10 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
                 _log(callback, e)
 
         _log(callback, "\n等待 Pod 启动...")
-        _, stdout, _ = ssh.exec_command(f"kubectl get deployment/{filter_name} -o jsonpath='{{.spec.replicas}}' 2>/dev/null || echo 1")
+        _, stdout, _ = ssh.exec_command(f"kubectl get deployment/{deploy_name} -o jsonpath='{{.spec.replicas}}' 2>/dev/null || echo 1")
         expected_replicas = int(stdout.read().decode().strip() or "1")
 
-        poll_result = _poll_k8s_pods(ssh, filter_name, image, expected_replicas)
+        poll_result = _poll_k8s_pods(ssh, deploy_name, image, expected_replicas, before_pods=before_pods)
         after = poll_result["after"]
         ssh.close()
 
@@ -343,19 +401,49 @@ def deploy_argocd(req, image, project, host, token, callback=None):
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
         log("正在连接 Argo CD API...")
-        r = requests.get(f"{base}/api/v1/applications/{project}", headers=headers, timeout=10, verify=False)
+
+        # ── 发现 Argo CD Application 名，不盲猜等于项目名 ──
+        app_name = project.split("/")[-1]
+        r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
         if r.status_code != 200:
-            msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
-            log(msg)
-            return {"success": False, "output": msg}
+            # 精确名不存在，搜索所有 App 按镜像名匹配
+            log(f"未找到 Application [{app_name}]，正在搜索引用镜像的应用...")
+            r_list = requests.get(f"{base}/api/v1/applications", headers=headers, timeout=10, verify=False)
+            if r_list.status_code == 200:
+                apps = r_list.json().get("items", [])
+                found = None
+                for a in apps:
+                    name = a.get("metadata", {}).get("name", "")
+                    spec_str = str(a.get("spec", {}))
+                    if image.split(":")[0] in spec_str or project in spec_str:
+                        found = name
+                        break
+                if found:
+                    app_name = found
+                    log(f"📦 Argo CD Application [{app_name}] ≠ 项目短名，以集群为准")
+                else:
+                    msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
+                    log(msg)
+                    return {"success": False, "output": msg}
+            else:
+                msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
+                log(msg)
+                return {"success": False, "output": msg}
+            # 用发现的 app_name 重新获取
+            r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+            if r.status_code != 200:
+                msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
+                log(msg)
+                return {"success": False, "output": msg}
+
         app = r.json()
 
         log("正在准备镜像更新参数...")
         params = app.get("spec", {}).get("source", {}).get("helm", {}).get("parameters", [])
         kustomize = app.get("spec", {}).get("source", {}).get("kustomize", {})
         if kustomize:
-            # Kustomize: set image via kustomize images
-            new_images = [{"name": project, "newName": image.split(":")[0], "newTag": image.split(":")[1] if ":" in image else "latest"}]
+            # 用 Application 名作为 Kustomize image name（常见约定）
+            new_images = [{"name": app_name, "newName": image.split(":")[0], "newTag": image.split(":")[1] if ":" in image else "latest"}]
             patch = {"spec": {"source": {"kustomize": {"images": new_images}}}}
         else:
             # Helm: set image tag parameter
@@ -370,14 +458,14 @@ def deploy_argocd(req, image, project, host, token, callback=None):
             patch = {"spec": {"source": {"helm": {"parameters": params}}}}
 
         log("正在向 Argo CD 发送更新请求...")
-        r = requests.put(f"{base}/api/v1/applications/{project}", json=patch, headers=headers, timeout=10, verify=False)
+        r = requests.put(f"{base}/api/v1/applications/{app_name}", json=patch, headers=headers, timeout=10, verify=False)
         if r.status_code != 200:
             log(f"更新镜像配置: ❌ 失败 ({r.status_code}) {r.text[:200]}")
             return {"success": False, "output": "\n".join(output)}
         log("更新镜像配置: ✅ 成功")
 
         log("正在触发 Argo CD Sync...")
-        r = requests.post(f"{base}/api/v1/applications/{project}/sync", json={}, headers=headers, timeout=10, verify=False)
+        r = requests.post(f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=False)
         if r.status_code != 200:
             log(f"触发同步 (Sync): ❌ 失败 ({r.status_code}) {r.text[:200]}")
             return {"success": False, "output": "\n".join(output)}
@@ -387,7 +475,7 @@ def deploy_argocd(req, image, project, host, token, callback=None):
         sync = ""
         for i in range(30):
             time.sleep(2)
-            r = requests.get(f"{base}/api/v1/applications/{project}", headers=headers, timeout=10, verify=False)
+            r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
             a = r.json()
             health = a.get("status", {}).get("health", {}).get("status", "")
             sync = a.get("status", {}).get("sync", {}).get("status", "")
@@ -418,37 +506,44 @@ def deploy_helm(req, image, project, host, port, user, pwd, callback=None):
         if callable(callback):
             callback(msg)
 
-    cmds = [
-        f"kubectl delete svc/{project}{ns_flag} --ignore-not-found 2>/dev/null; kubectl delete deploy/{project}{ns_flag} --ignore-not-found 2>/dev/null; sleep 2",
-        f"helm upgrade --install {project} {chart} --set image.tag={tag} --set image.repository={image.split(':')[0]}{ns_flag} --wait --timeout 120s --recreate-pods",
-        "sleep 5",
-        f"kubectl get pods -o wide | grep '{project.split('/')[-1]}'"
-    ]
     try:
         log("正在连接集群...")
         ssh = ssh_connect(target, settings.ssh_timeout)
 
+        # ── 从 Helm 获取实际 release 名，不盲猜等于项目名 ──
+        helm_release = project.split("/")[-1]
+        existing_releases = _ssh_cmd(ssh, f"helm list -q{ns_flag} 2>/dev/null")
+        if helm_release not in (existing_releases or "").split("\n"):
+            # release 不存在，尝试按 chart 名匹配
+            for rel in (existing_releases or "").split("\n"):
+                rel = rel.strip()
+                if rel:
+                    detail = _ssh_cmd(ssh, f"helm get values {rel}{ns_flag} -o json 2>/dev/null")
+                    if project in detail or image.split(":")[0] in detail:
+                        helm_release = rel
+                        log(f"📦 发现已存在的 Helm release [{rel}] ≠ 项目短名，以集群为准")
+                        break
+
         log("正在获取当前运行版本...")
-        before = _kubectl_pods(ssh, project.split("/")[-1])
+        before = _kubectl_pods(ssh, helm_release)
         before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
         log(before_text)
 
         log("\n开始 Helm 部署...")
+        cmds = [
+            f"helm upgrade --install {helm_release} {chart} --set image.tag={tag} --set image.repository={image.split(':')[0]}{ns_flag} --wait --timeout 120s --recreate-pods",
+            "sleep 5",
+        ]
         deploy_log = []
         for i, c in enumerate(cmds):
             log(f"执行命令 {i+1}: {c}")
-            _, stdout, stderr = ssh.exec_command(c)
-            o = stdout.read().decode().strip()
-            e = stderr.read().decode().strip()
-            if o:
-                deploy_log.append(o)
-                log(o)
-            elif e:
-                deploy_log.append(e)
-                log(e)
+            out = _ssh_cmd(ssh, c)
+            if out:
+                deploy_log.append(out)
+                log(out)
 
         log("\n正在获取部署后运行版本...")
-        after = _kubectl_pods(ssh, project.split("/")[-1])
+        after = _kubectl_pods(ssh, helm_release)
         ssh.close()
 
         matched = 1 if (after and tag in after and "Running" in after) else 0
@@ -461,94 +556,106 @@ def deploy_helm(req, image, project, host, port, user, pwd, callback=None):
         return {"success": False, "output": str(e)}
 
 
+def _discover_flux_resource(ssh, project_fallback, image_name):
+    """发现 Flux CD 资源名（HelmRelease / Kustomization），不盲猜等于项目名"""
+    # 先尝试精确匹配
+    for kind in ("helmrelease", "kustomization"):
+        r = _ssh_cmd(ssh, f"kubectl get {kind} {project_fallback} -n flux-system -o name 2>/dev/null")
+        if r:
+            return project_fallback, kind
+
+    # 搜索 flux-system 下所有资源，按镜像名匹配
+    for kind in ("helmrelease", "kustomization"):
+        r = _ssh_cmd(
+            ssh,
+            f"kubectl get {kind} -n flux-system -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null",
+        )
+        if not r:
+            continue
+        for name in r.split("\n"):
+            name = name.strip()
+            if not name:
+                continue
+            spec = _ssh_cmd(ssh, f"kubectl get {kind} {name} -n flux-system -o yaml 2>/dev/null")
+            if image_name in spec or project_fallback in spec:
+                return name, kind
+
+    # 没找到，fallback 到项目短名
+    return project_fallback, ""
+
+
 def deploy_fluxcd(req, image, project, host, pwd, callback=None):
     """Flux CD: patch HelmRelease/Kustomization + poll rollout status + verify pods"""
     import time
 
     target = DeployTarget(host=host, port=22, user="root", password=pwd)
     tag = req.tag
-    filter_name = project.split("/")[-1]
     img_name = image.split(":")[0]
 
     def log(msg):
         if callable(callback):
             callback(msg)
 
-    def _ssh_cmd(ssh, cmd):
-        """执行 SSH 命令并返回 stdout+stderr"""
-        _, stdout, stderr = ssh.exec_command(cmd)
-        o = stdout.read().decode().strip()
-        e = stderr.read().decode().strip()
-        return o or e
-
-    def _check_flux_error(ssh, project):
+    def _check_flux_error(ssh, resource_name, resource_kind):
         """检查 Flux 资源 (HelmRelease/Kustomization) 是否报错。返回错误描述或 None"""
-        # 取 Ready 条件的 status|reason|message，先查 HelmRelease，再查 Kustomization
-        for kind in ("helmrelease", "kustomization"):
-            raw = _ssh_cmd(
-                ssh,
-                f"kubectl get {kind} {project} -n flux-system "
-                f"-o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}|{{.status.conditions[?(@.type==\"Ready\")].reason}}|{{.status.conditions[?(@.type==\"Ready\")].message}}' 2>/dev/null"
-            )
-            if not raw or "|" not in raw:
-                continue
-            parts = raw.split("|", 2)
-            cond_status = parts[0]
-            reason = parts[1] if len(parts) > 1 else ""
-            message = parts[2] if len(parts) > 2 else ""
-
-            # True 或 Unknown/空（协调中）不算错误；False + 有原因才算
-            if cond_status == "False" and reason and reason not in ("Progressing",):
-                return f"[{kind}] {reason}: {message}" if message else f"[{kind}] {reason}"
+        if resource_kind not in ("helmrelease", "kustomization"):
+            return None
+        raw = _ssh_cmd(
+            ssh,
+            f"kubectl get {resource_kind} {resource_name} -n flux-system "
+            f"-o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}|{{.status.conditions[?(@.type==\"Ready\")].reason}}|{{.status.conditions[?(@.type==\"Ready\")].message}}' 2>/dev/null",
+        )
+        if not raw or "|" not in raw:
+            return None
+        parts = raw.split("|", 2)
+        cond_status = parts[0]
+        reason = parts[1] if len(parts) > 1 else ""
+        message = parts[2] if len(parts) > 2 else ""
+        if cond_status == "False" and reason and reason not in ("Progressing",):
+            return f"[{resource_kind}] {reason}: {message}" if message else f"[{resource_kind}] {reason}"
         return None
 
     try:
         log("正在连接集群...")
         ssh = ssh_connect(target, settings.ssh_timeout)
 
-        # 0. 前置检查：Flux 资源是否存在
-        log("正在检查 Flux 资源...")
-        hr = _ssh_cmd(ssh, f"kubectl get helmrelease {project} -n flux-system -o name 2>/dev/null")
-        ks = _ssh_cmd(ssh, f"kubectl get kustomization {project} -n flux-system -o name 2>/dev/null")
-        resource_type = None
-        if hr:
-            resource_type = "HelmRelease"
-        elif ks:
-            resource_type = "Kustomization"
-        else:
-            log(f"❌ 在 flux-system 命名空间下未找到 HelmRelease 或 Kustomization [{project}]")
+        # ── 发现 Flux 资源名，不盲猜等于项目名 ──
+        flux_name, flux_kind = _discover_flux_resource(ssh, project.split("/")[-1], img_name)
+        if not flux_kind:
+            log(f"❌ 在 flux-system 命名空间下未找到引用镜像 [{img_name}] 的 HelmRelease 或 Kustomization")
             ssh.close()
             return {
                 "success": False,
-                "output": f"Flux 资源 [{project}] 不存在！请确认 flux-system 下是否有对应的 HelmRelease 或 Kustomization。",
+                "output": f"未找到引用镜像 [{img_name}] 的 Flux 资源！请确认 flux-system 下有对应的 HelmRelease 或 Kustomization。",
             }
-        log(f"✅ 检测到 Flux 资源: {resource_type} [{project}]")
+        if flux_name != project.split("/")[-1]:
+            log(f"📦 Flux 资源名 [{flux_name}] ≠ 项目短名 [{project.split('/')[-1]}]，以集群为准")
+        log(f"✅ 检测到 Flux 资源: {flux_kind} [{flux_name}]")
 
         # 1. 获取部署前状态
         log("正在获取当前运行版本...")
-        before = _kubectl_pods(ssh, filter_name)
+        before = _kubectl_pods(ssh, flux_name)
         before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
         before_pod_names = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
         log(before_text)
 
-        # 2. Patch kustomization/helmrelease
+        # 2. Patch flux 资源
         log("\n开始部署 Flux CD...")
         log("正在更新镜像配置...")
         patch_cmd = (
-            f"kubectl patch helmrelease.helm.toolkit.fluxcd.io {project} -n flux-system --type=merge "
+            f"kubectl patch {flux_kind} {flux_name} -n flux-system --type=merge "
             f"-p '{{\"spec\":{{\"values\":{{\"image\":{{\"tag\":\"{tag}\"}}}}}}}}' 2>/dev/null "
-            f"|| kubectl patch kustomization.kustomize.toolkit.fluxcd.io {project} -n flux-system --type=merge "
+            if flux_kind == "helmrelease" else
+            f"kubectl patch {flux_kind} {flux_name} -n flux-system --type=merge "
             f"-p '{{\"spec\":{{\"images\":[{{\"name\":\"{img_name}\",\"newTag\":\"{tag}\"}}]}}}}'"
         )
         result = _ssh_cmd(ssh, patch_cmd)
         log(f"镜像配置: {result or '✅ 已更新'}")
 
-        # 3. 触发 Flux 立即协调（HelmRelease / Kustomization 都支持此 annotation）
+        # 3. 触发 Flux 立即协调
         log("正在触发 Flux 协调...")
         annotate_cmd = (
-            f"kubectl annotate helmrelease {project} -n flux-system "
-            f"reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite 2>/dev/null "
-            f"|| kubectl annotate kustomization {project} -n flux-system "
+            f"kubectl annotate {flux_kind} {flux_name} -n flux-system "
             f"reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite 2>/dev/null"
         )
         result = _ssh_cmd(ssh, annotate_cmd)
@@ -560,9 +667,9 @@ def deploy_fluxcd(req, image, project, host, pwd, callback=None):
         for i in range(9):  # 9 × 10s = 90s
             time.sleep(10)
 
-            # 从第 4 轮开始检查 Flux 资源是否报错（前 3 轮给 Flux 协调启动时间）
+            # 从第 4 轮开始检查 Flux 资源是否报错
             if i >= 3:
-                flux_err = _check_flux_error(ssh, project)
+                flux_err = _check_flux_error(ssh, flux_name, flux_kind)
                 if flux_err:
                     log(f"❌ Flux 资源报错: {flux_err}")
                     ssh.close()
@@ -571,14 +678,10 @@ def deploy_fluxcd(req, image, project, host, pwd, callback=None):
                         "output": f"{before_text}\n\n开始部署:\n镜像已更新，Flux 协调已触发\n\nFlux 部署失败: {flux_err}",
                     }
 
-            after = _kubectl_pods(ssh, filter_name)
+            after = _kubectl_pods(ssh, flux_name)
             current_pod_names = set(l.split()[0] for l in after.split("\n") if l.strip()) if after else set()
-
-            # Flux 已反应：出现了新 Pod 或旧 Pod 正在被替换
             new_names = current_pod_names - before_pod_names
-            terminating = any(
-                "Terminating" in l for l in after.split("\n")
-            ) if after else False
+            terminating = any("Terminating" in l for l in after.split("\n")) if after else False
 
             if new_names or terminating:
                 flux_reacted = True
@@ -588,7 +691,7 @@ def deploy_fluxcd(req, image, project, host, pwd, callback=None):
             log(f"等待 Flux 协调... 第 {i+1}/9 次轮询 | 尚未检测到新 Pod")
 
         if not flux_reacted:
-            flux_err = _check_flux_error(ssh, project)
+            flux_err = _check_flux_error(ssh, flux_name, flux_kind)
             if flux_err:
                 log(f"❌ Flux 资源报错: {flux_err}")
                 ssh.close()
@@ -598,25 +701,27 @@ def deploy_fluxcd(req, image, project, host, pwd, callback=None):
                 }
             log("⚠️ 90 秒内未检测到 Flux 协调，继续等待滚动更新...")
 
-        # 5. 使用 rollout status 等待部署完成（最长 120s）
-        deploy_name = _ssh_cmd(ssh, f"kubectl get deploy -o name 2>/dev/null | grep '{filter_name}' | head -1 | cut -d'/' -f2")
+        # 5. 用 deployment 名进行 rollout status（从集群提取，不盲猜）
+        deploy_name = _ssh_cmd(
+            ssh,
+            f"kubectl get deploy -o name 2>/dev/null | grep -E '^{flux_name}-' | head -1 | cut -d'/' -f2 || "
+            f"kubectl get deploy -o name 2>/dev/null | grep '{flux_name}' | head -1 | cut -d'/' -f2",
+        )
         if deploy_name:
             log(f"\n等待滚动更新完成 [{deploy_name}]（最长 120 秒）...")
-            rollout_result = _ssh_cmd(
-                ssh, f"kubectl rollout status deployment/{deploy_name} --timeout=120s 2>&1"
-            )
+            rollout_result = _ssh_cmd(ssh, f"kubectl rollout status deployment/{deploy_name} --timeout=120s 2>&1")
             log(rollout_result or "滚动更新完成")
         else:
             log("\n⚠️ 未找到对应 Deployment，跳过 rollout status")
 
-        # 6. 最终验证：用 _poll_k8s_pods 确认 Pod 状态
+        # 6. 最终验证 Pod 状态
         log("\n最终验证 Pod 状态...")
         _, stdout, _ = ssh.exec_command(
-            f"kubectl get deployment/{filter_name} -o jsonpath='{{.spec.replicas}}' 2>/dev/null || echo 1"
+            f"kubectl get deployment/{deploy_name or flux_name} -o jsonpath='{{.spec.replicas}}' 2>/dev/null || echo 1"
         )
         expected_replicas = int(stdout.read().decode().strip() or "1")
 
-        poll_result = _poll_k8s_pods(ssh, filter_name, image, expected_replicas)
+        poll_result = _poll_k8s_pods(ssh, flux_name, image, expected_replicas)
         after = poll_result["after"]
         ssh.close()
 

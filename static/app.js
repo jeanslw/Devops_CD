@@ -898,7 +898,7 @@ async function doK8sDeploy() {
   };
 
   const out = document.getElementById("k8s-out");
-  out.textContent = "$ 正在部署 K8s...\n";
+  out.textContent = "";
 
   try {
     const r = await fetch("/api/deploy-k8s-stream", {

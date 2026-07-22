@@ -9,6 +9,16 @@ from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from app.config import settings
 
 
+def _get_deployment_name_from_yaml(ssh, yaml_path):
+    """从 YAML 文件中提取第一个 Deployment 名称"""
+    _, stdout, _ = ssh.exec_command(
+        f"kubectl get -f {yaml_path} -o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}}' 2>/dev/null"
+    )
+    raw = stdout.read().decode().strip()
+    names = [n for n in raw.split() if n]
+    return names[0] if names else ""
+
+
 class K8sDeployer(Deployer):
     """SSH 到 K8s 节点，优先 kubectl apply，兜底 kubectl set image"""
 
@@ -30,17 +40,34 @@ class K8sDeployer(Deployer):
             cmds = [
                 f"kubectl apply -f {target.path}",
                 "sleep 2",
-                f"kubectl get pods -n {namespace} -o wide | grep {project}",
+                f"kubectl get pods -n {namespace} --no-headers 2>/dev/null | grep -E '^{project}-[a-f0-9]'",
             ]
         else:
             cmds = [
                 f"kubectl set image deployment/{deployment_name} {container_name}={image} -n {namespace}",
                 f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=120s",
-                f"kubectl get pods -n {namespace} -o wide | grep {deployment_name}",
+                f"kubectl get pods -n {namespace} --no-headers 2>/dev/null | grep -E '^{deployment_name}-[a-f0-9]'",
             ]
 
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
+                # ── 从 YAML 提取实际 Deployment 名称 ──
+                if target.path:
+                    actual_deploy = _get_deployment_name_from_yaml(ssh, target.path)
+                    # 使用实际部署名
+                    deploy_name = actual_deploy or project
+                    # 校验项目名与 YAML 部署名严格相等
+                    if project != deploy_name:
+                        return DeployResult(
+                            image=image, status="failed",
+                            output=f"项目 [{project}] 与 YAML 部署名 [{deploy_name}] 不匹配，请检查 YAML 路径。",
+                        )
+                    cmds = [
+                        f"kubectl apply -f {target.path}",
+                        "sleep 2",
+                        f"kubectl get pods -n {namespace} --no-headers 2>/dev/null | grep -E '^{deploy_name}-[a-f0-9]'",
+                    ]
+
                 self._log(callback, "开始部署 K8s...")
                 output_lines = []
                 for i, c in enumerate(cmds):
