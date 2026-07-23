@@ -13,10 +13,14 @@ def list_bots(
     db: Database = Depends(get_db),
     username: str = Depends(verify_token),
 ):
-    return [
-        dict(r)
-        for r in db.conn().execute("SELECT * FROM cd_bots ORDER BY name").fetchall()
-    ]
+    conn = db.conn()
+    try:
+        return [
+            dict(r)
+            for r in conn.execute("SELECT * FROM cd_bots ORDER BY name").fetchall()
+        ]
+    finally:
+        conn.close()
 
 
 @router.post("")
@@ -35,6 +39,8 @@ def add_bot(
         return {"success": True}
     except Exception:
         raise HTTPException(400, f"BOT '{req.name}' 已存在")
+    finally:
+        conn.close()
 
 
 @router.delete("/{bid}")
@@ -44,6 +50,9 @@ def delete_bot(
     username: str = Depends(verify_token),
 ):
     conn = db.conn()
-    conn.execute("DELETE FROM cd_bots WHERE id=?", (bid,))
-    conn.commit()
-    return {"success": True}
+    try:
+        conn.execute("DELETE FROM cd_bots WHERE id=?", (bid,))
+        conn.commit()
+        return {"success": True}
+    finally:
+        conn.close()

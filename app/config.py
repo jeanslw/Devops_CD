@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # ── 数据库（必填: sqlite | mysql）──
     db_driver: str = ""
+    db_path: str = ""           # SQLite 模式必填，MySQL 模式忽略
     db_host: str = ""
     db_port: int = 3306
     db_name: str = ""

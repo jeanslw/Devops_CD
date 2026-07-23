@@ -32,32 +32,27 @@ app.include_router(monitor.router)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
-# ── Dashboard ──
+# ── 模板预加载（启动时读一次，避免每次请求读磁盘）──
+_INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+_DASHBOARD_HTML = (BASE_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
+
+
 @app.get("/", response_class=HTMLResponse)
 def home():
-    template = BASE_DIR / "templates" / "index.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>首页文件丢失</h1>")
+    return HTMLResponse(_INDEX_HTML)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
-    template = BASE_DIR / "templates" / "dashboard.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>模板文件丢失</h1>")
+    return HTMLResponse(_DASHBOARD_HTML)
 
 
 # ── 健康检查 ──
 @app.get("/health")
 def health():
-    db_path = Path(settings.db_path) if settings.db_path else None
     return {
         "status": "ok",
         "version": "0.2.0",
-        "db": str(db_path) if db_path else "",
-        "db_exists": db_path.exists() if db_path else False,
     }
 
 
@@ -68,5 +63,5 @@ if __name__ == "__main__":
         "main:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.reload,
+        reload=False,
     )

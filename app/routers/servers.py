@@ -13,10 +13,14 @@ def list_servers(
     db: Database = Depends(get_db),
     username: str = Depends(verify_token),
 ):
-    return [
-        dict(r)
-        for r in db.conn().execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
-    ]
+    conn = db.conn()
+    try:
+        return [
+            dict(r)
+            for r in conn.execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
+        ]
+    finally:
+        conn.close()
 
 
 @router.post("")
@@ -35,6 +39,8 @@ def add_server(
         return {"success": True}
     except Exception as e:
         raise HTTPException(400, str(e))
+    finally:
+        conn.close()
 
 
 @router.put("/{sid}")
@@ -54,6 +60,8 @@ def update_server(
         return {"success": True}
     except Exception as e:
         raise HTTPException(400, str(e))
+    finally:
+        conn.close()
 
 
 @router.delete("/{sid}")
@@ -63,6 +71,9 @@ def delete_server(
     username: str = Depends(verify_token),
 ):
     conn = db.conn()
-    conn.execute("DELETE FROM cd_servers WHERE id=?", (sid,))
-    conn.commit()
-    return {"success": True}
+    try:
+        conn.execute("DELETE FROM cd_servers WHERE id=?", (sid,))
+        conn.commit()
+        return {"success": True}
+    finally:
+        conn.close()

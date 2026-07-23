@@ -24,7 +24,10 @@ class _MysqlWrapper:
 
 
 class Database:
-    """统一数据库连接，CD 表自动建"""
+    """统一数据库连接。
+    SQLite 模式：自动建表。
+    MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。
+    """
 
     DRIVERS = ("sqlite", "mysql")
     _tables_ensured = False  # 类变量：建表只执行一次
@@ -44,7 +47,7 @@ class Database:
             conn = _MysqlWrapper(raw)
         else:
             conn = self._connect_sqlite()
-        if not Database._tables_ensured:
+        if not Database._tables_ensured and self._driver == "sqlite":
             self._ensure_cd_tables(conn)
             Database._tables_ensured = True
         return conn
@@ -72,13 +75,12 @@ class Database:
         )
         return conn
 
-    # ── 建表 ──
+    # ── SQLite 自动建表 ──
 
     def _ensure_cd_tables(self, conn):
-        is_mysql = self._driver == "mysql"
-        PK   = "INT AUTO_INCREMENT PRIMARY KEY" if is_mysql else "INTEGER PRIMARY KEY AUTOINCREMENT"
-        NOW  = "NOW()" if is_mysql else "datetime('now','localtime')"
-        ENG  = " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4" if is_mysql else ""
+        """SQLite 模式：自动创建 CD 表 + 索引"""
+        PK  = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        NOW = "datetime('now','localtime')"
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_servers (
             id {PK},
@@ -90,7 +92,7 @@ class Database:
             password VARCHAR(255) DEFAULT '',
             tags VARCHAR(255) DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
-        ){ENG}""")
+        )""")
         try: conn.execute("ALTER TABLE cd_servers ADD COLUMN password VARCHAR(255) DEFAULT ''")
         except: pass
         try: conn.execute("ALTER TABLE cd_servers ADD COLUMN tags VARCHAR(255) DEFAULT ''")
@@ -107,7 +109,7 @@ class Database:
             status VARCHAR(32),
             output TEXT,
             created_at TEXT DEFAULT ({NOW})
-        ){ENG}""")
+        )""")
         try: conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
         except: pass
 
@@ -117,17 +119,21 @@ class Database:
             type VARCHAR(32) DEFAULT 'custom',
             webhook_url TEXT NOT NULL,
             created_at TEXT DEFAULT ({NOW})
-        ){ENG}""")
+        )""")
 
-        # ── 索引 ──
+        self._ensure_indexes(conn)
+        conn.commit()
+
+    # ── 索引（SQLite / MySQL 共用）──
+
+    def _ensure_indexes(self, conn):
         for name, tbl, col in [
             ("idx_cdl_project", "cd_deploy_logs", "project"),
             ("idx_cdl_created", "cd_deploy_logs", "created_at"),
             ("idx_pt_project", "ci_pipeline_tags", "project"),
             ("idx_pt_created", "ci_pipeline_tags", "created_at"),
-            ("idx_jgm_path", "ci_job_git_map", "current_path"),
+            ("idx_jgm_path",   "ci_job_git_map",  "current_path"),
         ]:
             try: conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")
             except: pass
-
         conn.commit()

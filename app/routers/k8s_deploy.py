@@ -249,8 +249,10 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
     filter_name = project.split("/")[-1]
 
     yaml_content = ""
+    ssh = None
     if not req.path:
         raise HTTPException(400, "kubectl 模式需要 YAML 路径或 URL")
+
     if req.path.startswith("http"):
         _log(callback, "正在下载远程 YAML...")
         import requests
@@ -259,36 +261,30 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
             raise HTTPException(400, f"无法获取远程 YAML: {req.path}")
         yaml_content = r.text
         _log(callback, "✅ YAML 下载成功")
-    else:
-        _log(callback, "正在读取远程 YAML...")
-        try:
-            ssh = ssh_connect(target, settings.ssh_timeout)
+
+    # 单次 SSH 连接：读取（本地文件）、上传、部署全部共用
+    ssh = ssh_connect(target, settings.ssh_timeout)
+    try:
+        if not req.path.startswith("http"):
+            _log(callback, "正在读取远程 YAML...")
             _, stdout, _ = ssh.exec_command(f"cat {req.path}")
             yaml_content = stdout.read().decode()
-            ssh.close()
-        except Exception:
-            raise HTTPException(400, f"无法读取远程 YAML: {req.path}")
-        _log(callback, "✅ YAML 读取成功")
+            if not yaml_content.strip():
+                raise HTTPException(400, f"远程 YAML 为空: {req.path}")
+            _log(callback, "✅ YAML 读取成功")
 
-    yaml_content = _render_k8s_yaml(yaml_content, image, tag)
+        yaml_content = _render_k8s_yaml(yaml_content, image, tag)
+        tmp = f"/tmp/k8s-{filter_name}.yaml"
 
-    tmp = f"/tmp/k8s-{filter_name}.yaml"
-
-    _log(callback, "正在上传 YAML 到服务器...")
-    try:
-        ssh2 = ssh_connect(target, settings.ssh_timeout)
-        sftp = ssh2.open_sftp()
+        _log(callback, "正在上传 YAML 到服务器...")
+        sftp = ssh.open_sftp()
         with sftp.file(tmp, "w") as f:
             f.write(yaml_content)
         sftp.close()
-        ssh2.close()
-    except Exception as e:
-        raise HTTPException(400, f"YAML 上传失败: {e}")
-    _log(callback, "✅ YAML 上传成功")
+        _log(callback, "✅ YAML 上传成功")
 
-    ssh = ssh_connect(target, settings.ssh_timeout)
-    deploy_log = []
-    try:
+        deploy_log = []
+
         # ── 从 YAML 中提取实际 Deployment 名称 ──
         actual_deploy = _get_deployment_name_from_yaml(ssh, tmp, filter_name)
         deploy_name = actual_deploy or filter_name
@@ -303,7 +299,6 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
         if filter_name != deploy_name:
             _log(callback, f"❌ 项目 [{filter_name}] 与 YAML 部署名 [{deploy_name}] 不匹配！")
             _log(callback, f"请确认选择的 YAML 文件属于项目 [{filter_name}]，或更换正确的 YAML 路径。")
-            ssh.close()
             return {"success": False, "output": f"项目 [{filter_name}] 与 YAML 部署名 [{deploy_name}] 不匹配，请检查 YAML 路径。"}
 
         if not before.strip():
@@ -311,7 +306,6 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
             running_pods = all_pods.strip()
             if running_pods:
                 _log(callback, f"❌ 部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}")
-                ssh.close()
                 return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}"}
             else:
                 _log(callback, f"⚠️ 未检测到运行中的 Pod，将首次部署 [{deploy_name}]")
@@ -342,7 +336,6 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
 
         poll_result = _poll_k8s_pods(ssh, deploy_name, image, expected_replicas, before_pods=before_pods)
         after = poll_result["after"]
-        ssh.close()
 
         wait_text = f"轮询耗时: {poll_result['elapsed']}s, 最大等待: {poll_result['max_wait_seconds']}s"
         status_text = f"已部署: {poll_result['correct_ready']}/{expected_replicas} 个正确版本 Pod"
@@ -379,6 +372,9 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
     except Exception as e:
         _log(callback, f"\n❌ 部署失败: {e}")
         return {"success": False, "output": str(e)}
+    finally:
+        if ssh:
+            ssh.close()
 
 
 def deploy_argocd(req, image, project, host, token, callback=None):
