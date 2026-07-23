@@ -1,39 +1,44 @@
-"""应用配置 — Pydantic BaseSettings，从 .env / 环境变量读取"""
+"""应用配置 — 所有配置通过 .env 文件设置，不要直接修改此文件"""
 
-from pathlib import Path
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     # ── 数据库（必填: sqlite | mysql）──
     db_driver: str = ""
-    db_path: str = str(Path(__file__).parent.parent.parent / "php_api" / "config" / "data" / "data.db")
-    db_host: str = "127.0.0.1"
+    db_host: str = ""
     db_port: int = 3306
-    db_name: str = "devops_glue"
-    db_user: str = "root"
+    db_name: str = ""
+    db_user: str = ""
     db_pass: str = ""
 
-    # ── Harbor 镜像仓库 ──
-    harbor_registry: str = "192.168.137.5"
-    harbor_user: str = "admin"
+    # ── Harbor 镜像仓库（必填）──
+    harbor_registry: str = ""
+    harbor_user: str = ""
     harbor_password: str = ""
 
-    # ── 服务 ──
+    # ── 服务（可选）──
     host: str = "0.0.0.0"
     port: int = 8081
-    reload: bool = False
 
-    # ── SSH 默认值 ──
+    # ── SSH（可选）──
     ssh_timeout: int = 30
-    ssh_default_user: str = "root"
 
-    # ── Docker 部署 ──
+    # ── Docker 部署（可选）──
     container_restart_policy: str = "always"
 
-    # ── 日志 ──
+    # ── 日志（可选）──
     log_truncate_chars: int = 2000
     notify_truncate_chars: int = 200
+
+    # ── 监控（可选）──
+    monitoring_enabled: bool = True
+    monitor_cache_servers: int = 60
+    monitor_cache_system: int = 30
+    monitor_cache_nodes: int = 30
+    monitor_cache_pods: int = 30
+    monitor_cache_docker: int = 30
+    monitor_cache_pod_detail: int = 15
 
     class Config:
         env_file = ".env"

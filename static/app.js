@@ -73,6 +73,7 @@ function showPanel(n) {
   if (n === "k8s") loadK8sForm();
   if (n === "shell") loadShellServers();
   if (n === "logs") loadLogs();
+  if (n === "monitor") loadMonitor();
   if (n === "bots") loadBots();
 }
 
@@ -931,6 +932,13 @@ async function doK8sDeploy() {
           const parts = data.substring(4).split(":");
           const success = parts[1] === "true";
           toast(success ? "✅ 部署成功" : "❌ 部署失败", success);
+          if (success) {
+            document.getElementById("k8s-monitor-btn").style.display = "inline-block";
+            // 记住当前集群 ID，方便跳转
+            _lastDeployedClusterId = parseInt(document.getElementById("k-cluster").value) || 0;
+            const clusterName = document.getElementById("k-cluster").selectedOptions[0]?.text || "";
+            document.getElementById("k8s-monitor-btn").textContent = "📊 查看 " + clusterName + " 资源占用";
+          }
           return;
         } else if (data === ".") {
           continue;

@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import auth, projects, servers, deploy, logs, bots, terminal, k8s_deploy
+from app.routers import auth, projects, servers, deploy, logs, bots, terminal, k8s_deploy, monitor
 
 # ── 创建 app ──
 app = FastAPI(title="Devops-Glue CD", version="0.2.0")
@@ -26,6 +26,7 @@ app.include_router(logs.router)
 app.include_router(bots.router)
 app.include_router(terminal.router)
 app.include_router(k8s_deploy.router)
+app.include_router(monitor.router)
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")

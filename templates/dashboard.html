@@ -31,6 +31,7 @@
       <div class="item item-sub" data-panel="k8s" onclick="showPanel('k8s')" style="display:none;padding-left:30px">☸️ 部署到 K8S</div>
       <div class="item" data-panel="logs" onclick="showPanel('logs')">📜 部署记录</div>
       <div class="item" data-panel="shell" onclick="showPanel('shell')">🖥️ Web Shell</div>
+      <div class="item" data-panel="monitor" onclick="showPanel('monitor')">📊 资源监控</div>
       <div class="item" data-panel="bots" onclick="showPanel('bots')">🔔 通知管理</div>
     </div>
     <div class="content">
@@ -129,7 +130,9 @@
               <div id="k-path-wrap" style="margin-bottom:8px;display:none"><label>YAML 路径</label><input id="k-path" placeholder="/opt/k8s/deploy.yaml"></div>
       <div id="k-api-wrap" style="margin-bottom:8px;display:none"><label>API 地址</label><input id="k-api" placeholder="https://argocd:30443"></div>
       <div><label>通知</label><select id="k-bot"><option value="0">— 不通知 —</option></select></div>
-      <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><button class="btn btn-red" onclick="doK8sStop()" style="margin-left:8px">🛑 停止</button><pre id="k8s-out"></pre></div></div>
+      <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><button class="btn btn-red" onclick="doK8sStop()" style="margin-left:8px">🛑 停止</button>
+      <button class="btn btn-blue btn-sm" id="k8s-monitor-btn" style="display:none;margin-left:8px" onclick="jumpToMonitor()">📊 查看资源占用</button>
+      <pre id="k8s-out"></pre></div></div>
 
       <!-- Logs -->
       <div class="panel" id="panel-logs"><div class="card"><h3>📜 部署记录</h3><table><thead><tr><th>ID</th><th>时间</th><th>项目</th><th>Tag</th><th>方式</th><th>状态</th><th>详情</th></tr></thead><tbody id="log-tbody"></tbody></table></div></div>
@@ -148,6 +151,68 @@
       </div>
       <div id="terminal" style="height:550px;background:#000;border-radius:6px;padding:4px"></div></div></div>
 
+      <!-- Monitor -->
+      <div class="panel" id="panel-monitor">
+        <div class="card" id="monitor-disabled-card" style="display:none">
+          <h3>📊 资源监控</h3>
+          <p style="color:#888;padding:20px 0">监控功能未启用，请在 .env 中设置 MONITORING_ENABLED=true</p>
+        </div>
+
+        <div id="monitor-enabled" style="display:none">
+          <!-- 统一服务器列表 -->
+          <div class="card" style="margin-bottom:12px">
+            <h3>📊 服务器监控</h3>
+            <table><thead><tr>
+              <th>名称</th><th>主机</th><th>类型</th><th>监控能力</th><th>状态</th><th>操作</th>
+            </tr></thead>
+            <tbody id="monitor-server-tbody"><tr><td colspan="6" style="text-align:center;color:#888">加载中…</td></tr></tbody></table>
+          </div>
+
+          <!-- 详情区域 - 统一：应用资源在上，系统资源在下 -->
+          <div id="monitor-detail" style="display:none">
+            <!-- 应用资源（K8S / Docker） -->
+            <div id="monitor-app-section" style="display:none">
+              <!-- K8S -->
+              <div id="monitor-k8s-app" style="display:none">
+                <div class="card" style="margin-bottom:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <h3 style="margin:0">☸️ Node 资源</h3>
+                    <span id="monitor-cluster-label" style="color:#81c784;font-size:13px"></span>
+                  </div>
+                  <div id="monitor-nodes" style="margin-top:8px;color:#888">加载中…</div>
+                </div>
+                <div class="card">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+                    <h3 style="margin:0">📦 Pod 资源</h3>
+                    <div style="display:flex;gap:8px;align-items:center">
+                      <select id="monitor-ns-filter" onchange="loadMonitorPods()" style="width:auto;margin:0;padding:3px 8px">
+                        <option value="">全部命名空间</option>
+                      </select>
+                      <input id="monitor-pod-search" placeholder="搜索 Pod..." oninput="filterMonitorPods()" style="width:140px;margin:0;padding:3px 8px;font-size:12px">
+                    </div>
+                  </div>
+                  <div style="max-height:400px;overflow-y:auto">
+                    <table><thead><tr><th>Namespace</th><th>Pod</th><th>CPU</th><th>内存</th><th>状态</th><th>重启</th><th>节点</th></tr></thead>
+                    <tbody id="monitor-pod-tbody"><tr><td colspan="7" style="text-align:center;color:#888">加载中…</td></tr></tbody></table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Docker -->
+              <div id="monitor-docker-app" style="display:none">
+                <div id="monitor-docker-content" style="color:#888">加载中…</div>
+              </div>
+            </div>
+
+            <!-- 系统资源（所有类型通用，底部） -->
+            <div class="card" style="margin-top:12px">
+              <h3 style="margin:0 0 8px 0">🖥️ 系统资源</h3>
+              <div id="monitor-system-content" style="color:#888">加载中…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Bots -->
       <div class="panel" id="panel-bots"><div class="card"><h3>🔔 通知管理</h3>
       <div class="grid3" style="margin-bottom:12px">
@@ -163,5 +228,6 @@
 </div>
 
 <script src="/static/app.js"></script>
+<script src="/static/monitor.js"></script>
 </body>
 </html>
