@@ -1,5 +1,17 @@
 # Devops - CD
 
+> ❌ GitLab + K8s 全套？太重，养不起  
+> ❌ Jenkins 裸奔？8 年前的 UI，配到崩溃  
+> ❌ Gitee + Jenkins + Harbor 三头对不上？多窗口来回切，Tag 全靠人肉对齐  
+>
+> ✅ 一套 API，4 个 Git 平台 + 2 条 CI 通道 + Harbor → 一个面板全搞定  
+> ✅ SQLite 零配置启动，MySQL 也可切换  
+> ✅ 10 年运维老兵的实战结晶  
+> ✅ 从 CI 构建到 CD 部署，全流程覆盖  
+> ✅ 开源免费，GitHub/Gitee 双更新  
+>
+> **不是大厂的遥控器，是小团队的瑞士军刀。**
+
 FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 ## 基础
