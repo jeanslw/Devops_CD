@@ -2,6 +2,11 @@
 
 let token = sessionStorage.getItem("cd_token") || "";
 
+// CI 面板自动刷新 — 间隔由用户通过面板上的下拉控件自由选择，localStorage 持久化
+const DEFAULT_CI_INTERVAL = 30000;
+let _currentPanel = "";
+let _ciTimer = null;
+
 const A = () => (token ? { Authorization: "Bearer " + token } : {});
 
 function handle401(r) {
@@ -82,6 +87,14 @@ function showPanel(n) {
   document.querySelector(`[data-panel="${n}"]`).classList.add("active");
   document.querySelectorAll(".panel").forEach((p) => p.classList.remove("show"));
   document.getElementById("panel-" + n).classList.add("show");
+  _currentPanel = n;
+  if (n === "ci") {
+    _initRefreshDropdown();
+    _startCIPolling();
+  } else {
+    _stopCIPolling();
+  }
+
   if (n.startsWith("monitor-")) expandMonitorSubmenu();
   if (n === "ci") loadCI();
   if (n === "servers") loadServers();
@@ -128,6 +141,48 @@ async function loadCI() {
         </tr>`
     )
     .join("");
+}
+
+function _getCIInterval() {
+  const v = localStorage.getItem("cd_refresh_ci");
+  return v !== null ? parseInt(v) : DEFAULT_CI_INTERVAL;
+}
+
+function _initRefreshDropdown() {
+  const sel = document.getElementById("refresh-ci");
+  if (!sel) return;
+  sel.value = _getCIInterval();
+  _updateRefreshBtn();
+}
+
+function onRefreshChange() {
+  const sel = document.getElementById("refresh-ci");
+  const ms = parseInt(sel.value);
+  localStorage.setItem("cd_refresh_ci", ms);
+  _updateRefreshBtn();
+  _startCIPolling();
+}
+
+function _updateRefreshBtn() {
+  const btn = document.getElementById("refresh-ci-btn");
+  if (!btn) return;
+  const on = _getCIInterval() > 0 && _currentPanel === "ci";
+  btn.className = "btn btn-sm " + (on ? "btn-auto-on" : "btn-auto-off");
+  btn.title = on ? "自动刷新中" : "立即刷新";
+}
+
+function _startCIPolling() {
+  _stopCIPolling();
+  const ms = _getCIInterval();
+  _updateRefreshBtn();
+  if (!ms || ms <= 0) return;
+  _ciTimer = setInterval(() => {
+    if (_currentPanel === "ci") loadCI();
+  }, ms);
+}
+
+function _stopCIPolling() {
+  if (_ciTimer) { clearInterval(_ciTimer); _ciTimer = null; }
 }
 
 

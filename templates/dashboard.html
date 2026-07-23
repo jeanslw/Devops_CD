@@ -10,11 +10,11 @@
 
 <div id="login-page" class="login-box">
   <div class="login-card">
-    <h3>🔐 CD 部署登录</h3>
-    <p>与管理后台共用账号</p>
+    <h3>🔐 CD 部署系统</h3>
+    <p>管理员账号</p>
     <input id="login-user" placeholder="账号">
     <input id="login-pass" type="password" placeholder="密码">
-    <button class="btn btn-green" onclick="doLogin()" style="width:100%">登 录</button>
+    <button class="btn btn-green" onclick="doLogin()" style="width:100%;justify-content:center">登 录</button>
     <div class="login-err" id="login-err"></div>
   </div>
 </div>
@@ -41,12 +41,16 @@
       <div id="main-content">
 
       <!-- CI -->
-      <div class="panel show" id="panel-ci"><div class="card"><h3>📋 CI 系统状态</h3>
+      <div class="panel show" id="panel-ci"><div class="card"><h3>📋 CI 系统状态<span class="refresh-bar"><select id="refresh-ci" onchange="onRefreshChange()"><option value="0">关闭</option><option value="15000">15秒</option><option value="30000">30秒</option><option value="60000">60秒</option></select><button class="btn btn-sm" id="refresh-ci-btn" onclick="loadCI()" title="立即刷新">🔄</button></span></h3>
       <table><thead><tr><th>项目</th><th>CI源</th><th>Harbor仓库</th><th>最新Tag</th><th>Pipeline</th><th>操作</th></tr></thead>
       <tbody id="ci-tbody"><tr><td colspan="6">加载中…</td></tr></tbody></table></div></div>
 
       <!-- Servers -->
-      <div class="panel" id="panel-servers"><div class="card"><h3>🖥️ 服务器列表</h3>
+      <div class="panel" id="panel-servers">
+      <div class="card"><h3>🖥️ 服务器列表</h3>
+      <div><label>筛选</label><input id="sv-filter" placeholder="标签如 prod" oninput="loadServers()" style="width:auto;display:inline;margin-left:8px"></div>
+      <table style="margin-top:8px"><thead><tr><th>名称</th><th>主机</th><th>类型</th><th>标签</th><th>操作</th></tr></thead><tbody id="sv-tbody"></tbody></table></div>
+      <div class="card"><h3>➕ 添加服务器</h3>
       <input type="hidden" id="sv-edit-id">
       <div class="grid2" style="margin-bottom:12px">
         <input id="sv-name" placeholder="名称"><input id="sv-host" placeholder="IP:端口"><input id="sv-user" value="root">
@@ -54,9 +58,7 @@
         <select id="sv-type"><option value="ssh">SSH</option><option value="docker">Docker</option><option value="k8s">K8s</option></select>
       </div>
       <button class="btn btn-green" id="sv-save-btn" onclick="addServer()">＋ 添加</button>
-      <button class="btn btn-edit" id="sv-cancel-btn" onclick="cancelEdit()" style="display:none">取消</button>
-      <div><label>筛选</label><input id="sv-filter" placeholder="标签如 prod" oninput="loadServers()" style="width:auto;display:inline;margin-left:8px"></div>
-      <table style="margin-top:12px"><thead><tr><th>名称</th><th>主机</th><th>类型</th><th>标签</th><th>操作</th></tr></thead><tbody id="sv-tbody"></tbody></table></div></div>
+      <button class="btn btn-edit" id="sv-cancel-btn" onclick="cancelEdit()" style="display:none">取消</button></div></div>
 
       <!-- SSH Deploy -->
       <div class="panel" id="panel-ssh"><div class="deploy-layout"><div><div class="card" id="ssh-pipeline-card"><h3>🔍 CI 构建状态</h3><div id="ssh-pipeline-stages"><span style="color:#888;font-size:12px">选择项目后自动加载</span></div></div></div><div><div class="card"><h3>🖥️ 单机部署</h3>
