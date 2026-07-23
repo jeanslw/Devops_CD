@@ -608,18 +608,29 @@ async function doStop() {
 // ── 部署记录 ──
 
 let _logData = [];
+let _logPage = 1;
+let _logPageSize = 15;
+let _logTotal = 0;
+let _logTotalPages = 1;
 
-async function loadLogs() {
+async function loadLogs(page = 1) {
   try {
-    const r = await fetch("/api/deploy-logs", { headers: A() });
+    document.getElementById("log-tbody").innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888">加载中...</td></tr>';
+    renderLogPager();
+    const r = await fetch(`/api/deploy-logs?page=${page}&page_size=${_logPageSize}`, { headers: A() });
     if (handle401(r)) return;
     const d = await r.json();
-    _logData = d;
-    if (!d || !d.length) {
+    _logData = d.items || [];
+    _logPage = d.page || 1;
+    _logTotal = d.total || 0;
+    _logTotalPages = d.total_pages || 1;
+
+    if (!_logData.length) {
       document.getElementById("log-tbody").innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888">暂无部署记录</td></tr>';
+      renderLogPager();
       return;
     }
-    document.getElementById("log-tbody").innerHTML = d
+    document.getElementById("log-tbody").innerHTML = _logData
       .map(
         (l, idx) =>
           `<tr style="cursor:pointer" data-log-idx="${idx}">
@@ -630,6 +641,8 @@ async function loadLogs() {
           </tr>`
       )
       .join("");
+
+    renderLogPager();
 
     document.getElementById("log-tbody").onclick = function(e) {
       const tr = e.target.closest("tr");
@@ -646,7 +659,39 @@ async function loadLogs() {
   } catch(e) {
     console.error("加载部署记录失败:", e);
     document.getElementById("log-tbody").innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888">加载失败</td></tr>';
+    renderLogPager();
   }
+}
+
+function renderLogPager() {
+  const container = document.getElementById("log-pager");
+  if (!container) return;
+  if (_logTotalPages <= 1) {
+    container.innerHTML = "";
+    return;
+  }
+  let html = `<span class="log-pager-info">共 ${_logTotal} 条 / ${_logTotalPages} 页</span>`;
+  if (_logPage > 1) html += `<button class="btn btn-sm log-pager-btn" onclick="loadLogs(${_logPage - 1})">上一页</button>`;
+  // 页码按钮
+  const start = Math.max(1, _logPage - 2);
+  const end = Math.min(_logTotalPages, _logPage + 2);
+  for (let i = start; i <= end; i++) {
+    html += `<button class="btn btn-sm log-pager-btn${i === _logPage ? ' active' : ''}" onclick="loadLogs(${i})">${i}</button>`;
+  }
+  if (_logPage < _logTotalPages) html += `<button class="btn btn-sm log-pager-btn" onclick="loadLogs(${_logPage + 1})">下一页</button>`;
+  // 每页条数
+  html += `<select class="log-pager-size" onchange="setLogPageSize(this.value)">
+    <option value="10"${_logPageSize === 10 ? " selected" : ""}>10条/页</option>
+    <option value="15"${_logPageSize === 15 ? " selected" : ""}>15条/页</option>
+    <option value="30"${_logPageSize === 30 ? " selected" : ""}>30条/页</option>
+    <option value="50"${_logPageSize === 50 ? " selected" : ""}>50条/页</option>
+  </select>`;
+  container.innerHTML = html;
+}
+
+function setLogPageSize(size) {
+  _logPageSize = parseInt(size);
+  loadLogs(1);
 }
 
 // ── 通知 BOT 管理 ──

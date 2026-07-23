@@ -150,19 +150,34 @@ class DeployService:
 
         return {"success": ok_count == len(results), "deploy_id": deploy_id, "message": msg, "results": results}
 
-    def list_logs(self, project: str = "") -> list[dict]:
-        """查询部署记录"""
+    def list_logs(self, project: str = "", page: int = 1, page_size: int = 15) -> dict:
+        """查询部署记录（分页）"""
+        page = max(page, 1)
+        page_size = max(min(page_size, 100), 1)
+        offset = (page - 1) * page_size
         conn = self._db.conn()
         try:
             if project:
-                rows = conn.execute(
-                    "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY created_at DESC LIMIT 50",
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM cd_deploy_logs WHERE project=?",
                     (project,),
+                ).fetchone()[0]
+                rows = conn.execute(
+                    "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (project, page_size, offset),
                 ).fetchall()
             else:
+                total = conn.execute("SELECT COUNT(*) FROM cd_deploy_logs").fetchone()[0]
                 rows = conn.execute(
-                    "SELECT * FROM cd_deploy_logs ORDER BY created_at DESC LIMIT 100"
+                    "SELECT * FROM cd_deploy_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (page_size, offset),
                 ).fetchall()
-            return [dict(r) for r in rows]
+            return {
+                "items": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": max((total + page_size - 1) // page_size, 1),
+            }
         finally:
             conn.close()
