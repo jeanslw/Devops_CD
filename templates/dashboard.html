@@ -29,9 +29,11 @@
       <div class="item item-sub" data-panel="ssh" onclick="showPanel('ssh')" style="display:none;padding-left:30px">🖥️ 部署到单机</div>
       <div class="item item-sub" data-panel="deploy" onclick="showPanel('deploy')" style="display:none;padding-left:30px">🐳 部署到 Docker</div>
       <div class="item item-sub" data-panel="k8s" onclick="showPanel('k8s')" style="display:none;padding-left:30px">☸️ 部署到 K8S</div>
-      <div class="item" data-panel="logs" onclick="showPanel('logs')">📜 部署记录</div>
       <div class="item" data-panel="shell" onclick="showPanel('shell')">🖥️ Web Shell</div>
-      <div class="item" data-panel="monitor" onclick="showPanel('monitor')">📊 资源监控</div>
+      <div class="item" data-panel="logs" onclick="showPanel('logs')">📜 部署记录</div>
+      <div class="item item-parent" onclick="toggleSubmenu(this)">📊 资源监控 ▾</div>
+      <div class="item item-sub" data-panel="monitor-app" onclick="showPanel('monitor-app')" style="display:none;padding-left:30px">📦 应用资源</div>
+      <div class="item item-sub" data-panel="monitor-system" onclick="showPanel('monitor-system')" style="display:none;padding-left:30px">🖥️ 系统资源</div>
       <div class="item" data-panel="bots" onclick="showPanel('bots')">🔔 通知管理</div>
     </div>
     <div class="content">
@@ -131,7 +133,7 @@
       <div id="k-api-wrap" style="margin-bottom:8px;display:none"><label>API 地址</label><input id="k-api" placeholder="https://argocd:30443"></div>
       <div><label>通知</label><select id="k-bot"><option value="0">— 不通知 —</option></select></div>
       <button class="btn btn-green" onclick="doK8sDeploy()" style="margin-top:8px">🚀 部署</button><button class="btn btn-red" onclick="doK8sStop()" style="margin-left:8px">🛑 停止</button>
-      <button class="btn btn-blue btn-sm" id="k8s-monitor-btn" style="display:none;margin-left:8px" onclick="jumpToMonitor()">📊 查看资源占用</button>
+      <button class="btn btn-blue btn-sm" id="k8s-monitor-btn" style="display:none;margin-left:8px" onclick="jumpToAppMonitor()">📊 查看资源占用</button>
       <pre id="k8s-out"></pre></div></div>
 
       <!-- Logs -->
@@ -151,28 +153,45 @@
       </div>
       <div id="terminal" style="height:550px;background:#000;border-radius:6px;padding:4px"></div></div></div>
 
-      <!-- Monitor -->
-      <div class="panel" id="panel-monitor">
-        <div class="card" id="monitor-disabled-card" style="display:none">
-          <h3>📊 资源监控</h3>
+      <!-- Monitor - System -->
+      <div class="panel" id="panel-monitor-system">
+        <div class="card" id="monitor-system-disabled-card" style="display:none">
+          <h3>🖥️ 系统资源</h3>
           <p style="color:#888;padding:20px 0">监控功能未启用，请在 .env 中设置 MONITORING_ENABLED=true</p>
         </div>
-
-        <div id="monitor-enabled" style="display:none">
-          <!-- 统一服务器列表 -->
+        <div id="monitor-system-enabled" style="display:none">
           <div class="card" style="margin-bottom:12px">
-            <h3>📊 服务器监控</h3>
+            <h3>🖥️ 选择服务器</h3>
             <table><thead><tr>
               <th>名称</th><th>主机</th><th>类型</th><th>监控能力</th><th>状态</th><th>操作</th>
             </tr></thead>
-            <tbody id="monitor-server-tbody"><tr><td colspan="6" style="text-align:center;color:#888">加载中…</td></tr></tbody></table>
+            <tbody id="monitor-system-server-tbody"><tr><td colspan="6" style="text-align:center;color:#888">加载中…</td></tr></tbody></table>
           </div>
+          <div id="monitor-system-detail" style="display:none">
+            <div class="card">
+              <h3 style="margin:0 0 8px 0">🖥️ 系统资源</h3>
+              <div id="monitor-system-content" style="color:#888">加载中…</div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-          <!-- 详情区域 - 统一：应用资源在上，系统资源在下 -->
-          <div id="monitor-detail" style="display:none">
-            <!-- 应用资源（K8S / Docker） -->
+      <!-- Monitor - App -->
+      <div class="panel" id="panel-monitor-app">
+        <div class="card" id="monitor-app-disabled-card" style="display:none">
+          <h3>📦 应用资源</h3>
+          <p style="color:#888;padding:20px 0">监控功能未启用，请在 .env 中设置 MONITORING_ENABLED=true</p>
+        </div>
+        <div id="monitor-app-enabled" style="display:none">
+          <div class="card" style="margin-bottom:12px">
+            <h3>📦 选择服务器</h3>
+            <table><thead><tr>
+              <th>名称</th><th>主机</th><th>类型</th><th>监控能力</th><th>状态</th><th>操作</th>
+            </tr></thead>
+            <tbody id="monitor-app-server-tbody"><tr><td colspan="6" style="text-align:center;color:#888">加载中…</td></tr></tbody></table>
+          </div>
+          <div id="monitor-app-detail" style="display:none">
             <div id="monitor-app-section" style="display:none">
-              <!-- K8S -->
               <div id="monitor-k8s-app" style="display:none">
                 <div class="card" style="margin-bottom:12px">
                   <div style="display:flex;justify-content:space-between;align-items:center">
@@ -197,17 +216,9 @@
                   </div>
                 </div>
               </div>
-
-              <!-- Docker -->
               <div id="monitor-docker-app" style="display:none">
                 <div id="monitor-docker-content" style="color:#888">加载中…</div>
               </div>
-            </div>
-
-            <!-- 系统资源（所有类型通用，底部） -->
-            <div class="card" style="margin-top:12px">
-              <h3 style="margin:0 0 8px 0">🖥️ 系统资源</h3>
-              <div id="monitor-system-content" style="color:#888">加载中…</div>
             </div>
           </div>
         </div>

@@ -55,10 +55,26 @@ function doLogout() {
 // ── Navigation ──
 
 function toggleSubmenu(el) {
-  const subs = el.parentElement.querySelectorAll(".item-sub");
+  // 只找紧跟在当前父菜单后面的 item-sub（下一个兄弟直到非 item-sub 为止）
+  const subs = [];
+  let next = el.nextElementSibling;
+  while (next && next.classList.contains("item-sub")) {
+    subs.push(next);
+    next = next.nextElementSibling;
+  }
   const open = subs[0]?.style.display === "block";
   subs.forEach(s => s.style.display = open ? "none" : "block");
-  el.textContent = open ? "🚀 部署管理 ▸" : "🚀 部署管理 ▾";
+  el.textContent = open ? el.textContent.replace(" ▾", " ▸") : el.textContent.replace(" ▸", " ▾");
+}
+
+function expandMonitorSubmenu() {
+  const allParents = document.querySelectorAll(".item-parent");
+  for (const p of allParents) {
+    if (p.textContent.includes("资源监控") && p.textContent.includes("▸")) {
+      toggleSubmenu(p);
+      return;
+    }
+  }
 }
 
 function showPanel(n) {
@@ -66,6 +82,7 @@ function showPanel(n) {
   document.querySelector(`[data-panel="${n}"]`).classList.add("active");
   document.querySelectorAll(".panel").forEach((p) => p.classList.remove("show"));
   document.getElementById("panel-" + n).classList.add("show");
+  if (n.startsWith("monitor-")) expandMonitorSubmenu();
   if (n === "ci") loadCI();
   if (n === "servers") loadServers();
   if (n === "ssh") loadSshForm();
@@ -73,7 +90,8 @@ function showPanel(n) {
   if (n === "k8s") loadK8sForm();
   if (n === "shell") loadShellServers();
   if (n === "logs") loadLogs();
-  if (n === "monitor") loadMonitor();
+  if (n === "monitor-system") loadMonitorSystem();
+  if (n === "monitor-app") loadMonitorApp();
   if (n === "bots") loadBots();
 }
 

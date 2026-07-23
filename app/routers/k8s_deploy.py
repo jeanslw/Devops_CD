@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.database import Database
 from app.auth import get_db, verify_token
 from app.services.ci_service import CiService
+from app.services.notification import notify_deploy
 
 from app.deployers.base import ssh_connect, DeployTarget
 from app.config import settings
@@ -68,6 +69,9 @@ def deploy_k8s(
          result["output"][:settings.log_truncate_chars] if result["output"] else ""),
     )
     conn.commit()
+
+    # 通知
+    _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"])
 
     return result
 
@@ -301,6 +305,7 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
             _log(callback, f"请确认选择的 YAML 文件属于项目 [{filter_name}]，或更换正确的 YAML 路径。")
             return {"success": False, "output": f"项目 [{filter_name}] 与 YAML 部署名 [{deploy_name}] 不匹配，请检查 YAML 路径。"}
 
+        is_first_deploy = False
         if not before.strip():
             all_pods = _kubectl_pods(ssh, "")
             running_pods = all_pods.strip()
@@ -308,16 +313,16 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
                 _log(callback, f"❌ 部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}")
                 return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}"}
             else:
+                is_first_deploy = True
                 _log(callback, f"⚠️ 未检测到运行中的 Pod，将首次部署 [{deploy_name}]")
         else:
             _log(callback, f"✅ 应用 [{deploy_name}] 验证通过")
         _log(callback, before_text)
 
         _log(callback, "\n开始部署...")
-        cmds = [
-            f"kubectl apply -f {tmp}",
-            f"kubectl rollout restart deployment/{deploy_name}",
-        ]
+        cmds = [f"kubectl apply -f {tmp}"]
+        if not is_first_deploy:
+            cmds.append(f"kubectl rollout restart deployment/{deploy_name}")
         for i, c in enumerate(cmds):
             _log(callback, f"\n执行命令 {i+1}: {c}")
             _, stdout, stderr = ssh.exec_command(c)
@@ -827,6 +832,10 @@ async def deploy_k8s_stream(
                  result["output"][:settings.log_truncate_chars] if result["output"] else ""),
             )
             conn.commit()
+
+            # 通知
+            _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"])
+
             conn.close()
         except Exception as e:
             deploy_result = {"success": False, "error": str(e)}
@@ -853,3 +862,9 @@ async def deploy_k8s_stream(
             yield f"data: ERROR:{deploy_result.get('error', '部署失败')}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ── 通知辅助 ──
+def _notify_k8s(db, bot_id, tag, project_key, host, cd_type, image, ok):
+    status = "✅ 部署成功" if ok else "❌ 部署失败"
+    notify_deploy(db, bot_id, tag, project_key, image, status, cd_type, [f"集群[{host}]"])

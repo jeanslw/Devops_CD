@@ -1,17 +1,19 @@
-// CD Service Dashboard — 资源监控
+// CD Service Dashboard — 资源监控（系统资源 + 应用资源）
 // 依赖 app.js 中的：A(), handle401(), showPanel()
 
-// ── 资源监控 ──
+// ── 共享状态 ──
 
 let _monitorServers = [];
 let _monitorPods = [];
-let _currentMonitorServerId = 0;
-let _currentMonitorType = "";
+let _currentSystemServerId = 0;
+let _currentAppServerId = 0;
+let _currentAppType = "";
 let _lastDeployedClusterId = 0;
 
 const TYPE_LABELS = { k8s: "☸️ K8S", docker: "🐳 Docker", ssh: "🖥️ Linux" };
 
-// 格式化秒数为可读时间
+// ── 工具函数 ──
+
 function fmtUptime(secs) {
   if (!secs || secs <= 0) return "?";
   const d = Math.floor(secs / 86400);
@@ -20,31 +22,22 @@ function fmtUptime(secs) {
   return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-async function loadMonitor() {
+async function checkMonitorEnabled() {
   try {
     const sr = await fetch("/api/monitor/status");
     const sd = await sr.json();
-    if (!sd.enabled) {
-      document.getElementById("monitor-disabled-card").style.display = "block";
-      document.getElementById("monitor-enabled").style.display = "none";
-      return;
-    }
-  } catch(e) {
-    document.getElementById("monitor-disabled-card").style.display = "block";
-    document.getElementById("monitor-enabled").style.display = "none";
-    return;
-  }
+    return sd.enabled;
+  } catch(e) { return false; }
+}
 
-  document.getElementById("monitor-disabled-card").style.display = "none";
-  document.getElementById("monitor-enabled").style.display = "block";
-
+async function loadMonitorServers(tbodyId, btnLabel) {
   try {
     const r = await fetch("/api/monitor/servers", { headers: A() });
     if (handle401(r)) return;
     const d = await r.json();
     _monitorServers = d.servers || [];
 
-    const tbody = document.getElementById("monitor-server-tbody");
+    const tbody = document.getElementById(tbodyId);
     if (!_monitorServers.length) {
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">没有服务器，请在「服务器管理」中添加</td></tr>';
       return;
@@ -68,40 +61,65 @@ async function loadMonitor() {
       const statusBadge = canUse
         ? '<span class="badge badge-ok">可用</span>'
         : (s.status === "error" ? `<span class="badge badge-err" title="${(s.error||'').replace(/"/g,'&quot;')}">错误</span>` : '<span class="badge badge-pend">不可用</span>');
-      const btnHtml = canUse
-        ? `<button class="btn btn-blue btn-sm" onclick="viewMonitorDetail(${s.id},'${mType}','${(s.name||'').replace(/'/g,"\\'")}')">查看资源</button>`
-        : '<button class="btn btn-sm" disabled style="opacity:0.4">不可用</button>';
       return `<tr>
         <td><strong>${s.name}</strong></td>
         <td>${s.host}:${s.port}</td>
         <td>${typeLabel}</td>
         <td><span style="${capStyle};font-size:12px">${capText}</span></td>
         <td>${statusBadge}</td>
-        <td>${btnHtml}</td>
+        <td>${canUse ? `<button class="btn btn-blue btn-sm" onclick="${btnLabel}(${s.id},'${mType}','${(s.name||'').replace(/'/g,"\\'")}')">${btnLabel.includes('System') ? '查看系统资源' : '查看应用资源'}</button>` : '<button class="btn btn-sm" disabled style="opacity:0.4">不可用</button>'}</td>
       </tr>`;
     }).join("");
   } catch(e) {
-    document.getElementById("monitor-server-tbody").innerHTML = '<tr><td colspan="6" style="text-align:center;color:#e57373">加载失败: ' + e.message + '</td></tr>';
+    document.getElementById(tbodyId).innerHTML = '<tr><td colspan="6" style="text-align:center;color:#e57373">加载失败: ' + e.message + '</td></tr>';
   }
 }
 
-// ── 统一入口：应用资源在上，系统资源在下，同时加载 ──
+// ═══════════════════════════════════════
+//  🖥️ 系统资源
+// ═══════════════════════════════════════
 
-function viewMonitorDetail(sid, mtype, name) {
-  _currentMonitorServerId = sid;
-  _currentMonitorType = mtype;
+async function loadMonitorSystem() {
+  const enabled = await checkMonitorEnabled();
+  document.getElementById("monitor-system-disabled-card").style.display = enabled ? "none" : "block";
+  document.getElementById("monitor-system-enabled").style.display = enabled ? "block" : "none";
+  if (!enabled) return;
 
-  document.getElementById("monitor-detail").style.display = "block";
+  document.getElementById("monitor-system-detail").style.display = "none";
+  await loadMonitorServers("monitor-system-server-tbody", "viewSystemDetail");
+}
 
-  // 隐藏所有应用资源区块
+function viewSystemDetail(sid) {
+  _currentSystemServerId = sid;
+  document.getElementById("monitor-system-detail").style.display = "block";
+  document.getElementById("monitor-system-detail").scrollIntoView({ behavior: "smooth" });
+  loadSystemInfo(sid);
+}
+
+// ═══════════════════════════════════════
+//  📦 应用资源
+// ═══════════════════════════════════════
+
+async function loadMonitorApp() {
+  const enabled = await checkMonitorEnabled();
+  document.getElementById("monitor-app-disabled-card").style.display = enabled ? "none" : "block";
+  document.getElementById("monitor-app-enabled").style.display = enabled ? "block" : "none";
+  if (!enabled) return;
+
+  document.getElementById("monitor-app-detail").style.display = "none";
+  await loadMonitorServers("monitor-app-server-tbody", "viewAppDetail");
+}
+
+function viewAppDetail(sid, mtype, name) {
+  _currentAppServerId = sid;
+  _currentAppType = mtype;
+
+  document.getElementById("monitor-app-detail").style.display = "block";
+
   document.getElementById("monitor-k8s-app").style.display = "none";
   document.getElementById("monitor-docker-app").style.display = "none";
   document.getElementById("monitor-app-section").style.display = "none";
 
-  // 第一步：加载系统资源（所有类型通用）
-  loadSystemInfo(sid);
-
-  // 第二步：按类型加载应用资源
   if (mtype === "k8s") {
     document.getElementById("monitor-app-section").style.display = "block";
     document.getElementById("monitor-k8s-app").style.display = "block";
@@ -113,10 +131,11 @@ function viewMonitorDetail(sid, mtype, name) {
     document.getElementById("monitor-docker-app").style.display = "block";
     loadDockerInfo(sid);
   }
-  // SSH: 只显示系统资源，无应用资源
+  // SSH 类型无应用资源，不显示
+  document.getElementById("monitor-app-detail").scrollIntoView({ behavior: "smooth" });
 }
 
-// ── K8S ──
+// ── K8S 应用资源 ──
 
 async function loadMonitorNodes(sid) {
   const container = document.getElementById("monitor-nodes");
@@ -161,10 +180,10 @@ async function loadK8sPods(sid) {
 }
 
 async function loadMonitorPods() {
-  if (!_currentMonitorServerId) return;
+  if (!_currentAppServerId) return;
   const ns = document.getElementById("monitor-ns-filter").value;
   try {
-    const r = await fetch(`/api/monitor/pods/${_currentMonitorServerId}?namespace=${encodeURIComponent(ns)}`, { headers: A() });
+    const r = await fetch(`/api/monitor/pods/${_currentAppServerId}?namespace=${encodeURIComponent(ns)}`, { headers: A() });
     if (handle401(r)) return;
     const d = await r.json();
     _monitorPods = d.pods || [];
@@ -189,7 +208,7 @@ function renderMonitorPods(pods) {
   }
   tbody.innerHTML = pods.map(p => {
     const statusClass = p.status === "Running" ? "badge-ok" : (p.status === "Pending" ? "badge-pend" : "badge-err");
-    return `<tr style="cursor:pointer" onclick="viewPodDetail(${_currentMonitorServerId},'${p.namespace}','${p.name}')" title="点击查看详情">
+    return `<tr style="cursor:pointer" onclick="viewPodDetail(${_currentAppServerId},'${p.namespace}','${p.name}')" title="点击查看详情">
       <td>${p.namespace}</td><td><strong>${p.name}</strong></td>
       <td style="color:#ffab40">${p.cpu || "?"}</td><td style="color:#81c784">${p.memory || "?"}</td>
       <td><span class="badge ${statusClass}">${p.status}</span></td>
@@ -227,7 +246,7 @@ async function viewPodDetail(sid, ns, name) {
   }
 }
 
-// ── 系统资源（所有类型通用：K8S / Docker / SSH）──
+// ── 系统资源（所有类型通用）──
 
 async function loadSystemInfo(sid) {
   const container = document.getElementById("monitor-system-content");
@@ -306,16 +325,17 @@ async function loadDockerInfo(sid) {
   }
 }
 
-// ── 部署跳转 ──
+// ── 部署跳转（K8S 部署完成后跳转到应用资源）──
 
-function jumpToMonitor() {
-  showPanel("monitor");
+function jumpToAppMonitor() {
+  expandMonitorSubmenu();
+  showPanel("monitor-app");
   document.getElementById("k8s-monitor-btn").style.display = "none";
   if (_lastDeployedClusterId) {
     setTimeout(() => {
       const server = _monitorServers.find(s => s.id === _lastDeployedClusterId);
       if (server && server.status === "available") {
-        viewMonitorDetail(server.id, server.monitor_type || "k8s", server.name);
+        viewAppDetail(server.id, server.monitor_type || "k8s", server.name);
       }
     }, 800);
   }

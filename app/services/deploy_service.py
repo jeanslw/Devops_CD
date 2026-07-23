@@ -5,7 +5,7 @@ from app.database import Database
 from app.deployers import deployer_registry, DeployTarget
 from app.config import settings
 from .ci_service import CiService
-from .notification import send_webhook
+from .notification import notify_deploy
 
 
 def _parse_server_ids(server_ids: str) -> list[int]:
@@ -138,17 +138,20 @@ class DeployService:
 
         # 通知
         ok_count = sum(1 for r in results if r["status"] == "ok")
-        servers = ", ".join(r.get("host", "?") for r in results)
-        msg = f"[服务器部署] [#{deploy_id}] [{now}] {project_key} {tag} → {ok_count}/{len(results)} 成功\n服务器: {servers}\n镜像: {image}"
-        if bot_id:
-            conn = self._db.conn()
-            try:
-                bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
-                if bot: send_webhook(bot["webhook_url"], msg)
-            finally:
-                conn.close()
+        if ok_count == len(results):
+            status = "✅ 部署成功"
+        elif ok_count > 0:
+            status = f"⚠️ 部分成功 {ok_count}/{len(results)}"
+        else:
+            status = "❌ 部署失败"
+        targets = []
+        for r in results:
+            label = "docker" if deploy_mode == "docker" else "单机"
+            targets.append(f"{label}[{r.get('host', '?')}]")
+        notify_deploy(self._db, bot_id, tag, project_key, image, status,
+                      deploy_mode or deploy_type, targets)
 
-        return {"success": ok_count == len(results), "deploy_id": deploy_id, "message": msg, "results": results}
+        return {"success": ok_count == len(results), "deploy_id": deploy_id, "results": results}
 
     def list_logs(self, project: str = "", page: int = 1, page_size: int = 15) -> dict:
         """查询部署记录（分页）"""
