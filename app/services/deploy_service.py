@@ -159,15 +159,17 @@ class DeployService:
         try:
             if project:
                 total = conn.execute(
-                    "SELECT COUNT(*) FROM cd_deploy_logs WHERE project=?",
+                    "SELECT COUNT(*) AS cnt FROM cd_deploy_logs WHERE project=?",
                     (project,),
-                ).fetchone()[0]
+                ).fetchone()["cnt"]
                 rows = conn.execute(
                     "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
                     (project, page_size, offset),
                 ).fetchall()
             else:
-                total = conn.execute("SELECT COUNT(*) FROM cd_deploy_logs").fetchone()[0]
+                total = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM cd_deploy_logs"
+                ).fetchone()["cnt"]
                 rows = conn.execute(
                     "SELECT * FROM cd_deploy_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
                     (page_size, offset),
