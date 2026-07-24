@@ -14,6 +14,11 @@ from app.database import Database
 logger = logging.getLogger("registry")
 
 
+class HarborUnavailableError(Exception):
+    """Harbor 服务不可达异常"""
+    pass
+
+
 class HarborClient:
     """Harbor API 客户端，自动探测 v1/v2 版本"""
 
@@ -80,19 +85,34 @@ class HarborClient:
         return self._base or ""
 
     def _get(self, path: str) -> dict | list:
-        r = requests.get(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
+        try:
+            r = requests.get(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
+        except requests.ConnectionError as e:
+            raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
+        except requests.Timeout as e:
+            raise HarborUnavailableError(f"Harbor 请求超时：{e}") from e
         if r.status_code == 404:
             return [] if path.endswith("s") else {}
         r.raise_for_status()
         return r.json()
 
     def _post(self, path: str) -> bool:
-        r = requests.post(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
+        try:
+            r = requests.post(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
+        except requests.ConnectionError as e:
+            raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
+        except requests.Timeout as e:
+            raise HarborUnavailableError(f"Harbor 请求超时：{e}") from e
         r.raise_for_status()
         return True
 
     def _delete(self, path: str):
-        r = requests.delete(f"{self._base}{path}", auth=(self._user, self._password), timeout=15, verify=False)
+        try:
+            r = requests.delete(f"{self._base}{path}", auth=(self._user, self._password), timeout=15, verify=False)
+        except requests.ConnectionError as e:
+            raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
+        except requests.Timeout as e:
+            raise HarborUnavailableError(f"Harbor 请求超时：{e}") from e
         r.raise_for_status()
 
     # ── 仓库路径拆分 ──
@@ -332,7 +352,17 @@ class RegistryService:
     def _harbor(self):
         """延迟初始化 HarborClient，避免纯数据库查询时触发 API 探测"""
         if self._harbor_client is None:
-            self._harbor_client = HarborClient()
+            try:
+                self._harbor_client = HarborClient()
+            except RuntimeError as e:
+                msg = str(e)
+                raise HarborUnavailableError(
+                    f"Harbor 镜像仓库不可达。请检查：\n"
+                    f"1. HARBOR_REGISTRY 地址是否正确\n"
+                    f"2. 网络是否连通\n"
+                    f"3. Harbor 服务是否正常运行\n"
+                    f"（{msg}）"
+                ) from e
         return self._harbor_client
 
     # ── 工具 ──
@@ -452,11 +482,15 @@ class RegistryService:
                     n = self.sync_repo(conn, cr["project"], cr["repo"])
                     total += n
                     logger.info(f"同步 {cr['repo']}: {n} 条")
+                except HarborUnavailableError:
+                    raise  # 直接抛出，不要在 errors 里吞掉
                 except Exception as e:
                     errors.append(f"{cr['repo']}: {e}")
                     logger.error(f"同步 {cr['repo']}: {e}")
             conn.commit()
             return {"ok": True, "total": total, "repos": len(ci_repos), "errors": errors}
+        except HarborUnavailableError:
+            return {"ok": False, "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态"}
         finally:
             conn.close()
 
@@ -471,11 +505,14 @@ class RegistryService:
             ]
             if not matched:
                 return {"ok": False, "error": "未找到该项目仓库映射"}
-            total = 0
-            for cr in matched:
-                n = self.sync_repo(conn, cr["project"], cr["repo"])
-                total += n
-            return {"ok": True, "total": total}
+            try:
+                total = 0
+                for cr in matched:
+                    n = self.sync_repo(conn, cr["project"], cr["repo"])
+                    total += n
+                return {"ok": True, "total": total}
+            except HarborUnavailableError:
+                return {"ok": False, "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态"}
         finally:
             conn.close()
 
@@ -613,6 +650,7 @@ class RegistryService:
             }
 
             # 实时请求 Harbor 获取最新详情（不依赖数据库数量，解决旧缓存数据为 0 的问题）
+            harbor_error = None
             try:
                 live = self._harbor.get_scan_report(row["repo_name"], tag)
                 if live:
@@ -625,16 +663,22 @@ class RegistryService:
                         live["scan_status"] = row["scan_status"] or live.get("scan_status", "")
                         live["severity"] = row["scan_severity"] or live.get("severity", "")
                         return live
+            except HarborUnavailableError as e:
+                harbor_error = str(e)
+                logger.warning(f"Harbor 不可达，回退到数据库缓存: {e}")
             except Exception as e:
                 logger.warning(f"实时获取扫描详情失败，回退到汇总: {e}")
 
-            return {
+            result = {
                 "scan_status": row["scan_status"] or "",
                 "severity": row["scan_severity"] or "",
                 "summary": db_summary,
                 "harbor_url": harbor_url,
                 "digest": digest,
             }
+            if harbor_error:
+                result["warning"] = "Harbor 不可达，以下为历史缓存数据，可能不是最新"
+            return result
         finally:
             conn.close()
 
@@ -664,6 +708,9 @@ class RegistryService:
                 encoded = urllib.parse.quote(row["repo_name"], safe="")
                 self._harbor._post(f"/api/repositories/{encoded}/tags/{urllib.parse.quote(tag, safe='')}/scan")
             return {"ok": True, "detail": "扫描已触发，请等待 Harbor 完成后再查看报告"}
+        except HarborUnavailableError as e:
+            logger.warning(f"触发扫描失败（Harbor 不可达）: {e}")
+            return {"ok": False, "error": "Harbor 镜像仓库不可达，无法触发扫描"}
         except Exception as e:
             logger.warning(f"触发扫描失败: {e}")
             return {"ok": False, "error": str(e)}
@@ -749,6 +796,8 @@ def _sync_worker(db_factory, interval_minutes: int):
             svc = RegistryService(db_factory())
             result = svc.sync_all()
             logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")
+        except HarborUnavailableError as e:
+            logger.warning(f"定时同步跳过（Harbor 不可达）: {e}")
         except Exception as e:
             logger.error(f"定时同步异常: {e}")
 

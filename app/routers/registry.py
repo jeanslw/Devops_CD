@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.auth import verify_token, get_db
 from app.database import Database
-from app.services.registry_service import RegistryService
+from app.services.registry_service import RegistryService, HarborUnavailableError
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
 
@@ -67,11 +67,14 @@ def trigger_scan(
     db: Database = Depends(get_db),
 ):
     """触发 Harbor 重新扫描该镜像"""
-    svc = RegistryService(db)
-    result = svc.trigger_scan(repo_id, tag)
-    if not result.get("ok"):
-        raise HTTPException(400, result.get("error", "触发失败"))
-    return result
+    try:
+        svc = RegistryService(db)
+        result = svc.trigger_scan(repo_id, tag)
+        if not result.get("ok"):
+            raise HTTPException(400, result.get("error", "触发失败"))
+        return result
+    except HarborUnavailableError as e:
+        raise HTTPException(503, str(e))
 
 
 # ── 删除 ──
@@ -84,11 +87,14 @@ def delete_artifact(
     db: Database = Depends(get_db),
 ):
     """删除指定 artifact/tag（带安全校验）"""
-    svc = RegistryService(db)
-    result = svc.delete_artifact(repo_id, body.tag)
-    if not result["ok"]:
-        raise HTTPException(409, result.get("error", "删除失败"))
-    return {"ok": True, "detail": f"Tag '{body.tag}' 已删除"}
+    try:
+        svc = RegistryService(db)
+        result = svc.delete_artifact(repo_id, body.tag)
+        if not result["ok"]:
+            raise HTTPException(409, result.get("error", "删除失败"))
+        return {"ok": True, "detail": f"Tag '{body.tag}' 已删除"}
+    except HarborUnavailableError as e:
+        raise HTTPException(503, str(e))
 
 
 # ── 同步 ──
@@ -100,7 +106,10 @@ def trigger_sync(
     db: Database = Depends(get_db),
 ):
     """触发同步：留空全量同步，指定 project 增量同步"""
-    svc = RegistryService(db)
-    if project:
-        return svc.sync_for_project(project)
-    return svc.sync_all()
+    try:
+        svc = RegistryService(db)
+        if project:
+            return svc.sync_for_project(project)
+        return svc.sync_all()
+    except HarborUnavailableError as e:
+        raise HTTPException(503, str(e))
