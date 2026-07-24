@@ -72,3 +72,9 @@ CREATE INDEX IF NOT EXISTS idx_pt_project ON ci_pipeline_tags(project);
 CREATE INDEX IF NOT EXISTS idx_pt_created ON ci_pipeline_tags(created_at);
 CREATE INDEX IF NOT EXISTS idx_jgm_path   ON ci_job_git_map(current_path);
 CREATE INDEX IF NOT EXISTS idx_cdr_repo_id ON cd_registry_artifacts(repo_id);
+
+-- 系统配置表（键值对）
+CREATE TABLE IF NOT EXISTS cd_config (
+    key_name VARCHAR(128) PRIMARY KEY,
+    value    TEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

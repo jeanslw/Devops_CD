@@ -111,7 +111,7 @@ function showPanel(n) {
   if (n === "monitor-system") loadMonitorSystem();
   if (n === "monitor-app") loadMonitorApp();
   if (n === "bots") loadBots();
-  if (n === "registry") loadRepositories();
+  if (n === "registry") { loadRepositories(); loadSyncConfig(); }
 }
 
 function toast(msg, ok) {
@@ -1057,6 +1057,60 @@ async function triggerRegistrySync() {
     loadRepositories();
   } finally {
     _syncing = false;
+  }
+}
+
+// ── 同步间隔配置 ──
+
+async function loadSyncConfig() {
+  const sel = document.getElementById("registry-sync-interval");
+  if (!sel) return;
+  try {
+    const r = await fetch("/api/registry/config", { headers: A() });
+    if (handle401(r)) return;
+    const d = await r.json();
+    const val = String(d.interval || 0);
+    // 如果当前值是预设值之一，直接选中；否则追加一项
+    if ([...sel.options].some(o => o.value === val)) {
+      sel.value = val;
+    } else {
+      const opt = document.createElement("option");
+      opt.value = val;
+      opt.textContent = val > 0 ? `${val}分钟（自定义）` : "已关闭";
+      sel.appendChild(opt);
+      sel.value = val;
+    }
+  } catch (e) {
+    sel.value = "0";
+  }
+}
+
+async function onSyncIntervalChange() {
+  const sel = document.getElementById("registry-sync-interval");
+  if (!sel) return;
+  const interval = parseInt(sel.value) || 0;
+  try {
+    const r = await fetch("/api/registry/config", {
+      method: "PUT",
+      headers: { ...A(), "Content-Type": "application/json" },
+      body: JSON.stringify({ interval }),
+    });
+    if (handle401(r)) return;
+    const d = await r.json();
+    if (d.ok) {
+      if (interval <= 0) {
+        toast("🔕 定时同步已关闭", true);
+      } else {
+        const label = interval >= 60 ? `${interval / 60}小时` : `${interval}分钟`;
+        toast(`⏱️ 定时同步间隔已设为 ${label}`, true);
+      }
+    } else {
+      toast("⚠️ " + (d.detail || "设置失败"), false);
+      loadSyncConfig(); // 回滚显示
+    }
+  } catch (e) {
+    toast("❌ 设置失败: " + e.message, false);
+    loadSyncConfig(); // 回滚显示
   }
 }
 

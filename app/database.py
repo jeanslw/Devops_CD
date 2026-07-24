@@ -191,6 +191,12 @@ class Database:
             FOREIGN KEY(repo_id) REFERENCES cd_registry_repositories(id) ON DELETE CASCADE
         )""")
 
+        # 系统配置表
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_config (
+            key_name VARCHAR(128) PRIMARY KEY,
+            value TEXT NOT NULL
+        )""")
+
         self._ensure_indexes(conn)
         conn.commit()
 

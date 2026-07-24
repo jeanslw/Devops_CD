@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import Database
 from app.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry
-from app.services.registry_service import start_background_sync
+from app.services.registry_service import start_background_sync, RegistryService
 
 # ── 创建 app ──
 app = FastAPI(title="Devops-Glue CD", version="1.1.0")
@@ -22,8 +22,14 @@ BASE_DIR = Path(__file__).parent
 # ── 启动事件 ──
 @app.on_event("startup")
 def on_startup():
-    """启动后台定时同步"""
-    start_background_sync(lambda: Database())
+    """启动后台定时同步（DB 已存间隔优先，否则读环境变量）"""
+    db = Database()
+    try:
+        svc = RegistryService(db)
+        interval = svc.get_sync_interval()
+    except Exception:
+        interval = -1
+    start_background_sync(lambda: Database(), interval)
 
 # 注册路由
 app.include_router(auth.router)

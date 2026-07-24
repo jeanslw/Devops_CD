@@ -348,6 +348,48 @@ class RegistryService:
         self._db = db
         self._harbor_client = None
 
+    # ── 配置读写 ──
+
+    def get_config(self, key: str) -> str | None:
+        """读取配置项"""
+        conn = self._db.conn()
+        try:
+            row = conn.execute(
+                "SELECT value FROM cd_config WHERE key_name=?", (key,)
+            ).fetchone()
+            return row["value"] if row else None
+        except Exception:
+            return None
+        finally:
+            conn.close()
+
+    def set_config(self, key: str, value: str):
+        """写入配置项"""
+        conn = self._db.conn()
+        try:
+            conn.execute(
+                "REPLACE INTO cd_config (key_name, value) VALUES (?, ?)",
+                (key, value),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_sync_interval(self) -> int:
+        """获取同步间隔（分钟），0=关闭。DB 优先，fallback 到环境变量"""
+        val = self.get_config("registry_sync_interval")
+        if val is not None:
+            try:
+                return int(val)
+            except ValueError:
+                pass
+        return getattr(settings, "registry_sync_interval", 30)
+
+    def set_sync_interval(self, interval_minutes: int):
+        """设置同步间隔并按需重启线程"""
+        self.set_config("registry_sync_interval", str(interval_minutes))
+        restart_background_sync(interval_minutes)
+
     @property
     def _harbor(self):
         """延迟初始化 HarborClient，避免纯数据库查询时触发 API 探测"""
@@ -784,6 +826,7 @@ class RegistryService:
 
 _sync_thread = None
 _sync_stop = threading.Event()
+_sync_db_factory = None  # 保存 db_factory 用于重启
 
 
 def _sync_worker(db_factory, interval_minutes: int):
@@ -802,13 +845,15 @@ def _sync_worker(db_factory, interval_minutes: int):
             logger.error(f"定时同步异常: {e}")
 
 
-def start_background_sync(db_factory):
+def start_background_sync(db_factory, interval: int = None):
     """启动后台定时同步线程"""
-    interval = getattr(settings, "registry_sync_interval", 30)
+    global _sync_thread, _sync_stop, _sync_db_factory
+    _sync_db_factory = db_factory
+    if interval is None:
+        interval = getattr(settings, "registry_sync_interval", 30)
     if interval <= 0:
-        logger.info("定时同步已关闭 (REGISTRY_SYNC_INTERVAL=0)")
+        logger.info("定时同步已关闭 (interval=0)")
         return
-    global _sync_thread, _sync_stop
     _sync_stop.clear()
     _sync_thread = threading.Thread(
         target=_sync_worker,
@@ -818,6 +863,23 @@ def start_background_sync(db_factory):
     )
     _sync_thread.start()
     logger.info(f"定时同步已启动 (每 {interval} 分钟)")
+
+
+def restart_background_sync(interval: int):
+    """根据新间隔重启定时同步线程"""
+    global _sync_thread, _sync_stop, _sync_db_factory
+    if _sync_thread and _sync_thread.is_alive():
+        _sync_stop.set()
+        _sync_thread.join(timeout=5)
+        _sync_stop.clear()
+    if _sync_db_factory is None:
+        _sync_db_factory = lambda: Database()
+    if interval > 0:
+        start_background_sync(_sync_db_factory, interval)
+        logger.info(f"定时同步间隔已更新为 {interval} 分钟")
+    else:
+        _sync_thread = None
+        logger.info("定时同步已关闭")
 
 
 def stop_background_sync():

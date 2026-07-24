@@ -15,6 +15,10 @@ class DeleteArtifactRequest(BaseModel):
     tag: str
 
 
+class SyncConfigRequest(BaseModel):
+    interval: int  # 分钟，0 关闭
+
+
 # ── 仓库 ──
 
 @router.get("/repositories")
@@ -113,3 +117,32 @@ def trigger_sync(
         return svc.sync_all()
     except HarborUnavailableError as e:
         raise HTTPException(503, str(e))
+
+
+# ── 同步配置 ──
+
+@router.get("/config")
+def get_sync_config(
+    _user: str = Depends(verify_token),
+    db: Database = Depends(get_db),
+):
+    """获取定时同步配置"""
+    svc = RegistryService(db)
+    interval = svc.get_sync_interval()
+    return {"interval": interval}
+
+
+@router.put("/config")
+def update_sync_config(
+    body: SyncConfigRequest,
+    _user: str = Depends(verify_token),
+    db: Database = Depends(get_db),
+):
+    """更新定时同步间隔（分钟，0=关闭）"""
+    if body.interval < 0:
+        raise HTTPException(400, "间隔不能为负数")
+    svc = RegistryService(db)
+    svc.set_sync_interval(body.interval)
+    if body.interval <= 0:
+        return {"ok": True, "interval": 0, "detail": "定时同步已关闭"}
+    return {"ok": True, "interval": body.interval, "detail": f"定时同步已设为每 {body.interval} 分钟"}
