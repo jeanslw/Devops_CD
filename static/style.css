@@ -257,11 +257,49 @@ tbody tr:last-child td {
 }
 
 .btn-sm { padding: 5px 12px; font-size: 11px; }
+.btn-active { background: var(--accent); color: #fff; font-weight: 600; }
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+/* Tag 分页 */
+.tag-pager {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.tag-pager select {
+  flex: 1;
+  min-width: 80px;
+}
+.tag-info {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: normal;
+  margin-left: 4px;
+}
+.btn-page {
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.btn-page:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-page:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 /* ── 表单 ── */

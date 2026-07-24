@@ -20,10 +20,12 @@ def list_projects(
 @router.get("/projects/{project:path}/tags")
 def project_tags(
     project: str,
+    page: int = 1,
+    page_size: int = 50,
     _user: str = Depends(verify_token),
     db: Database = Depends(get_db),
 ):
-    """获取项目的所有 pipeline tag 列表"""
+    """获取项目的 pipeline tag 列表（分页）"""
     from app.services.ci_service import CiService
     svc = CiService(db)
     conn = db.conn()
@@ -37,12 +39,32 @@ def project_tags(
         if map_row and map_row["current_path"] and map_row["current_path"] != project:
             keys.append(map_row["current_path"])
         placeholders = ",".join("?" * len(keys))
+        # 总数
+        total = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM {svc._pipeline_tags} WHERE project IN ({placeholders})",
+            keys,
+        ).fetchone()["cnt"]
+        # 分页
+        if page_size < 1 or page_size > 200:
+            page_size = 50
+        total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
+        if page < 1:
+            page = 1
+        if page > total_pages:
+            page = total_pages
+        offset = (page - 1) * page_size
         rows = conn.execute(
             f"SELECT tag, pipeline_iid, created_at FROM {svc._pipeline_tags} "
-            f"WHERE project IN ({placeholders}) ORDER BY created_at DESC",
-            keys,
+            f"WHERE project IN ({placeholders}) ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            keys + [page_size, offset],
         ).fetchall()
-        return [dict(r) for r in rows]
+        return {
+            "items": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+        }
     finally:
         conn.close()
 

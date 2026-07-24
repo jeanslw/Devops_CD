@@ -81,7 +81,7 @@
       <div class="panel" id="panel-ssh"><div class="deploy-layout"><div><div class="card" id="ssh-pipeline-card"><h3>🔍 CI 构建状态</h3><div id="ssh-pipeline-stages"><span style="color:#888;font-size:12px">选择项目后自动加载</span></div></div></div><div><div class="card"><h3>🖥️ 单机部署</h3>
       <div class="grid2">
         <div><label>项目</label><select id="s-project"></select></div>
-        <div><label>Tag</label><select id="s-tag"></select></div>
+        <div><label>Tag <span id="s-tag-info" class="tag-info"></span></label><div class="tag-pager"><button class="btn-page" id="s-tag-prev" onclick="loadSshTags(null,-1)" disabled>◀</button><select id="s-tag"></select><button class="btn-page" id="s-tag-next" onclick="loadSshTags(null,1)" disabled>▶</button></div></div>
         <div id="s-mode-wrap"><label>模式</label><select id="s-mode" onchange="toggleSshMode()"><option value="commands">自定义命令</option><option value="ansible">Ansible</option></select></div>
         <div><label>服务器</label>
           <div class="multi-select" id="s-server-wrap">
@@ -113,7 +113,7 @@
       <select id="d-type" style="display:none"><option value="compose" selected></option></select>
       <div class="grid2">
         <div><label>项目</label><select id="d-project"></select></div>
-        <div><label>Tag</label><select id="d-tag"></select></div>
+        <div><label>Tag <span id="d-tag-info" class="tag-info"></span></label><div class="tag-pager"><button class="btn-page" id="d-tag-prev" onclick="loadDockerTags(null,-1)" disabled>◀</button><select id="d-tag"></select><button class="btn-page" id="d-tag-next" onclick="loadDockerTags(null,1)" disabled>▶</button></div></div>
         <div id="d-mode-wrap"><label>模式</label><select id="d-mode" onchange="toggleDeployMode()"><option value="remote">docker-compose.yml</option><option value="commands">自定义命令</option></select></div>
         <div><label>服务器</label>
           <div class="multi-select" id="d-server-wrap">
@@ -143,7 +143,7 @@
       <div class="card"><h3>☸️ K8S 部署</h3>
       <div class="grid2" style="margin-bottom:12px">
         <div><label>项目</label><select id="k-project"></select></div>
-        <div><label>Tag</label><select id="k-tag"></select></div>
+        <div><label>Tag <span id="k-tag-info" class="tag-info"></span></label><div class="tag-pager"><button class="btn-page" id="k-tag-prev" onclick="loadK8sTags(null,-1)" disabled>◀</button><select id="k-tag"></select><button class="btn-page" id="k-tag-next" onclick="loadK8sTags(null,1)" disabled>▶</button></div></div>
         <div><label>模式</label><select id="k-cdtype" onchange="toggleK8sType()"><option value="kubectl">kubectl SSH</option><option value="helm">Helm</option><option value="argocd">Argo CD</option><option value="fluxcd">Flux CD</option></select></div>
         <div><label>集群</label><select id="k-cluster"><option value="0">— 选择 —</option></select></div>
       </div>
@@ -280,6 +280,7 @@
             <thead><tr><th>Tag</th><th>大小</th><th>推送时间</th><th>扫描结果</th><th>操作</th></tr></thead>
             <tbody id="registry-artifact-tbody"></tbody>
           </table>
+          <div id="registry-artifact-pager" style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:12px;font-size:13px"></div>
         </div>
         <!-- 扫描报告弹窗 -->
         <div id="registry-scan-dialog" class="modal-overlay" style="display:none">

@@ -227,6 +227,58 @@ function _setCI(prefix, latest_tag, pipeline_iid, created_at) {
   }
 }
 
+// ── Tag 下拉分页 ──
+const _tagState = {};  // { "s-": {project, page, total_pages}, ... }
+
+async function _loadTagPage(prefix, project, delta) {
+  if (!_tagState[prefix]) _tagState[prefix] = { project: "", page: 1, total_pages: 1 };
+  const st = _tagState[prefix];
+
+  if (project != null && project !== "") {
+    if (st.project !== project) { st.project = project; st.page = 1; }
+    if (delta) st.page = Math.max(1, st.page + delta);
+  } else if (delta) {
+    st.page = Math.max(1, Math.min(st.total_pages, st.page + delta));
+  }
+  if (!st.project) return;
+
+  const sel = document.getElementById(prefix + "tag");
+  const info = document.getElementById(prefix + "tag-info");
+  const prev = document.getElementById(prefix + "tag-prev");
+  const next = document.getElementById(prefix + "tag-next");
+  if (!sel) return;
+
+  sel.innerHTML = '<option value="">加载中…</option>';
+  try {
+    const r = await fetch(
+      `/api/projects/${encodeURIComponent(st.project)}/tags?page=${st.page}&page_size=50`,
+      { headers: A() }
+    );
+    const d = await r.json();
+    const items = d.items || [];
+    st.total_pages = d.total_pages || 1;
+    st.page = d.page || 1;
+
+    if (items.length) {
+      sel.innerHTML = items.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("");
+      sel.value = items[0].tag;
+    } else {
+      sel.innerHTML = '<option value="">无可用 Tag</option>';
+    }
+
+    if (info) info.textContent = st.total_pages > 1 ? `(${st.page}/${st.total_pages} 共${d.total}条)` : "";
+    if (prev) prev.disabled = st.page <= 1;
+    if (next) next.disabled = st.page >= st.total_pages;
+
+    // 翻页后自动重新展开下拉框
+    try { sel.showPicker(); } catch (_) { sel.focus(); }
+  } catch (e) { sel.innerHTML = '<option value="">无可用 Tag</option>'; }
+}
+
+function loadSshTags(project, delta) { _loadTagPage("s-", project, delta || 0); }
+function loadK8sTags(project, delta) { _loadTagPage("k-", project, delta || 0); }
+function loadDockerTags(project, delta) { _loadTagPage("d-", project, delta || 0); }
+
 function _setTags(selId, tags) {
   const sel = document.getElementById(selId);
   if (!sel) return;
@@ -271,10 +323,6 @@ async function viewPipeline(project) {
   if (!project) return;
   const seq = ++_vpSeq;
   _setCI("", "", "", "", ""); _setCI("ssh-", "", "", "", ""); _setCI("k-", "", "", "", "");
-  _setTags("d-tag", []); _setTags("s-tag", []); _setTags("k-tag", []);
-  document.getElementById("s-tag").innerHTML = '<option value="">加载中…</option>';
-  document.getElementById("d-tag").innerHTML = '<option value="">加载中…</option>';
-  document.getElementById("k-tag").innerHTML = '<option value="">加载中…</option>';
 
   try {
     const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`, { headers: A() });
@@ -288,14 +336,10 @@ async function viewPipeline(project) {
     _setCI("k-", tag, iid, created);
   } catch(e) {}
 
-  try {
-    const tr = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() });
-    const tags = await tr.json();
-    if (seq !== _vpSeq) return;
-    _setTags("d-tag", tags);
-    _setTags("s-tag", tags);
-    _setTags("k-tag", tags);
-  } catch(e) {}
+  // Tag 下拉：分页加载，每面板独立
+  _loadTagPage("d-", project, 0);
+  _loadTagPage("s-", project, 0);
+  _loadTagPage("k-", project, 0);
 }
 
 // ── 服务器管理 ──
@@ -919,6 +963,8 @@ async function delBot(id) {
 
 let _registryRepoId = 0;
 let _registryRepoName = "";
+let _artifactPage = 1;
+let _artifactPageSize = 20;
 
 function severityClass(sev) {
   const m = { Critical: "sev-critical", High: "sev-high", Medium: "sev-medium", Low: "sev-low" };
@@ -979,25 +1025,29 @@ async function loadRepositories() {
   }
 }
 
-async function viewArtifacts(repoId, repoName) {
+async function viewArtifacts(repoId, repoName, page = 1) {
   _registryRepoId = repoId;
   _registryRepoName = repoName;
+  _artifactPage = page;
   document.getElementById("registry-repo-card").style.display = "none";
   document.getElementById("registry-artifact-card").style.display = "block";
   document.getElementById("registry-artifact-repo-title").textContent = repoName;
   document.getElementById("registry-sync-current-btn").setAttribute("onclick", `syncCurrentRepo()`);
 
   const tbody = document.getElementById("registry-artifact-tbody");
+  const pager = document.getElementById("registry-artifact-pager");
   tbody.innerHTML = '<tr><td colspan="5">加载中…</td></tr>';
+  pager.innerHTML = "";
   try {
-    const r = await fetch(`/api/registry/artifacts/${repoId}`, { headers: A() });
+    const r = await fetch(`/api/registry/artifacts/${repoId}?page=${page}&page_size=${_artifactPageSize}`, { headers: A() });
     if (handle401(r)) return;
     const data = await r.json();
-    if (!data.length) {
+    const items = data.items || [];
+    if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="5" style="color:#888;text-align:center">暂无 Tag</td></tr>';
       return;
     }
-    tbody.innerHTML = data.map(a => {
+    const renderRow = a => {
       const sev = a.scan_severity || "";
       const st = (a.scan_status || "").toLowerCase();
       const done = ["success", "finished", "complete", "done"].includes(st);
@@ -1020,7 +1070,26 @@ async function viewArtifacts(repoId, repoName) {
           <button class="btn btn-red btn-sm" onclick="event.stopPropagation();confirmDeleteArtifact('${escHtml(a.tag)}')" title="删除 Tag">🗑</button>
         </td>
       </tr>`;
-    }).join("");
+    };
+    tbody.innerHTML = items.map(renderRow).join("");
+
+    // 渲染分页控件
+    const total = data.total || 0;
+    const totalPages = data.total_pages || 1;
+    if (totalPages > 1) {
+      let html = `<span style="color:#888">共 ${total} 条 / ${totalPages} 页</span>`;
+      html += `<button class="btn btn-sm" onclick="viewArtifacts(_registryRepoId,_registryRepoName,${page - 1})" ${page <= 1 ? "disabled" : ""}>◀ 上一页</button>`;
+      // 页码按钮（最多显示 7 个）
+      const maxBtns = 7;
+      let start = Math.max(1, page - Math.floor(maxBtns / 2));
+      let end = Math.min(totalPages, start + maxBtns - 1);
+      if (end - start < maxBtns - 1) start = Math.max(1, end - maxBtns + 1);
+      for (let i = start; i <= end; i++) {
+        html += `<button class="btn btn-sm${i === page ? ' btn-active' : ''}" onclick="viewArtifacts(_registryRepoId,_registryRepoName,${i})">${i}</button>`;
+      }
+      html += `<button class="btn btn-sm" onclick="viewArtifacts(_registryRepoId,_registryRepoName,${page + 1})" ${page >= totalPages ? "disabled" : ""}>下一页 ▶</button>`;
+      pager.innerHTML = html;
+    }
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" style="color:var(--err)">加载失败: ${escHtml(e.message)}</td></tr>`;
   }
@@ -1126,7 +1195,7 @@ async function syncCurrentRepo() {
     if (handle401(r)) return;
     const d = await r.json();
     toast(d.ok ? "✅ 同步完成" : "⚠️ 同步失败", d.ok);
-    if (_registryRepoId) viewArtifacts(_registryRepoId, _registryRepoName);
+    if (_registryRepoId) viewArtifacts(_registryRepoId, _registryRepoName, _artifactPage);
   } catch (e) {
     toast("❌ 同步失败: " + e.message, false);
   } finally {
@@ -1313,7 +1382,7 @@ async function confirmDeleteTag() {
     if (r.ok) {
       toast(`✅ Tag '${_delTag}' 已删除`, true);
       closeRegistryDeleteDialog();
-      if (_registryRepoId) viewArtifacts(_registryRepoId, _registryRepoName);
+      if (_registryRepoId) viewArtifacts(_registryRepoId, _registryRepoName, _artifactPage);
     } else {
       toast(`❌ ${d.detail || "删除失败"}`, false);
     }
@@ -1370,13 +1439,7 @@ async function loadSshForm() {
   if (proj) { loadSshTags(proj); viewPipeline(proj); }
 }
 
-async function loadSshTags(project) {
-  const sel = document.getElementById("s-tag"); sel.innerHTML = '<option value="">加载中…</option>';
-  try { const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() }); const tags = await r.json();
-    sel.innerHTML = tags.length ? tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("") : '<option value="">无可用 Tag</option>';
-    if (tags.length) sel.value = tags[0].tag;
-  } catch(e) { sel.innerHTML = '<option value="">无可用 Tag</option>'; }
-}
+
 
 async function doSshDeploy() {
   const tag = document.getElementById("s-tag").value; if (!tag) return toast("没有可用的 Tag", false);
@@ -1499,20 +1562,7 @@ async function doK8sStop() {
   const d = await r.json(); document.getElementById("k8s-out").textContent = d.output || ""; toast(d.success ? "✅ 已停止" : "❌ 失败", d.success);
 }
 
-async function loadK8sTags(project) {
-  const sel = document.getElementById("k-tag");
-  sel.innerHTML = '<option value="">加载中…</option>';
-  try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() });
-    const tags = await r.json();
-    if (tags.length) {
-      sel.innerHTML = tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("");
-      sel.value = tags[0].tag;
-    } else {
-      sel.innerHTML = '<option value="">无可用 Tag</option>';
-    }
-  } catch(e) { sel.innerHTML = '<option value="">无可用 Tag</option>'; }
-}
+
 
 async function doK8sDeploy() {
   const tag = document.getElementById("k-tag").value;

@@ -84,13 +84,18 @@ class HarborClient:
     def base_url(self) -> str:
         return self._base or ""
 
-    def _get(self, path: str) -> dict | list:
+    def _get_raw(self, path: str) -> requests.Response:
+        """返回原始响应对象（用于需要读取 headers 的分页场景）"""
         try:
             r = requests.get(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
         except requests.ConnectionError as e:
             raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
         except requests.Timeout as e:
             raise HarborUnavailableError(f"Harbor 请求超时：{e}") from e
+        return r
+
+    def _get(self, path: str) -> dict | list:
+        r = self._get_raw(path)
         if r.status_code == 404:
             return [] if path.endswith("s") else {}
         r.raise_for_status()
@@ -135,14 +140,31 @@ class HarborClient:
             return self._list_artifacts_v1(repo_full)
 
     def _list_artifacts_v2(self, repo_full: str) -> list[dict]:
-        """v2: /api/v2.0/projects/{project}/repositories/{repo}/artifacts"""
+        """v2: /api/v2.0/projects/{project}/repositories/{repo}/artifacts（分页采集全部 tags）"""
         project, repo = self._split_repo(repo_full)
         enc_proj = urllib.parse.quote(project, safe="")
         enc_repo = urllib.parse.quote(repo, safe="")
-        raw = self._get(f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}/artifacts?page_size=100&with_scan_overview=true")
-        items = raw if isinstance(raw, list) else []
+        base_path = f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}/artifacts"
+
+        all_items = []
+        page = 1
+        page_size = 100
+        while True:
+            r = self._get_raw(f"{base_path}?page={page}&page_size={page_size}&with_scan_overview=true")
+            if r.status_code == 404:
+                return []
+            r.raise_for_status()
+            page_items = r.json() if isinstance(r.json(), list) else []
+            all_items.extend(page_items)
+
+            total = int(r.headers.get("X-Total-Count", 0))
+            # 最后一页 或 已收齐
+            if len(page_items) < page_size or len(all_items) >= total:
+                break
+            page += 1
+
         result = []
-        for art in items:
+        for art in all_items:
             # Harbor 不同版本的 scan_overview key 不同，动态取第一个
             scan_overview = art.get("scan_overview") or {}
             scan = {}
@@ -178,12 +200,29 @@ class HarborClient:
         return result
 
     def _list_artifacts_v1(self, repo_full: str) -> list[dict]:
-        """v1: /api/repositories/{repo_name}/tags"""
+        """v1: /api/repositories/{repo_name}/tags（分页采集全部 tags）"""
         encoded = urllib.parse.quote(repo_full, safe="")
-        raw = self._get(f"/api/repositories/{encoded}/tags")
-        items = raw if isinstance(raw, list) else []
+        base_path = f"/api/repositories/{encoded}/tags"
+
+        all_items = []
+        page = 1
+        page_size = 100
+        while True:
+            r = self._get_raw(f"{base_path}?page={page}&page_size={page_size}")
+            if r.status_code == 404:
+                return []
+            r.raise_for_status()
+            page_items = r.json() if isinstance(r.json(), list) else []
+            all_items.extend(page_items)
+
+            total = int(r.headers.get("X-Total-Count", 0))
+            # 最后一页 或 已收齐
+            if len(page_items) < page_size or (total > 0 and len(all_items) >= total):
+                break
+            page += 1
+
         result = []
-        for t in items:
+        for t in all_items:
             scan_ov = t.get("scan_overview") or {}
             scan_status = scan_ov.get("scan_status", "")
             severity_map = {1: "None", 2: "Unknown", 3: "Low", 4: "Medium", 5: "High", 6: "Critical"}
@@ -602,19 +641,26 @@ class RegistryService:
         finally:
             conn.close()
 
-    def get_artifacts(self, repo_id: int) -> list[dict]:
-        """获取指定仓库的 artifact/tag 列表"""
+    def get_artifacts(self, repo_id: int, page: int = 1, page_size: int = 20) -> dict:
+        """获取指定仓库的 artifact/tag 列表（分页）"""
         conn = self._db.conn()
         try:
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM cd_registry_artifacts WHERE repo_id=?",
+                (repo_id,)
+            ).fetchone()["cnt"]
+
+            offset = (page - 1) * page_size
             rows = conn.execute(
                 """SELECT a.*, r.project_name, r.repo_name
                 FROM cd_registry_artifacts a
                 JOIN cd_registry_repositories r ON r.id=a.repo_id
                 WHERE a.repo_id=?
-                ORDER BY a.push_time DESC""",
-                (repo_id,)
+                ORDER BY a.push_time DESC
+                LIMIT ? OFFSET ?""",
+                (repo_id, page_size, offset)
             ).fetchall()
-            return [
+            items = [
                 {
                     "id": row["id"],
                     "tag": row["tag"],
@@ -635,6 +681,14 @@ class RegistryService:
                 }
                 for row in rows
             ]
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            return {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+            }
         finally:
             conn.close()
 

@@ -36,12 +36,14 @@ def list_repositories(
 @router.get("/artifacts/{repo_id}")
 def list_artifacts(
     repo_id: int,
+    page: int = 1,
+    page_size: int = 20,
     _user: str = Depends(verify_token),
     db: Database = Depends(get_db),
 ):
-    """列出指定仓库的所有 artifacts/tags（含扫描摘要）"""
+    """列出指定仓库的 artifacts/tags（分页，含扫描摘要）"""
     svc = RegistryService(db)
-    return svc.get_artifacts(repo_id)
+    return svc.get_artifacts(repo_id, page=page, page_size=page_size)
 
 
 # ── 扫描报告 ──
