@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     log_truncate_chars: int = 2000
     notify_truncate_chars: int = 200
 
+    # ── 镜像仓库同步（可选）──
+    registry_sync_interval: int = 30  # 分钟，0 关闭
+
     # ── 监控（可选）──
     monitoring_enabled: bool = True
     monitor_cache_servers: int = 60

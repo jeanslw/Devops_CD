@@ -111,6 +111,7 @@ function showPanel(n) {
   if (n === "monitor-system") loadMonitorSystem();
   if (n === "monitor-app") loadMonitorApp();
   if (n === "bots") loadBots();
+  if (n === "registry") loadRepositories();
 }
 
 function toast(msg, ok) {
@@ -123,7 +124,8 @@ function toast(msg, ok) {
 // ── CI 项目列表 ──
 
 async function loadCI() {
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   document.getElementById("ci-tbody").innerHTML = d
     .map(
@@ -247,7 +249,8 @@ async function viewPipelineRow(btn, project) {
   tr.parentNode.insertBefore(detail, tr.nextSibling);
 
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`);
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`, { headers: A() });
+    if (handle401(r)) { detail.remove(); return; }
     const d = await r.json();
     if (d.latest_tag) {
       const p = d.pipeline || {};
@@ -274,7 +277,7 @@ async function viewPipeline(project) {
   document.getElementById("k-tag").innerHTML = '<option value="">加载中…</option>';
 
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`);
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`, { headers: A() });
     const d = await r.json();
     if (seq !== _vpSeq) return;
     const tag = d.latest_tag || "";
@@ -286,7 +289,7 @@ async function viewPipeline(project) {
   } catch(e) {}
 
   try {
-    const tr = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`);
+    const tr = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() });
     const tags = await tr.json();
     if (seq !== _vpSeq) return;
     _setTags("d-tag", tags);
@@ -566,7 +569,8 @@ function clearCustomTags() {
 let _deployFormReady = false;
 
 async function loadDeployForm() {
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   window._projects = d;
   const sel = document.getElementById("d-project");
@@ -911,6 +915,364 @@ async function delBot(id) {
   loadBots();
 }
 
+// ── 镜像仓库管理 ──
+
+let _registryRepoId = 0;
+let _registryRepoName = "";
+
+function severityClass(sev) {
+  const m = { Critical: "sev-critical", High: "sev-high", Medium: "sev-medium", Low: "sev-low" };
+  return m[sev] || "sev-none";
+}
+function severityEmoji(sev) {
+  const m = { Critical: "🔴", High: "🟠", Medium: "🟡", Low: "🔵" };
+  return m[sev] || "⚪";
+}
+function formatTime(t) {
+  if (!t) return "-";
+  try {
+    // 数据库统一存储 UTC 时间（无 Z 后缀），补 Z 后按 UTC 解析，输出本地时间
+    const normalized = t.replace(" ", "T") + (t.includes("Z") ? "" : "Z");
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return t.slice(0, 16);
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch (e) {
+    return t.slice(0, 16);
+  }
+}
+
+async function loadRepositories() {
+  const grid = document.getElementById("registry-repo-grid");
+  const syncLabel = document.getElementById("registry-last-sync");
+  grid.innerHTML = '<div style="color:#888;text-align:center;padding:40px">加载中…</div>';
+  try {
+    const r = await fetch("/api/registry/repositories", { headers: A() });
+    if (handle401(r)) return;
+    const data = await r.json();
+    const repos = data.repositories || [];
+    const lastSync = data.last_sync || "";
+    // 渲染最后同步时间
+    if (syncLabel) {
+      syncLabel.textContent = lastSync ? "上次同步：" + formatTime(lastSync) : "尚未同步";
+    }
+    if (!repos.length) {
+      grid.innerHTML = '<div style="color:#888;text-align:center;padding:40px">暂无已配置镜像仓库的项目，请先同步数据 <button class="btn btn-sm btn-green" onclick="triggerRegistrySync()">立即同步</button></div>';
+      return;
+    }
+    grid.innerHTML = repos.map(repo => {
+      return `<div class="repo-card" onclick="viewArtifacts(${repo.id},'${escHtml(repo.repo)}')">
+        <div class="repo-card-icon">🐳</div>
+        <div class="repo-card-body">
+          <div class="repo-card-path"><span class="repo-card-project">${escHtml(repo.project)}</span> / <span class="repo-card-repo">${escHtml(repo.repo.split("/").pop())}</span></div>
+          <div class="repo-card-full">${escHtml(repo.repo)}</div>
+        </div>
+        <div class="repo-card-stats">
+          <span class="repo-stat"><span class="repo-stat-num">${repo.tag_count}</span> Tags</span>
+          <span class="repo-stat"><span class="repo-stat-time">${formatTime(repo.latest_push)}</span></span>
+        </div>
+        <div class="repo-card-arrow">→</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    grid.innerHTML = `<div style="color:var(--err);text-align:center;padding:40px">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function viewArtifacts(repoId, repoName) {
+  _registryRepoId = repoId;
+  _registryRepoName = repoName;
+  document.getElementById("registry-repo-card").style.display = "none";
+  document.getElementById("registry-artifact-card").style.display = "block";
+  document.getElementById("registry-artifact-repo-title").textContent = repoName;
+  document.getElementById("registry-sync-current-btn").setAttribute("onclick", `syncCurrentRepo()`);
+
+  const tbody = document.getElementById("registry-artifact-tbody");
+  tbody.innerHTML = '<tr><td colspan="5">加载中…</td></tr>';
+  try {
+    const r = await fetch(`/api/registry/artifacts/${repoId}`, { headers: A() });
+    if (handle401(r)) return;
+    const data = await r.json();
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:#888;text-align:center">暂无 Tag</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(a => {
+      const sev = a.scan_severity || "";
+      const st = (a.scan_status || "").toLowerCase();
+      const done = ["success", "finished", "complete", "done"].includes(st);
+      const hasVuln = (a.vuln_critical || 0) + (a.vuln_high || 0) + (a.vuln_medium || 0) + (a.vuln_low || 0) > 0;
+      const sevBadge = sev && sev !== "None" && hasVuln
+        ? `<span class="severity-badge ${severityClass(sev)}">${severityEmoji(sev)} ${sev} C:${a.vuln_critical} H:${a.vuln_high} M:${a.vuln_medium}</span>`
+        : (done
+          ? (hasVuln
+            ? `<span class="severity-badge ${severityClass(sev || 'Unknown')}">${severityEmoji(sev || 'Unknown')} ${sev || 'Unknown'} C:${a.vuln_critical} H:${a.vuln_high} M:${a.vuln_medium}</span>`
+            : '<span class="severity-badge sev-none">⚪ 无漏洞</span>')
+          : '<span class="severity-badge sev-none">未扫描</span>');
+      return `<tr>
+        <td><code style="font-size:13px;font-weight:600;color:var(--accent)">${escHtml(a.tag)}</code></td>
+        <td>${a.size_mb} MB</td>
+        <td style="font-size:12px;white-space:nowrap">${formatTime(a.push_time)}</td>
+        <td>${sevBadge}</td>
+        <td>
+          <button class="btn btn-blue btn-sm" onclick="event.stopPropagation();showScanReport(${a.id},'${escHtml(a.tag)}','${escHtml(_registryRepoName)}')" title="查看扫描报告">🔍 报告</button>
+          <button class="btn btn-orange btn-sm" onclick="event.stopPropagation();triggerHarborScan(${a.id},'${escHtml(a.tag)}')" title="触发 Harbor 重新扫描">🔄 扫描</button>
+          <button class="btn btn-red btn-sm" onclick="event.stopPropagation();confirmDeleteArtifact('${escHtml(a.tag)}')" title="删除 Tag">🗑</button>
+        </td>
+      </tr>`;
+    }).join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--err)">加载失败: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function backToRepositories() {
+  document.getElementById("registry-repo-card").style.display = "block";
+  document.getElementById("registry-artifact-card").style.display = "none";
+  _registryRepoId = 0;
+  _registryRepoName = "";
+}
+
+let _syncing = false;
+
+async function triggerRegistrySync() {
+  if (_syncing) return toast("⏳ 正在同步中，请稍候…", false);
+  _syncing = true;
+  const grid = document.getElementById("registry-repo-grid");
+  const syncLabel = document.getElementById("registry-last-sync");
+  grid.innerHTML = '<div style="color:#888;text-align:center;padding:40px">🔄 正在从 Harbor 同步数据…</div>';
+  try {
+    const r = await fetch("/api/registry/sync", { method: "POST", headers: A() });
+    if (handle401(r)) { _syncing = false; return; }
+    const d = await r.json();
+    if (d.ok) {
+      toast(`✅ 同步完成：${d.total} artifacts, ${d.repos} 仓库`, true);
+      if (syncLabel) syncLabel.textContent = "上次同步：同步中…";
+    } else {
+      toast("⚠️ 同步完成但有问题", false);
+    }
+    loadRepositories();
+  } catch (e) {
+    toast("❌ 同步失败: " + e.message, false);
+    loadRepositories();
+  } finally {
+    _syncing = false;
+  }
+}
+
+async function syncCurrentRepo() {
+  if (_syncing) return toast("⏳ 正在同步中，请稍候…", false);
+  if (!_registryRepoName) return;
+  _syncing = true;
+  const btn = document.getElementById("registry-sync-current-btn");
+  const origText = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ 同步中…"; }
+  try {
+    const r = await fetch(`/api/registry/sync?project=${encodeURIComponent(_registryRepoName.split("/")[0])}`, { method: "POST", headers: A() });
+    if (handle401(r)) return;
+    const d = await r.json();
+    toast(d.ok ? "✅ 同步完成" : "⚠️ 同步失败", d.ok);
+    if (_registryRepoId) viewArtifacts(_registryRepoId, _registryRepoName);
+  } catch (e) {
+    toast("❌ 同步失败: " + e.message, false);
+  } finally {
+    _syncing = false;
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+}
+
+// ── 扫描报告 ──
+
+async function showScanReport(artifactId, tag, repoName) {
+  document.getElementById("scan-dialog-tag").textContent = tag;
+  const content = document.getElementById("scan-dialog-content");
+  content.innerHTML = '<div style="color:#888;text-align:center;padding:20px">加载中…</div>';
+  document.getElementById("registry-scan-dialog").style.display = "flex";
+  try {
+    const r = await fetch(`/api/registry/scan/report/${_registryRepoId}/${encodeURIComponent(tag)}`, { headers: A() });
+    if (handle401(r)) return;
+    if (r.status === 404) {
+      content.innerHTML = '<div style="color:#888;text-align:center;padding:20px">该 Tag 暂无扫描报告</div>';
+      return;
+    }
+    const d = await r.json();
+    renderScanReport(content, d, tag, repoName);
+  } catch (e) {
+    content.innerHTML = `<div style="color:var(--err)">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function severityLabel(sev) {
+  const m = { Critical: "危急", High: "严重", Medium: "中等", Low: "其他", None: "无" };
+  return m[sev] || sev;
+}
+
+function renderScanReport(container, data, tag, repoName) {
+  // 支持 Harbor v1 / v2 / 后端构造的 report 格式
+  let vulns = [];
+  let overview = {};
+
+  // 后端构造的 report 格式（优先）
+  if (data.summary || data.scan_status) {
+    vulns = data.vulnerabilities || [];
+    overview = data.summary || {};
+  }
+  // v1 格式 (数组)
+  else if (Array.isArray(data) && data.length > 0 && data[0].vulnerabilities) {
+    vulns = data[0].vulnerabilities || [];
+    overview = data[0].components?.summary || [];
+  }
+  // v1 格式 (单个对象)
+  else if (data.vulnerabilities) {
+    vulns = data.vulnerabilities || [];
+    overview = data.components?.summary || [];
+  }
+  // v2 原始格式: application/vnd.security.vulnerability.report...
+  else {
+    const rptKey = Object.keys(data).find(k => k.includes("vulnerability.report") || k.includes("scanner.adapter"));
+    if (rptKey) {
+      const rpt = data[rptKey];
+      vulns = rpt.vulnerabilities || [];
+      overview = rpt.summary || {};
+    }
+  }
+
+  const c = overview.critical || 0;
+  const h = overview.high || 0;
+  const m = overview.medium || 0;
+  const l = overview.low || 0;
+  const total = overview.total || (c + h + m + l) || 0;
+
+  // 顶部统计
+  let html = `<div style="margin-bottom:16px;padding:12px 16px;background:rgba(0,0,0,.25);border-radius:8px;font-size:13px;line-height:1.8">
+    <div style="font-weight:600;font-size:15px;margin-bottom:4px">共有缺陷：<span style="color:var(--accent)">${total}</span> 个</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      ${c ? `<span style="color:#e74c3c">危急缺陷 ${c} 个</span>` : ""}
+      ${h ? `<span style="color:#e67e22">严重缺陷 ${h} 个</span>` : ""}
+      ${m ? `<span style="color:#f1c40f">中等缺陷 ${m} 个</span>` : ""}
+      ${l ? `<span style="color:#3498db">其他 ${l} 个</span>` : ""}
+    </div>
+  </div>`;
+
+  if (!vulns.length) {
+    if (!total) {
+      html += '<div style="color:#888;text-align:center;padding:20px">✅ 未发现漏洞</div>';
+    } else {
+      html += '<div style="color:#888;text-align:center;padding:20px">⚠️ 有漏洞概览，但未返回详细列表</div>';
+    }
+  } else {
+    const severityOrder = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+    vulns.sort((a, b) => (severityOrder[a.severity] || 9) - (severityOrder[b.severity] || 9));
+
+    html += `<div class="table-wrap" style="max-height:420px;overflow:auto">
+      <table class="data-table" style="font-size:12px">
+        <thead><tr>
+          <th>缺陷码</th>
+          <th style="width:70px">严重度</th>
+          <th>组件</th>
+          <th>当前版本</th>
+          <th>修复版本</th>
+        </tr></thead>
+        <tbody>`;
+
+    html += vulns.map(v => {
+      const sev = v.severity || "";
+      return `<tr>
+        <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(v.id || "")}">${escHtml(v.id || "")}</td>
+        <td><span class="severity-badge ${severityClass(sev)}">${severityLabel(sev)}</span></td>
+        <td style="font-size:11px">${escHtml(v.package || "")}</td>
+        <td style="font-size:11px"><code>${escHtml(v.version || "")}</code></td>
+        <td style="font-size:11px;color:var(--accent)"><code>${escHtml(v.fix_version || v.fixed_version || "-")}</code></td>
+      </tr>`;
+    }).join("");
+
+    html += `</tbody></table></div>`;
+  }
+
+  // 底部 Harbor 链接
+  const harborUrl = data.harbor_url || "";
+  if (harborUrl) {
+    html += `<div style="margin-top:16px;text-align:right">
+      <a href="${escHtml(harborUrl)}" target="_blank" rel="noopener" class="btn btn-blue btn-sm">查看详情 → Harbor</a>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function closeScanDialog() {
+  document.getElementById("registry-scan-dialog").style.display = "none";
+}
+
+async function triggerHarborScan(artifactId, tag) {
+  try {
+    const r = await fetch(`/api/registry/scan/trigger/${_registryRepoId}/${encodeURIComponent(tag)}`, {
+      method: "POST", headers: A()
+    });
+    if (handle401(r)) return;
+    const d = await r.json();
+    if (d.ok) {
+      toast("🔄 " + (d.detail || "扫描已触发"), true);
+    } else {
+      toast("❌ " + (d.error || "触发失败"), false);
+    }
+  } catch (e) {
+    toast("❌ 触发失败: " + e.message, false);
+  }
+}
+
+// ── 删除 ──
+
+let _delRepoId = 0, _delTag = "";
+
+function confirmDeleteArtifact(tag) {
+  _delRepoId = _registryRepoId;
+  _delTag = tag;
+  document.getElementById("reg-del-repo").textContent = _registryRepoName;
+  document.getElementById("reg-del-tag").textContent = tag;
+  document.getElementById("reg-del-input").value = "";
+  document.getElementById("reg-del-confirm").disabled = true;
+  document.getElementById("registry-delete-dialog").style.display = "flex";
+}
+
+function closeRegistryDeleteDialog() {
+  document.getElementById("registry-delete-dialog").style.display = "none";
+  _delRepoId = 0;
+  _delTag = "";
+}
+
+function checkRegistryDeleteInput() {
+  const val = document.getElementById("reg-del-input").value.trim();
+  document.getElementById("reg-del-confirm").disabled = val !== _delTag;
+}
+
+async function confirmDeleteTag() {
+  const val = document.getElementById("reg-del-input").value.trim();
+  if (val !== _delTag || !_delRepoId) return;
+  try {
+    const r = await fetch(`/api/registry/artifacts/${_delRepoId}`, {
+      method: "DELETE",
+      headers: Object.assign({ "Content-Type": "application/json" }, A()),
+      body: JSON.stringify({ repo_id: _delRepoId, tag: _delTag }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      toast(`✅ Tag '${_delTag}' 已删除`, true);
+      closeRegistryDeleteDialog();
+      if (_registryRepoId) viewArtifacts(_registryRepoId, _registryRepoName);
+    } else {
+      toast(`❌ ${d.detail || "删除失败"}`, false);
+    }
+  } catch (e) {
+    toast("❌ 请求失败", false);
+  }
+}
+
+function escHtml(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 // ── SSH 单机部署 ──
 
 function toggleSshMode() {
@@ -921,7 +1283,8 @@ function toggleSshMode() {
 }
 
 async function loadSshForm() {
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   const sel = document.getElementById("s-project");
   sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
@@ -955,7 +1318,7 @@ async function loadSshForm() {
 
 async function loadSshTags(project) {
   const sel = document.getElementById("s-tag"); sel.innerHTML = '<option value="">加载中…</option>';
-  try { const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`); const tags = await r.json();
+  try { const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() }); const tags = await r.json();
     sel.innerHTML = tags.length ? tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("") : '<option value="">无可用 Tag</option>';
     if (tags.length) sel.value = tags[0].tag;
   } catch(e) { sel.innerHTML = '<option value="">无可用 Tag</option>'; }
@@ -1032,7 +1395,8 @@ function toggleK8sType() {
 
 async function loadK8sForm() {
   // 项目列表
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   const sel = document.getElementById("k-project");
   sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
@@ -1085,7 +1449,7 @@ async function loadK8sTags(project) {
   const sel = document.getElementById("k-tag");
   sel.innerHTML = '<option value="">加载中…</option>';
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`);
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() });
     const tags = await r.json();
     if (tags.length) {
       sel.innerHTML = tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("");

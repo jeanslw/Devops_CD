@@ -11,11 +11,19 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor
+from app.database import Database
+from app.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry
+from app.services.registry_service import start_background_sync
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="0.2.0")
+app = FastAPI(title="Devops-Glue CD", version="1.1.0")
 BASE_DIR = Path(__file__).parent
+
+# ── 启动事件 ──
+@app.on_event("startup")
+def on_startup():
+    """启动后台定时同步"""
+    start_background_sync(lambda: Database())
 
 # 注册路由
 app.include_router(auth.router)
@@ -28,6 +36,7 @@ app.include_router(tags.router)
 app.include_router(terminal.router)
 app.include_router(k8s_deploy.router)
 app.include_router(monitor.router)
+app.include_router(registry.router)
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -53,7 +62,7 @@ def dashboard():
 def health():
     return {
         "status": "ok",
-        "version": "0.2.0",
+        "version": app.version,
     }
 
 

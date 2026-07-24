@@ -32,6 +32,7 @@
       <div class="item item-sub" data-panel="k8s" onclick="showPanel('k8s')" style="display:none;padding-left:30px">☸️ 部署到 K8S</div>
       <div class="item" data-panel="shell" onclick="showPanel('shell')">🖥️ Web Shell</div>
       <div class="item" data-panel="logs" onclick="showPanel('logs')">📜 部署记录</div>
+      <div class="item" data-panel="registry" onclick="showPanel('registry')">📦 镜像仓库</div>
       <div class="item item-parent" onclick="toggleSubmenu(this)">📊 资源监控 ▾</div>
       <div class="item item-sub" data-panel="monitor-app" onclick="showPanel('monitor-app')" style="display:none;padding-left:30px">📦 应用资源</div>
       <div class="item item-sub" data-panel="monitor-system" onclick="showPanel('monitor-system')" style="display:none;padding-left:30px">🖥️ 系统资源</div>
@@ -242,6 +243,59 @@
                   <div style="color:#888;padding:20px 0;text-align:center">🖥️ SSH 类型服务器暂无可用的应用资源监控，请使用「系统资源」查看服务器状态</div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registry -->
+      <div class="panel" id="panel-registry">
+        <!-- 仓库卡片列表 -->
+        <div class="card" id="registry-repo-card">
+          <h3>📦 镜像仓库
+            <span class="refresh-bar">
+              <span id="registry-last-sync" style="font-size:12px;color:#888;margin-right:10px">加载中…</span>
+              <button class="btn btn-sm" onclick="triggerRegistrySync()" title="同步数据">🔄 同步</button>
+            </span>
+          </h3>
+          <div id="registry-repo-grid" class="repo-grid"><div style="color:#888;text-align:center;padding:40px">加载中…</div></div>
+        </div>
+        <!-- Artifact / Tag 列表 -->
+        <div class="card" id="registry-artifact-card" style="display:none">
+          <h3 style="margin:0 0 12px 0">
+            📦 <span id="registry-artifact-repo-title"></span>
+            <button class="btn btn-sm" onclick="backToRepositories()" style="margin-left:8px">← 返回仓库列表</button>
+            <button class="btn btn-sm" onclick="syncCurrentRepo()" style="margin-left:8px" id="registry-sync-current-btn">🔄 同步此仓库</button>
+          </h3>
+          <table>
+            <thead><tr><th>Tag</th><th>大小</th><th>推送时间</th><th>扫描结果</th><th>操作</th></tr></thead>
+            <tbody id="registry-artifact-tbody"></tbody>
+          </table>
+        </div>
+        <!-- 扫描报告弹窗 -->
+        <div id="registry-scan-dialog" class="modal-overlay" style="display:none">
+          <div class="modal-box-scan">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <h3 style="margin:0">🔍 扫描报告：<span id="scan-dialog-tag"></span></h3>
+              <button class="btn" onclick="closeScanDialog()">✕</button>
+            </div>
+            <div id="scan-dialog-content" style="max-height:60vh;overflow-y:auto;font-size:13px">加载中…</div>
+          </div>
+        </div>
+        <!-- 删除确认弹窗 -->
+        <div id="registry-delete-dialog" class="modal-overlay" style="display:none">
+          <div class="modal-box">
+            <h3 style="margin:0 0 12px 0">⚠️ 确认删除镜像 Tag</h3>
+            <div class="grid2" style="margin-bottom:12px;grid-template-columns:1fr 1fr">
+              <div><label>仓库</label><div style="padding:6px 0;font-weight:600" id="reg-del-repo"></div></div>
+              <div><label>Tag</label><div style="padding:6px 0;color:var(--err);font-weight:600" id="reg-del-tag"></div></div>
+            </div>
+            <div id="reg-del-info" style="margin-bottom:12px;font-size:12px;color:#888">该操作将永久删除镜像 Tag，无法恢复。系统会自动检查运行状态和最近 3 个 Tag 保护。</div>
+            <label>请输入 Tag 名称确认删除：</label>
+            <input id="reg-del-input" placeholder="输入 Tag 名称" oninput="checkRegistryDeleteInput()" style="margin-bottom:12px">
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn" onclick="closeRegistryDeleteDialog()">取消</button>
+              <button class="btn btn-red" id="reg-del-confirm" disabled onclick="confirmDeleteTag()">确认删除</button>
             </div>
           </div>
         </div>

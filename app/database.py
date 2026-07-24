@@ -164,6 +164,33 @@ class Database:
             created_at TEXT DEFAULT ({NOW})
         )""")
 
+        # 镜像仓库缓存表
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_registry_repositories (
+            id {PK},
+            project_name VARCHAR(255) NOT NULL,
+            repo_name VARCHAR(512) NOT NULL,
+            UNIQUE(project_name, repo_name)
+        )""")
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_registry_artifacts (
+            id {PK},
+            repo_id INTEGER,
+            tag VARCHAR(255),
+            digest VARCHAR(128),
+            size_bytes BIGINT DEFAULT 0,
+            push_time TEXT DEFAULT '',
+            pull_time TEXT DEFAULT '',
+            scan_status VARCHAR(32) DEFAULT '',
+            scan_severity VARCHAR(16) DEFAULT '',
+            vuln_critical INTEGER DEFAULT 0,
+            vuln_high INTEGER DEFAULT 0,
+            vuln_medium INTEGER DEFAULT 0,
+            vuln_low INTEGER DEFAULT 0,
+            vuln_fixable INTEGER DEFAULT 0,
+            last_sync TEXT DEFAULT '',
+            UNIQUE(repo_id, tag, digest),
+            FOREIGN KEY(repo_id) REFERENCES cd_registry_repositories(id) ON DELETE CASCADE
+        )""")
+
         self._ensure_indexes(conn)
         conn.commit()
 
@@ -176,6 +203,7 @@ class Database:
             ("idx_pt_project", "ci_pipeline_tags", "project"),
             ("idx_pt_created", "ci_pipeline_tags", "created_at"),
             ("idx_jgm_path",   "ci_job_git_map",  "current_path"),
+            ("idx_cdr_repo_id","cd_registry_artifacts","repo_id"),
         ]:
             try: conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")
             except: pass

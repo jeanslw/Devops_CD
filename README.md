@@ -21,7 +21,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 - **框架**：FastAPI + uvicorn
 - **数据库**：无独立数据库，完全跟随 Devops-Glue API的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+，由 Devops-Glue决定类型
 - **端口**：8081
-- **版本**：v1.0.0
+- **版本**：v1.1.0
 - **认证**：与 Devops-Glue API 共享数据库，bcrypt + Bearer token，不可单独使用
 
 ## 环境要求
@@ -257,6 +257,11 @@ NOTIFY_TRUNCATE_CHARS=200
 | DELETE | `/api/bots/{id}` | ✅ | 删除 BOT |
 | WS | `/ws/terminal/{id}` | - | Web Shell 终端 |
 | POST | `/api/upload/{id}` | ✅ | SFTP 文件上传 |
+| GET | `/api/registry/repositories` | ✅ | 镜像仓库列表（卡片视图） |
+| GET | `/api/registry/artifacts/{repo_id}` | ✅ | 仓库的 Artifact/Tag 列表（含扫描摘要） |
+| GET | `/api/registry/scan/{repo_id}/{tag}` | ✅ | Tag 扫描漏洞详情（实时获取） |
+| DELETE | `/api/registry/artifacts/{repo_id}` | ✅ | 删除 Tag（安全校验） |
+| POST | `/api/registry/sync` | ✅ | 触发同步（留空全量／传 project 增量） |
 | GET | `/` | - | 首页 |
 | GET | `/dashboard` | - | 控制台 |
 
@@ -264,6 +269,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 - 版本		日期		变更内容
 - v1.0.0	‎2026‎-‎7‎-15‎	初始版本，衔接CI项目完善cd部署功能和部署校验，输出数据流日志;增加ssh单机/docker/k8s集群的部署，增加主机资源监控,优化bot通知模板。
+- v1.1.0	2026-7-24	新增镜像制品库：数据本地落库(cd_registry_repositories + cd_registry_artifacts)，兼容Harbor API v1/v2自动探测，仓库卡片网格→Tag列表→扫描漏洞报告→安全删除四层交互，支持定时后台同步(REGISTRY_SYNC_INTERVAL)和手动触发
 
 ## 联系作者
 
