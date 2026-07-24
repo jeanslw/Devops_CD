@@ -127,9 +127,13 @@ def get_sync_config(
     db: Database = Depends(get_db),
 ):
     """获取定时同步配置"""
-    svc = RegistryService(db)
-    interval = svc.get_sync_interval()
-    return {"interval": interval}
+    try:
+        svc = RegistryService(db)
+        interval = svc.get_sync_interval()
+        return {"interval": interval}
+    except Exception as e:
+        logger.error(f"get_sync_config error: {e}")
+        raise HTTPException(500, f"读取配置失败: {e}")
 
 
 @router.put("/config")
@@ -141,8 +145,12 @@ def update_sync_config(
     """更新定时同步间隔（分钟，0=关闭）"""
     if body.interval < 0:
         raise HTTPException(400, "间隔不能为负数")
-    svc = RegistryService(db)
-    svc.set_sync_interval(body.interval)
+    try:
+        svc = RegistryService(db)
+        svc.set_sync_interval(body.interval)
+    except Exception as e:
+        logger.error(f"update_sync_config error: {e}")
+        raise HTTPException(500, f"保存配置失败: {e}")
     if body.interval <= 0:
         return {"ok": True, "interval": 0, "detail": "定时同步已关闭"}
     return {"ok": True, "interval": body.interval, "detail": f"定时同步已设为每 {body.interval} 分钟"}
