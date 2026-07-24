@@ -1,21 +1,28 @@
-"""CI 项目路由 — 项目列表 + Pipeline 状态"""
+"""CI 项目路由 — 项目列表 + Pipeline 状态（需登录）"""
 
 from fastapi import APIRouter, Depends
 from app.database import Database
-from app.auth import get_db
+from app.auth import get_db, verify_token
 from app.services.ci_service import CiService
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
 
 @router.get("/projects")
-def list_projects(db: Database = Depends(get_db)):
+def list_projects(
+    _user: str = Depends(verify_token),
+    db: Database = Depends(get_db),
+):
     """列出所有 CI 项目及最新 tag/pipeline"""
     return CiService(db).list_projects()
 
 
 @router.get("/projects/{project:path}/tags")
-def project_tags(project: str, db: Database = Depends(get_db)):
+def project_tags(
+    project: str,
+    _user: str = Depends(verify_token),
+    db: Database = Depends(get_db),
+):
     """获取项目的所有 pipeline tag 列表"""
     from app.services.ci_service import CiService
     svc = CiService(db)
@@ -41,7 +48,11 @@ def project_tags(project: str, db: Database = Depends(get_db)):
 
 
 @router.get("/projects/{project:path}/pipeline")
-def pipeline_status(project: str, db: Database = Depends(get_db)):
+def pipeline_status(
+    project: str,
+    _user: str = Depends(verify_token),
+    db: Database = Depends(get_db),
+):
     """获取项目实时 pipeline 状态（调 PHP API）"""
     result = CiService(db).get_pipeline_status(project)
     if result is None:

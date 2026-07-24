@@ -14,7 +14,7 @@ from app.config import settings
 from app.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="0.2.0")
+app = FastAPI(title="Devops-Glue CD", version="1.0.0")
 BASE_DIR = Path(__file__).parent
 
 # 注册路由
@@ -53,7 +53,7 @@ def dashboard():
 def health():
     return {
         "status": "ok",
-        "version": "0.2.0",
+        "version": app.version,
     }
 
 

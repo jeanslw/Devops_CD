@@ -123,7 +123,8 @@ function toast(msg, ok) {
 // ── CI 项目列表 ──
 
 async function loadCI() {
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   document.getElementById("ci-tbody").innerHTML = d
     .map(
@@ -247,7 +248,8 @@ async function viewPipelineRow(btn, project) {
   tr.parentNode.insertBefore(detail, tr.nextSibling);
 
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`);
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`, { headers: A() });
+    if (handle401(r)) { detail.innerHTML = ""; return; }
     const d = await r.json();
     if (d.latest_tag) {
       const p = d.pipeline || {};
@@ -274,7 +276,8 @@ async function viewPipeline(project) {
   document.getElementById("k-tag").innerHTML = '<option value="">加载中…</option>';
 
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`);
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/pipeline`, { headers: A() });
+    if (handle401(r)) return;
     const d = await r.json();
     if (seq !== _vpSeq) return;
     const tag = d.latest_tag || "";
@@ -286,7 +289,8 @@ async function viewPipeline(project) {
   } catch(e) {}
 
   try {
-    const tr = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`);
+    const tr = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() });
+    if (handle401(tr)) return;
     const tags = await tr.json();
     if (seq !== _vpSeq) return;
     _setTags("d-tag", tags);
@@ -566,7 +570,8 @@ function clearCustomTags() {
 let _deployFormReady = false;
 
 async function loadDeployForm() {
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   window._projects = d;
   const sel = document.getElementById("d-project");
@@ -921,7 +926,8 @@ function toggleSshMode() {
 }
 
 async function loadSshForm() {
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   const sel = document.getElementById("s-project");
   sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
@@ -955,7 +961,7 @@ async function loadSshForm() {
 
 async function loadSshTags(project) {
   const sel = document.getElementById("s-tag"); sel.innerHTML = '<option value="">加载中…</option>';
-  try { const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`); const tags = await r.json();
+  try { const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() }); const tags = await r.json();
     sel.innerHTML = tags.length ? tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("") : '<option value="">无可用 Tag</option>';
     if (tags.length) sel.value = tags[0].tag;
   } catch(e) { sel.innerHTML = '<option value="">无可用 Tag</option>'; }
@@ -1032,7 +1038,8 @@ function toggleK8sType() {
 
 async function loadK8sForm() {
   // 项目列表
-  const r = await fetch("/api/projects");
+  const r = await fetch("/api/projects", { headers: A() });
+  if (handle401(r)) return;
   const d = await r.json();
   const sel = document.getElementById("k-project");
   sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
@@ -1085,7 +1092,7 @@ async function loadK8sTags(project) {
   const sel = document.getElementById("k-tag");
   sel.innerHTML = '<option value="">加载中…</option>';
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`);
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/tags`, { headers: A() });
     const tags = await r.json();
     if (tags.length) {
       sel.innerHTML = tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join("");
