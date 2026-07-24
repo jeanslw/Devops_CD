@@ -98,6 +98,10 @@ body {
   transition: all var(--transition);
   margin: 1px 0;
 }
+.sidebar .item:not(.item-sub) {
+  font-weight: 600;
+  color: var(--text);
+}
 .sidebar .item:hover {
   color: var(--text);
   background: rgba(74,222,128,0.04);
@@ -290,6 +294,29 @@ label {
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
+/* 表格操作列 — 部署到下拉框 */
+.deploy-select {
+  width: auto;
+  display: inline;
+  margin: 0;
+  padding: 4px 22px 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: rgba(74,222,128,0.08);
+  color: var(--accent);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%234ade80' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.deploy-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(74,222,128,0.15);
+}
+
 /* ── Toast ── */
 .toast {
   position: fixed;
@@ -357,6 +384,29 @@ label {
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── 标签复选框 ── */
+.tag-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+  background: rgba(96,165,250,0.08);
+  color: var(--blue);
+  border: 1px solid transparent;
+  transition: all var(--transition);
+  user-select: none;
+}
+.tag-checkbox-label:hover { border-color: var(--blue); }
+.tag-checkbox-label input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
+.tag-checkbox-label:has(input:checked) {
+  background: rgba(74,222,128,0.1);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* ── 多选下拉 ── */

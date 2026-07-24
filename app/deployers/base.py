@@ -1,5 +1,7 @@
 """部署器抽象基类"""
 
+import os
+import tempfile
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -7,14 +9,29 @@ from typing import Optional, Tuple
 
 
 def ssh_connect(target: "DeployTarget", timeout: int):
-    """统一的 SSH 连接，有密码用密码，没有则用默认 key"""
+    """统一的 SSH 连接。
+    优先级: ssh_key > password > 系统默认 key
+    """
     import paramiko
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    if target.password:
-        ssh.connect(hostname=target.host, port=target.port, username=target.user, timeout=timeout, password=target.password)
-    else:
-        ssh.connect(hostname=target.host, port=target.port, username=target.user, timeout=timeout)
+    kwargs = dict(hostname=target.host, port=target.port, username=target.user, timeout=timeout)
+    tmp_file = None
+
+    if target.ssh_key:
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+        tmp.write(target.ssh_key)
+        tmp.close()
+        tmp_file = tmp.name
+        kwargs["key_filename"] = tmp_file
+    elif target.password:
+        kwargs["password"] = target.password
+
+    try:
+        ssh.connect(**kwargs)
+    finally:
+        if tmp_file:
+            os.unlink(tmp_file)
     return ssh
 
 
@@ -55,8 +72,9 @@ class DeployTarget:
     port: int = 22
     user: str = "root"
     password: str = ""
-    path: str = ""                  # compose路径 / K8s YAML路径 / Ansible playbook路径
-    mode: str = ""                  # docker | commands | ansible (SSH) / remote | commands (Compose)
+    ssh_key: str = ""              # SSH 私钥内容（PEM 格式）
+    path: str = ""                 # compose路径 / K8s YAML路径 / Ansible playbook路径
+    mode: str = ""                 # docker | commands | ansible (SSH) / remote | commands (Compose)
     options: dict = field(default_factory=dict)  # commands / namespace / deployment / container
 
 

@@ -9,6 +9,7 @@ from app.services.ci_service import CiService
 from app.services.notification import notify_deploy
 
 from app.deployers.base import ssh_connect, DeployTarget
+from app.crypto import decrypt
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["k8s_deploy"])
@@ -46,7 +47,8 @@ def deploy_k8s(
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (req.cluster_id,)).fetchone()
         if not srv:
             raise HTTPException(400, "集群不存在")
-        host, port, user, pwd = srv["host"], srv["port"], srv["user"], srv["password"] or ""
+        host, port, user, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
+        ssh_key = decrypt(srv["ssh_key"] or "")
     else:
         raise HTTPException(400, "请选择目标集群")
 
@@ -54,11 +56,11 @@ def deploy_k8s(
     if req.cd_type == "argocd":
         result = deploy_argocd(req, image, project_short, host, pwd)
     elif req.cd_type == "fluxcd":
-        result = deploy_fluxcd(req, image, project_short, host, pwd)
+        result = deploy_fluxcd(req, image, project_short, host, pwd, ssh_key)
     elif req.cd_type == "helm":
-        result = deploy_helm(req, image, project_short, host, port, user, pwd)
+        result = deploy_helm(req, image, project_short, host, port, user, pwd, ssh_key)
     else:
-        result = deploy_kubectl(req, image, project_short, host, port, user, pwd)
+        result = deploy_kubectl(req, image, project_short, host, port, user, pwd, ssh_key)
 
     # 记录日志
     conn = db.conn()
@@ -246,8 +248,8 @@ def _log(callback, message):
     if callable(callback):
         callback(message)
 
-def deploy_kubectl(req, image, project, host, port, user, pwd, callback=None):
-    target = DeployTarget(host=host, port=port, user=user, password=pwd)
+def deploy_kubectl(req, image, project, host, port, user, pwd, ssh_key="", callback=None):
+    target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
 
     tag = req.tag
     filter_name = project.split("/")[-1]
@@ -495,9 +497,9 @@ def deploy_argocd(req, image, project, host, token, callback=None):
         return {"success": False, "output": msg}
 
 
-def deploy_helm(req, image, project, host, port, user, pwd, callback=None):
+def deploy_helm(req, image, project, host, port, user, pwd, ssh_key="", callback=None):
     """Helm: helm upgrade --install"""
-    target = DeployTarget(host=host, port=port, user=user, password=pwd)
+    target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
     tag = req.tag
     chart = req.path or f"/opt/helm/{project}"
     ns = req.k8s_ns
@@ -585,11 +587,11 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
     return project_fallback, ""
 
 
-def deploy_fluxcd(req, image, project, host, pwd, callback=None):
+def deploy_fluxcd(req, image, project, host, pwd, ssh_key="", callback=None):
     """Flux CD: patch HelmRelease/Kustomization + poll rollout status + verify pods"""
     import time
 
-    target = DeployTarget(host=host, port=22, user="root", password=pwd)
+    target = DeployTarget(host=host, port=22, user="root", password=pwd, ssh_key=ssh_key)
     tag = req.tag
     img_name = image.split(":")[0]
 
@@ -801,7 +803,8 @@ async def deploy_k8s_stream(
             async def err_no_cluster():
                 yield "data: ERROR:集群不存在\n\n"
             return StreamingResponse(err_no_cluster(), media_type="text/event-stream")
-        host, port, user, pwd = srv["host"], srv["port"], srv["user"], srv["password"] or ""
+        host, port, user, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
+        ssh_key = decrypt(srv["ssh_key"] or "")
     else:
         async def err_no_cluster_id():
             yield "data: ERROR:请选择目标集群\n\n"
@@ -816,11 +819,11 @@ async def deploy_k8s_stream(
             if req.cd_type == "argocd":
                 result = deploy_argocd(req, image, project_short, host, pwd, callback=log_callback)
             elif req.cd_type == "fluxcd":
-                result = deploy_fluxcd(req, image, project_short, host, pwd, callback=log_callback)
+                result = deploy_fluxcd(req, image, project_short, host, pwd, ssh_key, callback=log_callback)
             elif req.cd_type == "helm":
-                result = deploy_helm(req, image, project_short, host, port, user, pwd, callback=log_callback)
+                result = deploy_helm(req, image, project_short, host, port, user, pwd, ssh_key, callback=log_callback)
             else:
-                result = deploy_kubectl(req, image, project_short, host, port, user, pwd, callback=log_callback)
+                result = deploy_kubectl(req, image, project_short, host, port, user, pwd, ssh_key, callback=log_callback)
 
             deploy_result = {"success": True, "data": result}
 

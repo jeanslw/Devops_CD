@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     db_user: str = ""
     db_pass: str = ""
 
+    # ── 加密密钥（可选）──
+    # 用于加密 cd_servers 的 password / ssh_key；留空则自动生成 .cd_secret_key 文件
+    secret_key: str = ""
+
     # ── Harbor 镜像仓库（必填）──
     harbor_registry: str = ""
     harbor_user: str = ""

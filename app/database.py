@@ -126,13 +126,19 @@ class Database:
             port INTEGER DEFAULT 22,
             user VARCHAR(64) DEFAULT 'root',
             type VARCHAR(32) DEFAULT 'ssh',
+            auth_type VARCHAR(20) DEFAULT 'password',
             password VARCHAR(255) DEFAULT '',
+            ssh_key TEXT DEFAULT '',
             tags VARCHAR(255) DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         )""")
         try: conn.execute("ALTER TABLE cd_servers ADD COLUMN password VARCHAR(255) DEFAULT ''")
         except: pass
+        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN ssh_key TEXT DEFAULT ''")
+        except: pass
         try: conn.execute("ALTER TABLE cd_servers ADD COLUMN tags VARCHAR(255) DEFAULT ''")
+        except: pass
+        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN auth_type VARCHAR(20) DEFAULT 'password'")
         except: pass
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_deploy_logs (

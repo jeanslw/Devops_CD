@@ -13,9 +13,15 @@ class ServerRequest(BaseModel):
     host: str
     port: int = 22
     user: str = "root"
+    auth_type: str = "password"    # password | key
     password: str = ""
+    ssh_key: str = ""              # SSH 私钥内容（PEM 格式）
     type: str = "ssh"
-    tags: str = ""                  # 逗号分隔: prod,web
+    tags: str = ""                 # 逗号分隔: prod,web
+
+
+class TagRequest(BaseModel):
+    name: str
 
 
 class BotRequest(BaseModel):

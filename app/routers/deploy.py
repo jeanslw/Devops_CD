@@ -8,6 +8,7 @@ from app.models import DeployRequest
 from app.services.deploy_service import DeployService
 from app.deployers import DeployTarget
 from app.deployers.base import ssh_connect
+from app.crypto import decrypt
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["deploy"])
@@ -58,7 +59,7 @@ def stop(
         raise HTTPException(400, "服务器不存在")
     target = DeployTarget(
         host=srv["host"], port=srv["port"], user=srv["user"],
-        password=srv["password"] or "", path=req.target_path,
+        password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""), path=req.target_path,
     )
 
     if req.deploy_type == "compose":
@@ -98,7 +99,7 @@ def stop_k8s(
     if not srv:
         raise HTTPException(400, "集群不存在")
 
-    target = DeployTarget(host=srv["host"], port=srv["port"], user=srv["user"], password=srv["password"] or "")
+    target = DeployTarget(host=srv["host"], port=srv["port"], user=srv["user"], password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""))
     project = req.project
 
     cmd = f"kubectl delete -f {req.target_path}" if req.target_path else f"kubectl delete deployment/{project}"

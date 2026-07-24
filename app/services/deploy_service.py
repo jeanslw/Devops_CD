@@ -4,6 +4,7 @@ from datetime import datetime
 from app.database import Database
 from app.deployers import deployer_registry, DeployTarget
 from app.config import settings
+from app.crypto import decrypt
 from .ci_service import CiService
 from .notification import notify_deploy
 
@@ -55,7 +56,8 @@ class DeployService:
             return [
                 (r["id"], DeployTarget(
                     host=r["host"], port=r["port"], user=r["user"],
-                    password=r["password"] or "",
+                    password=decrypt(r["password"] or ""),
+                    ssh_key=decrypt(r["ssh_key"] or ""),
                 ))
                 for r in rows
             ]

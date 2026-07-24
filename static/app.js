@@ -73,9 +73,13 @@ function toggleSubmenu(el) {
 }
 
 function expandMonitorSubmenu() {
+  expandSubmenuByName("资源监控");
+}
+
+function expandSubmenuByName(name) {
   const allParents = document.querySelectorAll(".item-parent");
   for (const p of allParents) {
-    if (p.textContent.includes("资源监控") && p.textContent.includes("▸")) {
+    if (p.textContent.includes(name) && p.textContent.includes("▸")) {
       toggleSubmenu(p);
       return;
     }
@@ -95,9 +99,10 @@ function showPanel(n) {
     _stopCIPolling();
   }
 
+  if (n === "servers") expandSubmenuByName("服务器管理");
   if (n.startsWith("monitor-")) expandMonitorSubmenu();
   if (n === "ci") loadCI();
-  if (n === "servers") loadServers();
+  if (n === "servers") { loadServers(); loadTagCheckboxes(); }
   if (n === "ssh") loadSshForm();
   if (n === "deploy") loadDeployForm();
   if (n === "k8s") loadK8sForm();
@@ -130,13 +135,13 @@ async function loadCI() {
           <td>${p.latest_tag || "—"}</td>
           <td>${p.latest_pipeline ? "#" + p.latest_pipeline : "—"}</td>
           <td>
-            <select onchange="quickDeploySelect(this,'${p.job_name}','${p.latest_tag}')" style="width:auto;display:inline;margin:0;padding:3px 6px">
+            <button class="btn btn-blue btn-sm" onclick="viewPipelineRow(this,'${p.job_name}')" style="margin-right:6px">构建状态</button>
+            <select onchange="quickDeploySelect(this,'${p.job_name}','${p.latest_tag}')" class="deploy-select">
               <option value="">部署到…</option>
               <option value="ssh">单机</option>
               <option value="deploy">Docker</option>
               <option value="k8s">K8S</option>
             </select>
-            <button class="btn btn-blue btn-sm" onclick="viewPipelineRow(this,'${p.job_name}')">CI状态</button>
           </td>
         </tr>`
     )
@@ -293,7 +298,7 @@ async function viewPipeline(project) {
 // ── 服务器管理 ──
 
 async function loadServers() {
-  const r = await fetch("/api/servers", { headers: A() });
+  const r = await fetch(`/api/servers?_=${Date.now()}`, { headers: A() });
   if (handle401(r)) return;
   let d = await r.json();
   const filter = (document.getElementById("sv-filter")?.value || "").toLowerCase();
@@ -306,22 +311,7 @@ async function loadServers() {
          <td><button class="btn btn-edit btn-sm" style="margin-right:4px" onclick="editServer(${s.id})">编辑</button><button class="btn btn-red btn-sm" onclick="delServer(${s.id})">删除</button></td></tr>`
     )
     .join("");
-  // 部署面板多选
-  const list = document.getElementById("d-server-list");
-  if (list) {
-    list.innerHTML = d
-      .map(
-        (s) =>
-          `<div class="multi-select-item" onclick="toggleServerItem('d', this)">
-            <input type="checkbox" value="${s.id}" data-tags="${(s.tags || '').toLowerCase()}" onchange="updateServerSelection('d')">
-            <label>${s.name} (${s.host})</label>
-          </div>`
-      )
-      .join("");
-    // 填充标签栏
-    populateTags('d', d);
-    updateServerSelection('d');
-  }
+  // Docker 面板的服务器列表由 loadDeployForm() 单独管理（仅显示 Docker 类型）
 }
 
 // ── 服务器多选下拉 ──
@@ -414,13 +404,21 @@ document.addEventListener("click", function (e) {
   });
 });
 
+function showServerForm() {
+  cancelEdit();
+  document.getElementById("sv-form-card").style.display = "block";
+  document.getElementById("sv-form-title").textContent = "➕ 添加服务器";
+}
+
 async function addServer() {
   const editId = document.getElementById("sv-edit-id").value;
   const n = document.getElementById("sv-name").value.trim();
   const h = document.getElementById("sv-host").value.trim();
   const u = document.getElementById("sv-user").value.trim() || "root";
-  const p = document.getElementById("sv-pass").value;
-  const t = document.getElementById("sv-tags").value.trim();
+  const at = document.getElementById("sv-auth-type").value;
+  const p = at === "password" ? document.getElementById("sv-pass").value : "";
+  const k = at === "key" ? document.getElementById("sv-key").value.trim() : "";
+  const t = getSelectedTags();
   const tp = document.getElementById("sv-type").value;
   if (!n || !h) return toast("填名称和主机", false);
 
@@ -435,7 +433,9 @@ async function addServer() {
       host: h.split(":")[0],
       port: parseInt(h.split(":")[1] || "22"),
       user: u,
+      auth_type: at,
       password: p,
+      ssh_key: k,
       tags: t,
       type: tp,
     }),
@@ -448,32 +448,60 @@ async function addServer() {
 
 async function editServer(id) {
   // 从当前表格中找到对应行数据，重新 fetch 获取完整信息
-  const r = await fetch("/api/servers", { headers: A() });
+  const r = await fetch(`/api/servers?_=${Date.now()}`, { headers: A() });
   if (handle401(r)) return;
   const servers = await r.json();
   const s = servers.find(srv => srv.id === id);
   if (!s) return toast("找不到该服务器", false);
 
+  document.getElementById("sv-form-card").style.display = "block";
+  document.getElementById("sv-form-title").textContent = "✏️ 编辑服务器";
   document.getElementById("sv-edit-id").value = s.id;
   document.getElementById("sv-name").value = s.name;
   document.getElementById("sv-host").value = s.host + ":" + s.port;
   document.getElementById("sv-user").value = s.user;
+  document.getElementById("sv-auth-type").value = s.auth_type || "password";
   document.getElementById("sv-pass").value = s.password || "";
-  document.getElementById("sv-tags").value = s.tags || "";
+  document.getElementById("sv-key").value = s.ssh_key || "";
   document.getElementById("sv-type").value = s.type || "ssh";
+  toggleAuthType(); // 切换显示密码/密钥输入框
+  // 标签复选框 + 自定义标签
+  loadTagCheckboxes().then(() => {
+    clearCustomTags();
+    const tags = (s.tags || "").split(",").filter(Boolean).map(t => t.trim());
+    document.querySelectorAll("#sv-tag-checkboxes input").forEach(cb => {
+      cb.checked = tags.includes(cb.value);
+    });
+    // 不在已有复选框里的标签，放到自定义区
+    const existing = Array.from(document.querySelectorAll("#sv-tag-checkboxes input")).map(cb => cb.value);
+    tags.forEach(t => {
+      if (!existing.includes(t)) {
+        const label = document.createElement("label");
+        label.className = "tag-checkbox-label";
+        label.innerHTML = `<input type="checkbox" value="${t}" checked><span>${t}</span>`;
+        document.getElementById("sv-custom-tags").appendChild(label);
+      }
+    });
+  });
 
   document.getElementById("sv-save-btn").textContent = "💾 保存";
   document.getElementById("sv-cancel-btn").style.display = "inline-block";
 }
 
 function cancelEdit() {
+  document.getElementById("sv-form-card").style.display = "none";
   document.getElementById("sv-edit-id").value = "";
   document.getElementById("sv-name").value = "";
   document.getElementById("sv-host").value = "";
   document.getElementById("sv-user").value = "root";
+  document.getElementById("sv-auth-type").value = "password";
   document.getElementById("sv-pass").value = "";
-  document.getElementById("sv-tags").value = "";
+  document.getElementById("sv-key").value = "";
   document.getElementById("sv-type").value = "ssh";
+  toggleAuthType();
+  // 清空标签复选框
+  document.querySelectorAll("#sv-tag-checkboxes input").forEach(cb => cb.checked = false);
+  clearCustomTags();
   document.getElementById("sv-save-btn").textContent = "＋ 添加";
   document.getElementById("sv-cancel-btn").style.display = "none";
 }
@@ -484,6 +512,53 @@ async function delServer(id) {
   if (handle401(r)) return;
   toast("已删除", true);
   loadServers();
+}
+
+// ── SSH 认证方式切换 ──
+
+function toggleAuthType() {
+  const at = document.getElementById("sv-auth-type").value;
+  document.getElementById("sv-pass").style.display = at === "password" ? "block" : "none";
+  document.getElementById("sv-key").style.display = at === "key" ? "block" : "none";
+}
+
+// ── 标签复选框 ──
+
+function getSelectedTags() {
+  const cbs = document.querySelectorAll("#sv-tag-checkboxes input:checked, #sv-custom-tags input:checked");
+  return Array.from(cbs).map(cb => cb.value).join(",");
+}
+
+async function loadTagCheckboxes() {
+  try {
+    const r = await fetch("/api/tags", { headers: A() });
+    if (handle401(r)) return;
+    const tags = await r.json();
+    const container = document.getElementById("sv-tag-checkboxes");
+    if (!container) return;
+    container.innerHTML = tags.length
+      ? tags.map(t => `<label class="tag-checkbox-label"><input type="checkbox" value="${t.name}"><span>${t.name}</span></label>`).join("")
+      : '<span style="color:#667;font-size:12px">暂无标签，给服务器添加标签后会自动出现</span>';
+  } catch(e) {}
+}
+
+function addCustomTag() {
+  const input = document.getElementById("sv-tag-input");
+  const name = input.value.trim();
+  if (!name) return;
+  const wrap = document.getElementById("sv-custom-tags");
+  const exists = Array.from(wrap.querySelectorAll("input")).some(cb => cb.value === name);
+  if (exists) { input.value = ""; return; }
+  const label = document.createElement("label");
+  label.className = "tag-checkbox-label";
+  label.innerHTML = `<input type="checkbox" value="${name}" checked><span>${name}</span>`;
+  wrap.appendChild(label);
+  input.value = "";
+}
+
+function clearCustomTags() {
+  document.getElementById("sv-custom-tags").innerHTML = "";
+  document.getElementById("sv-tag-input").value = "";
 }
 
 // ── 部署 ──
@@ -503,7 +578,27 @@ async function loadDeployForm() {
     sel.value = d[0]?.job_name || "";
   }
   sel.dataset.last = sel.value;
-  loadServers();
+
+  // Docker 部署面板：只显示 Docker 类型服务器
+  const sr = await fetch(`/api/servers?_=${Date.now()}`, { headers: A() });
+  if (!handle401(sr)) {
+    const allSrv = await sr.json();
+    const dockerSrv = allSrv.filter(s => s.type === "docker");
+    const list = document.getElementById("d-server-list");
+    if (list) {
+      list.innerHTML = dockerSrv
+        .map((s) =>
+          `<div class="multi-select-item" onclick="toggleServerItem('d', this)">
+            <input type="checkbox" value="${s.id}" data-tags="${(s.tags || '').toLowerCase()}" onchange="updateServerSelection('d')">
+            <label>${s.name} (${s.host})</label>
+          </div>`
+        )
+        .join("");
+      populateTags('d', dockerSrv);
+      updateServerSelection('d');
+    }
+  }
+
   loadBots();
   if (!_deployFormReady) {
     toggleDeployType();
@@ -832,13 +927,13 @@ async function loadSshForm() {
   sel.innerHTML = d.map(p => `<option value="${p.job_name}">${p.job_name}</option>`).join("");
   sel.onchange = () => { loadSshTags(sel.value); viewPipeline(sel.value); };
 
-  const sr = await fetch("/api/servers", { headers: A() });
+  const sr = await fetch(`/api/servers?_=${Date.now()}`, { headers: A() });
   if (!handle401(sr)) {
     const srv = await sr.json();
-    const filtered = srv.filter(s => ["ssh","docker"].includes(s.type));
+    // SSH 单机部署：可选所有类型服务器
     const list = document.getElementById("s-server-list");
     if (list) {
-      list.innerHTML = filtered
+      list.innerHTML = srv
         .map((s) =>
           `<div class="multi-select-item" onclick="toggleServerItem('s', this)">
             <input type="checkbox" value="${s.id}" data-tags="${(s.tags || '').toLowerCase()}" onchange="updateServerSelection('s')">
@@ -846,7 +941,7 @@ async function loadSshForm() {
           </div>`
         )
         .join("");
-      populateTags('s', filtered);
+      populateTags('s', srv);
       updateServerSelection('s');
     }
   }
@@ -944,10 +1039,11 @@ async function loadK8sForm() {
   sel.onchange = () => { loadK8sTags(sel.value); viewPipeline(sel.value); };
 
   // 集群列表（过滤 K8s 相关类型）
-  const sr = await fetch("/api/servers", { headers: A() });
+  const sr = await fetch(`/api/servers?_=${Date.now()}`, { headers: A() });
   if (handle401(sr)) return;
   const srv = await sr.json();
-  const k8sServers = srv.filter(s => ["k8s", "argocd", "fluxcd"].includes(s.type));
+  // K8S 面板：只显示 k8s 类型服务器（argocd/fluxcd 是部署模式，不是服务器类型）
+  const k8sServers = srv.filter(s => s.type === "k8s");
   const csel = document.getElementById("k-cluster");
   csel.innerHTML = '<option value="0">— 选择 —</option>' +
     k8sServers.map(s => `<option value="${s.id}">${s.name} (${s.type})</option>`).join("");
@@ -1099,7 +1195,7 @@ function _loadXtermJS() {
 function loadShellServers() {
   _loadXtermCSS();
   _loadXtermJS();
-  fetch("/api/servers", { headers: A() }).then(r => r.json()).then(d => {
+  fetch(`/api/servers?_=${Date.now()}`, { headers: A() }).then(r => r.json()).then(d => {
     const sel = document.getElementById("shell-server");
     const cur = sel.value;
     sel.innerHTML = '<option value="0">— 选择服务器 —</option>' +
@@ -1121,7 +1217,7 @@ function connectShell() {
   term.writeln("连接中...");
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  shellWs = new WebSocket(`${proto}://${location.host}/ws/terminal/${sid}`);
+  shellWs = new WebSocket(`${proto}://${location.host}/ws/terminal/${sid}?token=${encodeURIComponent(token)}`);
 
   shellWs.onopen = () => { term.clear(); term.focus(); shellWs.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows})); };
   shellWs.onmessage = (e) => { if (e.data instanceof Blob) e.data.text().then(t => term.write(t)); else term.write(e.data); };

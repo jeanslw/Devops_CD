@@ -1,1 +1,1 @@
-from .requests import LoginRequest, ServerRequest, BotRequest, DeployRequest
+from .requests import LoginRequest, ServerRequest, TagRequest, BotRequest, DeployRequest

@@ -23,8 +23,9 @@
   <div class="topbar"><h2>🚀 Devops-Glue CD</h2><div><a href="#" onclick="doLogout()">退出</a></div></div>
   <div class="layout">
     <div class="sidebar">
-      <div class="item active" data-panel="ci" onclick="showPanel('ci')">📋 CI 系统状态</div>
-      <div class="item" data-panel="servers" onclick="showPanel('servers')">🖥️ 服务器管理</div>
+      <div class="item active" data-panel="ci" onclick="showPanel('ci')">📋 CI构建结果</div>
+      <div class="item item-parent" onclick="toggleSubmenu(this)">🖥️ 服务器管理 ▾</div>
+      <div class="item item-sub" data-panel="servers" onclick="showPanel('servers')" style="display:none;padding-left:30px">🖥️ 服务器列表</div>
       <div class="item item-parent" onclick="toggleSubmenu(this)">🚀 部署管理 ▾</div>
       <div class="item item-sub" data-panel="ssh" onclick="showPanel('ssh')" style="display:none;padding-left:30px">🖥️ 部署到单机</div>
       <div class="item item-sub" data-panel="deploy" onclick="showPanel('deploy')" style="display:none;padding-left:30px">🐳 部署到 Docker</div>
@@ -41,21 +42,36 @@
       <div id="main-content">
 
       <!-- CI -->
-      <div class="panel show" id="panel-ci"><div class="card"><h3>📋 CI 系统状态<span class="refresh-bar"><select id="refresh-ci" onchange="onRefreshChange()"><option value="0">关闭</option><option value="15000">15秒</option><option value="30000">30秒</option><option value="60000">60秒</option></select><button class="btn btn-sm" id="refresh-ci-btn" onclick="loadCI()" title="立即刷新">🔄</button></span></h3>
+      <div class="panel show" id="panel-ci"><div class="card"><h3>📋 CI构建结果<span class="refresh-bar"><select id="refresh-ci" onchange="onRefreshChange()"><option value="0">关闭</option><option value="15000">15秒</option><option value="30000">30秒</option><option value="60000">60秒</option></select><button class="btn btn-sm" id="refresh-ci-btn" onclick="loadCI()" title="立即刷新">🔄</button></span></h3>
       <table><thead><tr><th>项目</th><th>CI源</th><th>Harbor仓库</th><th>最新Tag</th><th>Pipeline</th><th>操作</th></tr></thead>
       <tbody id="ci-tbody"><tr><td colspan="6">加载中…</td></tr></tbody></table></div></div>
 
       <!-- Servers -->
       <div class="panel" id="panel-servers">
-      <div class="card"><h3>🖥️ 服务器列表</h3>
+      <div class="card"><h3>🖥️ 服务器列表 <button class="btn btn-green btn-sm" onclick="showServerForm()" style="margin-left:12px">＋ 添加服务器</button></h3>
       <div><label>筛选</label><input id="sv-filter" placeholder="标签如 prod" oninput="loadServers()" style="width:auto;display:inline;margin-left:8px"></div>
       <table style="margin-top:8px"><thead><tr><th>名称</th><th>主机</th><th>类型</th><th>标签</th><th>操作</th></tr></thead><tbody id="sv-tbody"></tbody></table></div>
-      <div class="card"><h3>➕ 添加服务器</h3>
+      <div class="card" id="sv-form-card" style="display:none"><h3 id="sv-form-title">➕ 添加服务器</h3>
       <input type="hidden" id="sv-edit-id">
       <div class="grid2" style="margin-bottom:12px">
         <input id="sv-name" placeholder="名称"><input id="sv-host" placeholder="IP:端口"><input id="sv-user" value="root">
-        <input id="sv-pass" type="password" placeholder="SSH 密码"><input id="sv-tags" placeholder="标签: prod,k8s">
         <select id="sv-type"><option value="ssh">SSH</option><option value="docker">Docker</option><option value="k8s">K8s</option></select>
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="margin-bottom:4px;display:block">SSH 认证方式</label>
+        <select id="sv-auth-type" onchange="toggleAuthType()" style="width:auto;margin-bottom:8px">
+          <option value="password">🔑 密码登录</option>
+          <option value="key">🔐 证书登录</option>
+        </select>
+        <input id="sv-pass" type="password" placeholder="SSH 密码" style="margin-bottom:8px">
+        <textarea id="sv-key" placeholder="SSH 私钥（PEM 格式）" style="display:none;height:100px;resize:vertical;font-family:monospace;font-size:12px;width:100%;margin-bottom:0"></textarea>
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="margin-bottom:4px;display:block">标签</label>
+        <div id="sv-tag-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
+        <input id="sv-tag-input" placeholder="输入新标签（回车添加）" style="width:160px;margin:0" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomTag();}">
+        <button class="btn btn-sm" onclick="addCustomTag()" style="margin:0 0 0 4px">＋ 添加</button>
+        <div id="sv-custom-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
       </div>
       <button class="btn btn-green" id="sv-save-btn" onclick="addServer()">＋ 添加</button>
       <button class="btn btn-edit" id="sv-cancel-btn" onclick="cancelEdit()" style="display:none">取消</button></div></div>
@@ -220,6 +236,11 @@
               </div>
               <div id="monitor-docker-app" style="display:none">
                 <div id="monitor-docker-content" style="color:#888">加载中…</div>
+              </div>
+              <div id="monitor-ssh-app" style="display:none">
+                <div class="card">
+                  <div style="color:#888;padding:20px 0;text-align:center">🖥️ SSH 类型服务器暂无可用的应用资源监控，请使用「系统资源」查看服务器状态</div>
+                </div>
               </div>
             </div>
           </div>

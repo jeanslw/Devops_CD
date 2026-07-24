@@ -1,19 +1,50 @@
 """Web Shell + SCP 文件上传"""
 
 import asyncio
+import base64
 import json
 import os
 import shlex
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends, Query
 from app.database import Database
-from app.auth import verify_token
+from app.auth import verify_token, get_db
 from app.config import settings
+from app.deployers.base import ssh_connect, DeployTarget
+from app.crypto import decrypt
 
 router = APIRouter()
 
 
+async def _ws_verify(token: str | None = None) -> str:
+    """WebSocket 鉴权：通过 query param token 校验"""
+    if not token:
+        raise HTTPException(401, "请登录")
+    db = get_db()
+    conn = None
+    try:
+        conn = db.conn()
+        for r in conn.execute("SELECT username, password_hash FROM admin_users").fetchall():
+            expected = base64.b64encode(
+                f"{r['username']}:{r['password_hash']}".encode()
+            ).decode()
+            if token == expected:
+                return r["username"]
+    finally:
+        if conn:
+            conn.close()
+    raise HTTPException(401, "token 无效")
+
+
 @router.websocket("/ws/terminal/{server_id}")
 async def terminal(websocket: WebSocket, server_id: int):
+    # 从 query string 获取 token 并校验
+    token = websocket.query_params.get("token")
+    try:
+        await _ws_verify(token)
+    except HTTPException:
+        await websocket.close(code=4001, reason="鉴权失败")
+        return
+
     await websocket.accept()
 
     # 查服务器
@@ -25,18 +56,14 @@ async def terminal(websocket: WebSocket, server_id: int):
         await websocket.close()
         return
 
-    host, port = srv["host"], srv["port"]
-    user, password = srv["user"], srv["password"] or ""
+    target = DeployTarget(
+        host=srv["host"], port=srv["port"], user=srv["user"],
+        password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""),
+    )
 
     # SSH 连接
-    import paramiko
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        kwargs = dict(hostname=host, port=port, username=user, timeout=settings.ssh_timeout)
-        if password:
-            kwargs["password"] = password
-        ssh.connect(**kwargs)
+        ssh = ssh_connect(target, settings.ssh_timeout)
     except Exception as e:
         await websocket.send_text(f"\r\n❌ SSH 连接失败: {e}\r\n")
         await websocket.close()
@@ -119,14 +146,12 @@ async def upload_file(
 
     target = path.rstrip("/") + "/" + safe_filename
 
-    import paramiko
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    kwargs = dict(hostname=srv["host"], port=srv["port"], username=srv["user"], timeout=settings.ssh_timeout)
-    if srv["password"]:
-        kwargs["password"] = srv["password"]
+    dt = DeployTarget(
+        host=srv["host"], port=srv["port"], user=srv["user"],
+        password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""),
+    )
     try:
-        ssh.connect(**kwargs)
+        ssh = ssh_connect(dt, settings.ssh_timeout)
     except Exception as e:
         raise HTTPException(400, f"SSH 连接失败: {e}")
 

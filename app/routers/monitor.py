@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.database import Database
 from app.auth import get_db, verify_token
 from app.deployers.base import ssh_connect, DeployTarget
+from app.crypto import decrypt
 from app.config import settings
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
@@ -44,6 +45,13 @@ def _cache_get(key: str) -> object | None:
 
 def _cache_set(key: str, data: object):
     _cache[key] = (time.time(), data)
+
+
+def clear_server_cache():
+    """服务器变更时清除相关监控缓存"""
+    for key in list(_cache.keys()):
+        if key.startswith("servers:") or key.startswith("system:") or key.startswith("docker:") or key.startswith("nodes:") or key.startswith("pods:"):
+            del _cache[key]
 
 
 # ── 工具函数 ──
@@ -183,6 +191,16 @@ docker info --format '{{.ContainersRunning}}/{{.Containers}}' 2>/dev/null || ech
     return result
 
 
+def _make_target(srv) -> DeployTarget:
+    """从数据库行构造 DeployTarget，自动解密 password / ssh_key"""
+    return DeployTarget(
+        host=srv["host"], port=srv["port"],
+        user=srv["user"],
+        password=decrypt(srv["password"] or ""),
+        ssh_key=decrypt(srv["ssh_key"] or ""),
+    )
+
+
 # ── API ──
 
 @router.get("/status")
@@ -222,19 +240,23 @@ def list_monitor_servers(
         entry["has_metrics_server"] = False
 
         try:
-            target = DeployTarget(
-                host=srv["host"], port=srv["port"],
-                user=srv["user"], password=srv["password"] or "",
-            )
+            target = _make_target(srv)
             ssh = ssh_connect(target, settings.ssh_timeout)
 
             srv_type = (srv.get("type") or "").lower()
             tag_list = [t.strip().lower() for t in (srv.get("tags") or "").split(",") if t.strip()]
 
-            # 综合 type + tags 判断监控类型（标签可覆盖 type）
-            is_k8s = srv_type in ("k8s", "argocd", "fluxcd") or any(t in ("k8s", "kubernetes") for t in tag_list)
-            is_docker = srv_type == "docker" or "docker" in tag_list
-            is_ssh = "ssh" in tag_list or (not is_k8s and not is_docker)
+            # type 优先；type 不明确时才用 tags 推断
+            if srv_type in ("k8s", "argocd", "fluxcd"):
+                is_k8s, is_docker, is_ssh = True, False, False
+            elif srv_type == "docker":
+                is_k8s, is_docker, is_ssh = False, True, False
+            elif srv_type == "ssh":
+                is_k8s, is_docker, is_ssh = False, False, True
+            else:
+                is_k8s = any(t in ("k8s", "kubernetes") for t in tag_list)
+                is_docker = "docker" in tag_list
+                is_ssh = "ssh" in tag_list or (not is_k8s and not is_docker)
 
             if is_k8s:
                 entry["monitor_type"] = "k8s"
@@ -252,7 +274,11 @@ def list_monitor_servers(
                     "kubectl top nodes --no-headers 2>/dev/null | head -1",
                 )
                 entry["has_metrics_server"] = bool(ms_out.strip())
-                entry["status"] = "available" if (entry["has_metrics_server"] or entry["has_prometheus"]) else "unavailable"
+                if not entry["has_metrics_server"] and not entry["has_prometheus"]:
+                    entry["status"] = "unavailable"
+                    entry["hint"] = "未安装 metrics-server 或 Prometheus"
+                else:
+                    entry["status"] = "available"
 
             elif is_docker:
                 entry["monitor_type"] = "docker"
@@ -309,10 +335,7 @@ def get_nodes(
         raise HTTPException(404, "服务器不存在")
 
     try:
-        target = DeployTarget(
-            host=srv["host"], port=srv["port"],
-            user=srv["user"], password=srv["password"] or "",
-        )
+        target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
 
         top_out = _ssh_cmd(ssh, "kubectl top nodes --no-headers 2>/dev/null")
@@ -377,10 +400,7 @@ def get_pods(
         raise HTTPException(404, "服务器不存在")
 
     try:
-        target = DeployTarget(
-            host=srv["host"], port=srv["port"],
-            user=srv["user"], password=srv["password"] or "",
-        )
+        target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
 
         ns_list = _ssh_cmd(
@@ -461,10 +481,7 @@ def get_pod_detail(
         raise HTTPException(404, "服务器不存在")
 
     try:
-        target = DeployTarget(
-            host=srv["host"], port=srv["port"],
-            user=srv["user"], password=srv["password"] or "",
-        )
+        target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
         describe = _ssh_cmd(ssh, f"kubectl describe pod {name} -n {namespace} 2>/dev/null | tail -30")
         logs = _ssh_cmd(ssh, f"kubectl logs {name} -n {namespace} --tail=20 2>/dev/null")
@@ -501,10 +518,7 @@ def get_docker_containers(
         raise HTTPException(404, "服务器不存在")
 
     try:
-        target = DeployTarget(
-            host=srv["host"], port=srv["port"],
-            user=srv["user"], password=srv["password"] or "",
-        )
+        target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
 
         stats_out = _ssh_cmd(
@@ -561,10 +575,7 @@ def get_system_info(
         raise HTTPException(404, "服务器不存在")
 
     try:
-        target = DeployTarget(
-            host=srv["host"], port=srv["port"],
-            user=srv["user"], password=srv["password"] or "",
-        )
+        target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
         info = _ssh_test(ssh)
 

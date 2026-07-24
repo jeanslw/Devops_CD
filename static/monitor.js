@@ -30,7 +30,54 @@ async function checkMonitorEnabled() {
   } catch(e) { return false; }
 }
 
-async function loadMonitorServers(tbodyId, btnLabel) {
+function _buildCapHtml(s, viewType) {
+  // 根据视图类型动态生成"监控能力"标签
+  const mType = s.monitor_type || "unknown";
+  const fullError = (s.error || s.hint || "").replace(/"/g, "&quot;");
+
+  if (viewType === "system") {
+    // 系统资源视图：展示 SSH 连接状态（所有类型通用）
+    if (s.status === "error") {
+      return `<span style="color:#e57373;font-size:12px" title="SSH 连接失败: ${fullError}">❌ 连接失败</span>`;
+    }
+    if (s.status === "unavailable") {
+      return `<span style="color:#ffab40;font-size:12px" title="${fullError}">⚠️ ${s.hint || "基础命令缺失"}</span>`;
+    }
+    return `<span style="color:#81c784;font-size:12px">✅ SSH 正常</span>`;
+  }
+
+  // 应用资源视图：按类型展示专业监控能力
+  switch (mType) {
+    case "k8s": {
+      const parts = [];
+      if (s.has_metrics_server) parts.push("Metrics-Server");
+      if (s.has_prometheus) parts.push("Prometheus");
+      if (parts.length === 2) return `<span style="color:#81c784;font-size:12px">✅ ${parts.join(" + ")}</span>`;
+      if (parts.length === 1) {
+        const isMetrics = parts[0] === "Metrics-Server";
+        return isMetrics
+          ? `<span style="color:#81c784;font-size:12px">✅ ${parts[0]}</span>`
+          : `<span style="color:#ffab40;font-size:12px" title="仅有 Prometheus，无法获取 kubectl top 数据">⚠️ Prometheus（无 top）</span>`;
+      }
+      // 都无
+      if (s.status === "error") return `<span style="color:#e57373;font-size:12px" title="${fullError}">❌ 连接失败</span>`;
+      return `<span style="color:#e57373;font-size:12px" title="未安装 metrics-server 或 Prometheus，kubectl top 不可用">❌ 无监控组件</span>`;
+    }
+    case "docker": {
+      if (s.status === "available") return `<span style="color:#81c784;font-size:12px">✅ Docker Stats</span>`;
+      if (s.status === "error") return `<span style="color:#e57373;font-size:12px" title="${fullError}">❌ 连接失败</span>`;
+      return `<span style="color:#e57373;font-size:12px" title="${fullError}">❌ Docker 不可用</span>`;
+    }
+    case "ssh":
+      return `<span style="color:#667;font-size:12px">— 请查看系统资源</span>`;
+    default: {
+      if (s.status === "error") return `<span style="color:#e57373;font-size:12px" title="${fullError}">❌ 连接失败</span>`;
+      return `<span style="color:#667;font-size:12px">未知</span>`;
+    }
+  }
+}
+
+async function loadMonitorServers(tbodyId, btnLabel, viewType) {
   try {
     const r = await fetch("/api/monitor/servers", { headers: A() });
     if (handle401(r)) return;
@@ -46,28 +93,21 @@ async function loadMonitorServers(tbodyId, btnLabel) {
     tbody.innerHTML = _monitorServers.map(s => {
       const mType = s.monitor_type || "unknown";
       const typeLabel = TYPE_LABELS[mType] || s.type;
-      let capText = "", capStyle = "";
-      if (mType === "k8s") {
-        capText = [s.has_prometheus ? "Prometheus" : "", s.has_metrics_server ? "Metrics" : ""].filter(Boolean).join(" / ") || "无监控组件";
-        capStyle = s.status === "available" ? "color:#81c784" : "color:#e57373";
-      } else if (mType === "docker") {
-        capText = "docker stats";
-        capStyle = "color:#81c784";
-      } else if (mType === "ssh") {
-        capText = "top / free / df";
-        capStyle = "color:#81c784";
-      }
-      const canUse = s.status === "available";
+      const capHtml = _buildCapHtml(s, viewType);
+      const canUse = viewType === "system"
+        ? (s.status === "available" || s.status === "unavailable")  // 系统资源：SSH 通了就能用
+        : (s.status === "available");  // 应用资源：需要对应组件
       const statusBadge = canUse
         ? '<span class="badge badge-ok">可用</span>'
         : (s.status === "error" ? `<span class="badge badge-err" title="${(s.error||'').replace(/"/g,'&quot;')}">错误</span>` : '<span class="badge badge-pend">不可用</span>');
+      const btnText = btnLabel.includes("System") ? "查看系统资源" : "查看应用资源";
       return `<tr>
         <td><strong>${s.name}</strong></td>
         <td>${s.host}:${s.port}</td>
         <td>${typeLabel}</td>
-        <td><span style="${capStyle};font-size:12px">${capText}</span></td>
+        <td>${capHtml}</td>
         <td>${statusBadge}</td>
-        <td>${canUse ? `<button class="btn btn-blue btn-sm" onclick="${btnLabel}(${s.id},'${mType}','${(s.name||'').replace(/'/g,"\\'")}')">${btnLabel.includes('System') ? '查看系统资源' : '查看应用资源'}</button>` : '<button class="btn btn-sm" disabled style="opacity:0.4">不可用</button>'}</td>
+        <td>${canUse ? `<button class="btn btn-blue btn-sm" onclick="${btnLabel}(${s.id},'${mType}','${(s.name||'').replace(/'/g,"\\'")}')">${btnText}</button>` : '<button class="btn btn-sm" disabled style="opacity:0.4">不可用</button>'}</td>
       </tr>`;
     }).join("");
   } catch(e) {
@@ -86,7 +126,7 @@ async function loadMonitorSystem() {
   if (!enabled) return;
 
   document.getElementById("monitor-system-detail").style.display = "none";
-  await loadMonitorServers("monitor-system-server-tbody", "viewSystemDetail");
+  await loadMonitorServers("monitor-system-server-tbody", "viewSystemDetail", "system");
 }
 
 function viewSystemDetail(sid) {
@@ -107,7 +147,7 @@ async function loadMonitorApp() {
   if (!enabled) return;
 
   document.getElementById("monitor-app-detail").style.display = "none";
-  await loadMonitorServers("monitor-app-server-tbody", "viewAppDetail");
+  await loadMonitorServers("monitor-app-server-tbody", "viewAppDetail", "app");
 }
 
 function viewAppDetail(sid, mtype, name) {
@@ -118,6 +158,7 @@ function viewAppDetail(sid, mtype, name) {
 
   document.getElementById("monitor-k8s-app").style.display = "none";
   document.getElementById("monitor-docker-app").style.display = "none";
+  document.getElementById("monitor-ssh-app").style.display = "none";
   document.getElementById("monitor-app-section").style.display = "none";
 
   if (mtype === "k8s") {
@@ -130,8 +171,10 @@ function viewAppDetail(sid, mtype, name) {
     document.getElementById("monitor-app-section").style.display = "block";
     document.getElementById("monitor-docker-app").style.display = "block";
     loadDockerInfo(sid);
+  } else if (mtype === "ssh") {
+    document.getElementById("monitor-app-section").style.display = "block";
+    document.getElementById("monitor-ssh-app").style.display = "block";
   }
-  // SSH 类型无应用资源，不显示
   document.getElementById("monitor-app-detail").scrollIntoView({ behavior: "smooth" });
 }
 
