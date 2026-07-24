@@ -24,9 +24,10 @@ class _MysqlWrapper:
 
 
 class Database:
-    """统一数据库连接。
+    """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API（php_api）。
     SQLite 模式：自动建表。
     MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。
+    启动时校验 ci_pipeline_tags 表是否存在，不存在则报错（数据库指向错误）。
     """
 
     DRIVERS = ("sqlite", "mysql")
@@ -39,6 +40,42 @@ class Database:
                 f"DB_DRIVER 必须设为 sqlite 或 mysql，当前: {self._driver or '未设置'}"
             )
         self._path = Path(db_path or settings.db_path)
+        self._validate_shared_db()
+
+    def _validate_shared_db(self):
+        """校验数据库是否为 php_api 的共享数据库。
+        ci_pipeline_tags 是 php_api 维护的核心表，不存在说明数据库指向错误。
+        """
+        try:
+            if self._driver == "mysql":
+                import pymysql
+                raw = pymysql.connect(
+                    host=settings.db_host, port=settings.db_port,
+                    user=settings.db_user, password=settings.db_pass,
+                    database=settings.db_name, charset="utf8mb4",
+                )
+                cur = raw.cursor()
+                cur.execute("SHOW TABLES LIKE 'ci_pipeline_tags'")
+                exists = cur.fetchone() is not None
+                cur.close()
+                raw.close()
+            else:
+                conn = sqlite3.connect(str(self._path))
+                cur = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='ci_pipeline_tags'"
+                )
+                exists = cur.fetchone() is not None
+                conn.close()
+        except Exception as e:
+            raise RuntimeError(
+                f"数据库连接失败，请确保和 Devops-Glue API（php_api）使用同一数据库实例。"
+                f"当前驱动: {self._driver}，错误: {e}"
+            )
+        if not exists:
+            raise RuntimeError(
+                f"未找到 ci_pipeline_tags 表。cd_service 无独立数据库，必须和 php_api 共用同一数据库实例。"
+                f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 php_api 一致。"
+            )
 
     def conn(self):
         """获取连接（统一 execute/commit/close 接口）"""

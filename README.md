@@ -4,24 +4,24 @@
 > ❌ Jenkins 裸奔？8 年前的 UI，配到崩溃  
 > ❌ Gitee + Jenkins + Harbor 三头对不上？多窗口来回切，Tag 全靠人肉对齐  
 >
-> ✅ 一套 API，4 个 Git 平台 + 2 条 CI 通道 + Harbor → 一个面板全搞定  
-> ✅ SQLite 零配置启动，MySQL 也可切换  
+> ✅ 现在只需一套 API，多 Git 平台+双 CI 通道 + Harbor → 一个面板全搞定  
+> ✅ SQLite 零配置启动，MySQL(推荐) 也可切换  
 > ✅ 10 年运维老兵的实战结晶  
 > ✅ 从 CI 构建到 CD 部署，全流程覆盖  
 > ✅ 开源免费，GitHub/Gitee 双更新  
 >
 > **不是大厂的遥控器，是小团队的瑞士军刀。**
 
-FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
+FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 ## 基础
 
 - **主页**：https://github.com/jeanslw/devops_cd.git 或 https://gitee.com/jeanslw/devops_cd.git
-- **语言**：Python 3.11+
+- **语言**：Python 3.10+
 - **框架**：FastAPI + uvicorn
-- **数据库**：SQLite / MySQL 8.0+（通过 `DB_DRIVER` 切换）
+- **数据库**：无独立数据库，完全跟随 Devops-Glue API的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+，由 Devops-Glue决定类型
 - **端口**：8081
-- **版本**：v0.2.0
+- **版本**：v1.0.0
 - **认证**：与 Devops-Glue API 共享数据库，bcrypt + Bearer token，不可单独使用
 
 ## 环境要求
@@ -30,7 +30,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 
 | 组件 | 版本 | 说明 |
 |------|------|------|
-| Python | 3.11+ | 运行环境 |
+| Python | 3.10+ | 运行环境 |
 | fastapi | 0.115+ | Web 框架 |
 | uvicorn | 0.34+ | ASGI 服务器 |
 | paramiko | 3.5+ | SSH / SFTP 连接 |
@@ -57,7 +57,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 | Flux CD | GitOps CD（可选） |
 | Helm 3+ | K8s 包管理（可选） |
 | Ansible | 自动化部署（可选） |
-| MySQL 8.0+ | 数据库（可选，默认 SQLite） |
+| MySQL 8.0+ / MariaDB 10.4+ | 数据库（推荐生产环境使用） |
 
 ## 架构
 
@@ -181,8 +181,8 @@ pip install -r requirements.txt
 
 # 配置 .env
 cp .env.example .env
-# DB_DRIVER=sqlite（默认，共享 ../php_api/config/data/data.db）
-# 或 DB_DRIVER=mysql（独立部署，需先建库）
+# DB_DRIVER=sqlite（默认，需和 PHP API 指向同一个 .db 文件，如 ../php_api/config/data/data.db）
+# 或 DB_DRIVER=mysql（推荐，需和 PHP API 共用同一个库）
 
 python main.py
 # 访问 http://localhost:8081
@@ -198,19 +198,26 @@ docker compose up -d
 # 访问 http://localhost:8081
 ```
 
+> **SQLite 模式注意**：CD Service 和 PHP API 共用同一个 SQLite 数据库文件。容器部署时必须将数据库目录挂载为共享卷。推荐生产环境使用 MySQL 或 MariaDB 10.4+，避免 SQLite 并发写入问题。
+
 ## 配置说明
 
-```env
-# ── 数据库（必填：sqlite 或 mysql）──
-DB_DRIVER=sqlite
-DB_PATH=../php_api/config/data/data.db
+> **重要**：cd_service 没有独立数据库，`DB_DRIVER` 和连接信息必须与 Devops-Glue API（Devops-Glue）完全一致。
+> 启动时会校验 `ci_pipeline_tags` 表是否存在，若不存在则报错退出。
 
-# MySQL（DB_DRIVER=mysql 时生效）
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=devops_glue
-DB_USER=root
-DB_PASS=
+```env
+# ── 数据库（必填：sqlite 或 mysql，必须和 Devops-Glue一致）──
+# SQLite 模式：和 Devops-Glue 指向同一个 .db 文件
+DB_DRIVER=sqlite
+DB_PATH=../Devops-Glue/config/data/data.db
+
+# MySQL / MariaDB 模式（推荐）：和 Devops-Glue 共用同一个库
+# DB_DRIVER=mysql
+# DB_HOST=127.0.0.1
+# DB_PORT=3306
+# DB_NAME=devops_glue
+# DB_USER=root
+# DB_PASS=
 
 # ── Harbor 镜像仓库 ──
 HARBOR_REGISTRY=hub.abc.com
@@ -252,6 +259,11 @@ NOTIFY_TRUNCATE_CHARS=200
 | POST | `/api/upload/{id}` | ✅ | SFTP 文件上传 |
 | GET | `/` | - | 首页 |
 | GET | `/dashboard` | - | 控制台 |
+
+## 更新日志
+
+- 版本		日期		变更内容
+- v1.0.0	‎2026‎-‎7‎-15‎	初始版本，衔接CI项目完善cd部署功能和部署校验，输出数据流日志;增加ssh单机/docker/k8s集群的部署，增加主机资源监控,优化bot通知模板。
 
 ## 联系作者
 

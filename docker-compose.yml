@@ -1,5 +1,5 @@
 # CD Service — 和 PHP Devops-Glue 搭配使用
-# 共享数据库: sqlite (volume) 或 mysql (network)
+# 数据库推荐 MySQL / MariaDB，和 PHP 端共用 devops_glue 库
 
 services:
   cd-service:
@@ -11,13 +11,8 @@ services:
       - .env
     environment:
       PYTHONUNBUFFERED: "1"
-      DB_DRIVER: sqlite
-      DB_PATH: /php_api/config/data/data.db
       HOST: 0.0.0.0
       PORT: 8081
-    volumes:
-      # SQLite 模式: 共享 PHP 的 data.db
-      - ../php_api/config/data:/php_api/config/data:rw
     ports:
       - "8081:8081"
     restart: unless-stopped
@@ -27,6 +22,19 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    # MySQL 模式: 添加 networks，设置 DB_DRIVER=mysql in .env
-    # networks:
-    #   - devops-net
+
+    # MySQL / MariaDB 模式（推荐）：和 PHP 端共用 devops_glue 库
+    # 需要在 .env 中配置 DB_DRIVER=mysql 及连接信息
+    networks:
+      - devops-net
+
+    # ── SQLite 模式（可选，取消下面注释并注释掉 networks）──
+    # environment:
+    #   DB_DRIVER: sqlite
+    #   DB_PATH: /data/data.db
+    # volumes:
+    #   - ../Devops-Glue/config/data:/data:rw
+
+networks:
+  devops-net:
+    external: true
