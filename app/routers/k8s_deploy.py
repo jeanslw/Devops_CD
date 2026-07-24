@@ -533,27 +533,55 @@ def deploy_helm(req, image, project, host, port, user, pwd, ssh_key="", callback
         log(before_text)
 
         log("\n开始 Helm 部署...")
-        cmds = [
-            f"helm upgrade --install {helm_release} {chart} --set image.tag={tag} --set image.repository={image.split(':')[0]}{ns_flag} --wait --timeout 120s --recreate-pods",
-            "sleep 5",
-        ]
+        # 去掉 --recreate-pods，使用默认 RollingUpdate 策略，避免单副本服务中断
+        helm_cmd = (
+            f"helm upgrade --install {helm_release} {chart} "
+            f"--set image.tag={tag} --set image.repository={image.split(':')[0]}"
+            f"{ns_flag} --wait --timeout 120s"
+        )
         deploy_log = []
-        for i, c in enumerate(cmds):
-            log(f"执行命令 {i+1}: {c}")
-            out = _ssh_cmd(ssh, c)
-            if out:
-                deploy_log.append(out)
-                log(out)
+        log(f"执行命令: {helm_cmd}")
+        helm_out = _ssh_cmd(ssh, helm_cmd)
+        if helm_out:
+            deploy_log.append(helm_out)
+            log(helm_out)
+
+        # 精确校验：检查 Deployment 是否 Available + 镜像版本是否匹配
+        availability = _ssh_cmd(
+            ssh,
+            f"kubectl get deployment/{helm_release}{ns_flag} "
+            f"-o jsonpath='{{.status.conditions[?(@.type==\"Available\")].status}}' 2>/dev/null"
+        ).strip()
+        deployed_image = _ssh_cmd(
+            ssh,
+            f"kubectl get deployment/{helm_release}{ns_flag} "
+            f"-o jsonpath='{{.spec.template.spec.containers[0].image}}' 2>/dev/null"
+        ).strip()
 
         log("\n正在获取部署后运行版本...")
         after = _kubectl_pods(ssh, helm_release)
         ssh.close()
 
-        matched = 1 if (after and tag in after and "Running" in after) else 0
-        result = f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log) + f"\n\n部署完成！\n\n当前运行新版本:\n{after or '(无)'}"
-        result += f"\n\n验证部署: {'✅ 部署成功！' if matched > 0 else '❌ 部署失败！(版本不匹配)'}"
-        log(f"\n验证部署: {'✅ 部署成功！' if matched > 0 else '❌ 部署失败！(版本不匹配)'}")
-        return {"success": matched > 0, "output": result[:settings.log_truncate_chars]}
+        is_available = (availability == "True")
+        tag_matched = (tag in (deployed_image or "")) if deployed_image else (tag in (after or ""))
+        matched = is_available and tag_matched
+
+        result = (
+            f"{before_text}\n\n开始部署:\n{helm_out}"
+            f"\n\n部署完成！\n\nDeployment Available: {'是' if is_available else '否'}"
+            f"\n运行镜像: {deployed_image or '未知'}"
+            f"\n\n当前 Pod 状态:\n{after or '(无)'}"
+        )
+
+        if matched:
+            result += f"\n\n验证部署: ✅ 部署成功！"
+        elif not is_available:
+            result += f"\n\n验证部署: ❌ 部署失败！(Deployment 未就绪)"
+        else:
+            result += f"\n\n验证部署: ❌ 部署失败！(镜像版本不匹配，期望 tag={tag})"
+
+        log(f"\n验证部署: {'✅ 部署成功！' if matched else '❌ 部署失败！'}")
+        return {"success": matched, "output": result[:settings.log_truncate_chars]}
     except Exception as e:
         log(f"\n❌ Helm 部署失败: {e}")
         return {"success": False, "output": str(e)}
