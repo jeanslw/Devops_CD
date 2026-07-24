@@ -82,13 +82,10 @@ class Database:
         if self._driver == "mysql":
             raw = self._connect_mysql()
             conn = _MysqlWrapper(raw)
-            if not Database._tables_ensured:
-                self._ensure_cd_config_mysql(conn)
         else:
             conn = self._connect_sqlite()
-            if not Database._tables_ensured:
-                self._ensure_cd_tables(conn)
-        if not Database._tables_ensured:
+        if not Database._tables_ensured and self._driver == "sqlite":
+            self._ensure_cd_tables(conn)
             Database._tables_ensured = True
         return conn
 
@@ -114,20 +111,6 @@ class Database:
             cursorclass=pymysql.cursors.DictCursor,
         )
         return conn
-
-    def _ensure_cd_config_mysql(self, conn):
-        """MySQL 模式：自动创建 cd_config 表（幂等）"""
-        try:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS cd_config ("
-                " key_name VARCHAR(128) PRIMARY KEY,"
-                " value TEXT NOT NULL"
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-                ()
-            )
-            conn.commit()
-        except Exception:
-            pass
 
     # ── SQLite 自动建表 ──
 
