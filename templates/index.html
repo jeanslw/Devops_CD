@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=1920">
 <title>Devops - CD</title>
+<link rel="icon" href="/static/favicon.ico">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#0a0a0f;color:#c0caf0;overflow-x:hidden;min-height:100vh}
@@ -12,7 +13,10 @@ body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#0a0a0f;colo
 .bg canvas{display:block}
 
 .nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(10,10,15,.92);backdrop-filter:blur(20px);border-bottom:1px solid rgba(100,255,100,.15);display:flex;align-items:center;justify-content:space-between;padding:0 48px;height:56px}
-.nav-brand{font-size:20px;font-weight:700;background:linear-gradient(135deg,#00ff88,#00c6ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;background:linear-gradient(135deg,#00ff88,#00c6ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.nav-logo{height:32px;width:auto;flex-shrink:0}
+@media(min-width:1920px){.nav-logo{height:38px}}
+@media(max-width:900px){.nav-logo{height:26px}}
 .nav-links{display:flex;gap:24px;align-items:center}
 .nav-links a{color:#8892b0;text-decoration:none;font-size:14px;transition:color .3s}
 .nav-links a:hover{color:#00ff88}
@@ -45,7 +49,7 @@ body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#0a0a0f;colo
 <body>
 
 <div class="nav">
-  <div class="nav-brand">🚀 Devops-Glue CD</div>
+  <div class="nav-brand"><img src="/static/logo.png" alt="Logo" class="nav-logo">Devops-Glue CD</div>
   <div class="nav-links">
     <a href="#">首页</a>
     <a href="mailto:jeanslw@qq.com">技术支持</a>
