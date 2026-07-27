@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8081
 
-WORKDIR /app
+WORKDIR /backend
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
@@ -19,7 +19,7 @@ RUN pip install --upgrade pip \
 COPY . .
 
 RUN useradd --create-home --shell /bin/bash appuser \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /backend
 
 USER appuser
 
