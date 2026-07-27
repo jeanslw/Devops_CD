@@ -1,0 +1,34 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+#test
+.claude/
+.gitignore
+
+venv/
+node_modules/
+test/
+docs/CHANGELOG.md
+__pycache__/
+.codebuddy/
+.workflow/
+# IDE
+.vscode/
+.idea/
+.editorconfig
+.laragon
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/logs/
+
+# Cache
+/tmp/
+/cache/
+*.cache
