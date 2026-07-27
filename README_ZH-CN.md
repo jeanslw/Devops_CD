@@ -66,9 +66,6 @@ docker compose up -d
 | [管理员配置手册](docs/管理员配置手册.md) | 环境要求、配置说明、K8s 兼容性、安全配置 |
 | [常见问题](docs/常见问题.md) | 常见问题与排查指南 |
 | [更新日志](docs/CHANGELOG.md) | 版本发布记录 |
-| [User Manual](docs/USER_MANUAL.md) | English user manual |
-| [Admin Manual](docs/ADMIN_MANUAL.md) | English admin manual |
-| [FAQ](docs/FAQ.md) | English FAQ |
 | [架构全景图](docs/用户说明.md) | 系统整体架构图解 |
 
 ## 更新日志

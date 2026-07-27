@@ -60,10 +60,7 @@ docker compose up -d
 | [Admin Manual](docs/ADMIN_MANUAL.md) | Requirements, configuration, K8s compatibility, security |
 | [FAQ](docs/FAQ.md) | Common issues and troubleshooting |
 | [Changelog](docs/CHANGELOG.md) | Release history |
-| [用户使用手册](docs/用户使用手册.md) | 中文用户手册 |
-| [管理员配置手册](docs/管理员配置手册.md) | 中文管理员手册 |
-| [常见问题](docs/常见问题.md) | 中文 FAQ |
-| [System Overview](docs/用户说明.md) | Architecture diagram (Chinese) |
+| [System Overview](docs/用户说明.md) | Architecture diagram |
 
 ## Changelog
 
