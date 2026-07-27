@@ -20,6 +20,10 @@
           <option value="viewer">{{ $t('users.role_viewer') }}</option>
         </select>
       </div>
+      <div class="form-group">
+        <label>{{ $t('users.systems') }}</label>
+        <input :value="$t('users.systems_cd')" disabled />
+      </div>
 
       <div style="display: flex; gap: 8px; margin-top: 16px;">
         <button class="btn btn-primary" @click="doCreate">{{ $t('common.add') }}</button>

@@ -568,5 +568,7 @@ export default {
     passwordChanged: 'Password changed',
     roleChanged: 'Role changed',
     confirmDelete: 'Confirm delete user {user}?',
+    systems: 'System Access',
+    systems_cd: 'CD System',
   },
 }

@@ -568,5 +568,7 @@ export default {
     passwordChanged: '✅ 密码已修改',
     roleChanged: '✅ 角色已修改',
     confirmDelete: '确定删除用户 {user}？',
+    systems: '系统准入',
+    systems_cd: 'CD 系统',
   },
 }
