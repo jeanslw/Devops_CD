@@ -18,21 +18,23 @@
           <tr v-for="u in visibleUsers" :key="u.username">
             <td>{{ u.username }}</td>
             <td>
+              <span v-if="u.role === 'super_admin'" class="badge badge-super">{{ $t('users.role_super_admin') }}</span>
               <select
+                v-else
                 class="role-select"
                 :value="u.role"
                 @change="e => changeRole(u, e.target.value)"
                 :disabled="u.username === auth.state.user?.username"
               >
+                <option v-if="isSuperAdmin" value="admin">{{ $t('users.role_admin') }}</option>
                 <option value="deployer">{{ $t('users.role_deployer') }}</option>
                 <option value="viewer">{{ $t('users.role_viewer') }}</option>
               </select>
             </td>
             <td>
-              <button class="btn btn-xs" @click="openChangePwd(u)">{{ $t('users.changePassword') }}</button>
               <button
                 class="btn btn-xs btn-danger"
-                v-if="u.username !== auth.state.user?.username"
+                v-if="canDelete(u)"
                 @click="confirmDelete(u)"
               >{{ $t('common.delete') }}</button>
             </td>
@@ -89,8 +91,21 @@ const showDelConfirm = ref(false)
 const pwdTarget = ref(null)
 const delTarget = ref(null)
 
-// 不展示 admin 行（CD 侧不管理管理员账号）
-const visibleUsers = computed(() => users.value.filter(u => u.role !== 'admin'))
+// 只显示部署者和只读账号
+const visibleUsers = computed(() => users.value.filter(u => u.role === 'deployer' || u.role === 'viewer'))
+
+// 当前用户是否是 super_admin
+const isSuperAdmin = computed(() => auth.state.user?.role === 'super_admin')
+// 当前用户是否是 admin
+const isAdmin = computed(() => auth.state.user?.role === 'admin')
+
+// 是否可以删除该用户：只能删除下级
+function canDelete(u) {
+  if (u.username === auth.state.user?.username) return false
+  if (isSuperAdmin.value) return true
+  if (isAdmin.value && (u.role === 'deployer' || u.role === 'viewer')) return true
+  return false
+}
 
 const pwdForm = ref({ old_password: '', new_password: '' })
 

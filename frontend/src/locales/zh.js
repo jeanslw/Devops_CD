@@ -551,6 +551,7 @@ export default {
     createUser: '＋ 新建用户',
     username: '用户名',
     role: '角色',
+    role_super_admin: '超级管理员',
     role_admin: '管理员',
     role_deployer: '部署者',
     role_viewer: '只读',

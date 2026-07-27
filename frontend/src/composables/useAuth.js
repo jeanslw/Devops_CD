@@ -49,8 +49,12 @@ export function useAuth() {
     return false
   }
 
+  function isSuperAdmin() {
+    return state.user?.role === 'super_admin'
+  }
+
   function isAdmin() {
-    return state.user?.role === 'admin'
+    return state.user?.role === 'admin' || state.user?.role === 'super_admin'
   }
 
   function isDeployer() {
@@ -58,14 +62,12 @@ export function useAuth() {
   }
 
   function canDeploy() {
-    // admin 或 deployer 都可以部署
-    return state.user?.role === 'admin' || state.user?.role === 'deployer'
+    return state.user?.role === 'admin' || state.user?.role === 'super_admin' || state.user?.role === 'deployer'
   }
 
   function canManage() {
-    // 只有 admin 可以管理（服务器、告警、用户等）
-    return state.user?.role === 'admin'
+    return state.user?.role === 'admin' || state.user?.role === 'super_admin'
   }
 
-  return { state, A, setToken, setUser, fetchMe, logout, handle401, isAdmin, isDeployer, canDeploy, canManage }
+  return { state, A, setToken, setUser, fetchMe, logout, handle401, isAdmin, isDeployer, isSuperAdmin, canDeploy, canManage }
 }
