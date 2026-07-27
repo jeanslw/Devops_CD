@@ -2,7 +2,7 @@
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Depends
-from backend.auth import get_current_user, require_admin, get_db
+from backend.auth import get_current_user, require_admin, get_db, CD_SYSTEM
 from backend.models import UserCreateRequest, ChangePasswordRequest
 from backend.database import Database
 
@@ -45,11 +45,11 @@ def create_user(
             raise HTTPException(409, f"用户 '{req.username}' 已存在")
 
         conn.execute(
-            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, ?)",
+            f"INSERT INTO admin_users (username, password_hash, role, systems) VALUES (?, ?, ?, '{CD_SYSTEM}')",
             (req.username, pwd_hash, req.role),
         )
         conn.commit()
-        return {"username": req.username, "role": req.role}
+        return {"username": req.username, "role": req.role, "systems": CD_SYSTEM}
 
 
 @router.delete("/{username}")
