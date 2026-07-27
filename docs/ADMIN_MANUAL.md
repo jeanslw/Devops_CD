@@ -175,11 +175,13 @@ Server passwords and SSH private keys are encrypted with Fernet symmetric encryp
 
 ### User Roles
 
-| Role | Permissions |
-|------|-------------|
-| `admin` | Full access: deploy, server management, user management, system config |
-| `deployer` | Deploy operations, view monitoring, manage servers |
-| `viewer` | Read-only: view projects, deployment logs, monitoring data |
+| Role | Permissions | Note |
+|------|-------------|------|
+| `admin` | Full access: deploy, server management, user management, system config | Assigned by CI system only; CD cannot create/delete/modify admin |
+| `deployer` | Deploy operations, view monitoring, manage servers | Created by CD admin |
+| `viewer` | Read-only: view projects, deployment logs, monitoring data | Created by CD admin |
+
+> **CD/CI Login Isolation**: The `admin_users` table has a `systems` column (comma-separated). CD validates login by checking for `"cd"` in this field. Only users with `"cd"` in `systems` can log in to CD. CI manages the full account lifecycle (creating admins, assigning systems), while CD only manages deployer/viewer.
 
 ### Authentication
 

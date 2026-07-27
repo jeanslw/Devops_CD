@@ -16,7 +16,6 @@
       <div class="form-group">
         <label>{{ $t('users.role') }}</label>
         <select v-model="form.role">
-          <option value="admin">{{ $t('users.role_admin') }}</option>
           <option value="deployer">{{ $t('users.role_deployer') }}</option>
           <option value="viewer">{{ $t('users.role_viewer') }}</option>
         </select>
@@ -41,7 +40,7 @@ const router = useRouter()
 const { t } = useI18n()
 const { toast } = useToast()
 
-const form = ref({ username: '', password: '', role: 'admin' })
+const form = ref({ username: '', password: '', role: 'viewer' })
 
 async function doCreate() {
   if (!form.value.username || !form.value.password) {

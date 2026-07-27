@@ -25,9 +25,6 @@ BASE_DIR = Path(__file__).parent
 def on_startup():
     """启动后台定时同步（DB 已存间隔优先，否则读环境变量）"""
     db = Database()
-    # 确保 admin_users 有 role 列
-    from backend.auth import ensure_role_column
-    ensure_role_column(db)
     try:
         svc = RegistryService(db)
         interval = svc.get_sync_interval()

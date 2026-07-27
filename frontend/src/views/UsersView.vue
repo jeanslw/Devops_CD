@@ -6,7 +6,7 @@
         <button class="btn btn-primary" @click="$router.push('/users/create')">{{ $t('users.createUser') }}</button>
       </div>
 
-      <table class="table" v-if="users.length">
+      <table class="table" v-if="visibleUsers.length">
         <thead>
           <tr>
             <th>{{ $t('users.username') }}</th>
@@ -15,7 +15,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="u in users" :key="u.username">
+          <tr v-for="u in visibleUsers" :key="u.username">
             <td>{{ u.username }}</td>
             <td>
               <select
@@ -24,7 +24,6 @@
                 @change="e => changeRole(u, e.target.value)"
                 :disabled="u.username === auth.state.user?.username"
               >
-                <option value="admin">{{ $t('users.role_admin') }}</option>
                 <option value="deployer">{{ $t('users.role_deployer') }}</option>
                 <option value="viewer">{{ $t('users.role_viewer') }}</option>
               </select>
@@ -89,6 +88,9 @@ const showPwd = ref(false)
 const showDelConfirm = ref(false)
 const pwdTarget = ref(null)
 const delTarget = ref(null)
+
+// 不展示 admin 行（CD 侧不管理管理员账号）
+const visibleUsers = computed(() => users.value.filter(u => u.role !== 'admin'))
 
 const pwdForm = ref({ old_password: '', new_password: '' })
 
