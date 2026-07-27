@@ -551,6 +551,7 @@ export default {
     createUser: '+ Create User',
     username: 'Username',
     role: 'Role',
+    role_super_admin: 'Super Admin',
     role_admin: 'Admin',
     role_deployer: 'Deployer',
     role_viewer: 'Viewer',

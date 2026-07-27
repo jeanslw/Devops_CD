@@ -10,7 +10,6 @@ from backend.config import settings
 security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
-ROOT_USERNAME = "root"
 _systems_col_ok = True  # 乐观假设 systems 列存在，查询失败后置 False
 
 
@@ -101,22 +100,29 @@ def get_current_user(
 
     return {
         "username": row["username"],
-        "role": row.get("role", "admin"),
+        "role": row.get("role", settings.admin_role),
         "systems": row.get("systems"),
     }
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """管理员权限依赖：非 admin 返回 403"""
-    if user.get("role") != "admin":
+    """管理员权限依赖：admin 或 super_admin 可访问"""
+    if user.get("role") not in (settings.admin_role, settings.super_admin_role):
         raise HTTPException(403, "Permission denied: admin required")
     return user
 
 
+def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    """超管权限依赖：仅 super_admin 可操作管理员账号"""
+    if user.get("role") != settings.super_admin_role:
+        raise HTTPException(403, "Permission denied: super_admin required")
+    return user
+
+
 def require_deployer(user: dict = Depends(get_current_user)) -> str:
-    """部署者权限依赖：admin 或 deployer 可执行部署操作，返回 username"""
+    """部署者权限依赖：admin / super_admin / deployer 可执行部署操作，返回 username"""
     role = user.get("role", "")
-    if role not in ("admin", "deployer"):
+    if role not in (settings.admin_role, settings.super_admin_role, settings.deployer_role):
         raise HTTPException(403, "Permission denied: deployer or admin required")
     return user["username"]
 

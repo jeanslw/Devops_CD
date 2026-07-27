@@ -16,6 +16,7 @@
       <div class="form-group">
         <label>{{ $t('users.role') }}</label>
         <select v-model="form.role">
+          <option v-if="isSuperAdmin" value="admin">{{ $t('users.role_admin') }}</option>
           <option value="deployer">{{ $t('users.role_deployer') }}</option>
           <option value="viewer">{{ $t('users.role_viewer') }}</option>
         </select>
@@ -34,7 +35,7 @@
 </template>
 
 <script setup>
-import { ref, inject } from 'vue'
+import { ref, computed, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -43,6 +44,8 @@ const auth = inject('auth')
 const router = useRouter()
 const { t } = useI18n()
 const { toast } = useToast()
+
+const isSuperAdmin = computed(() => auth.state.user?.role === 'super_admin')
 
 const form = ref({ username: '', password: '', role: 'viewer' })
 
