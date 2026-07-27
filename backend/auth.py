@@ -10,6 +10,7 @@ from backend.config import settings
 security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
+ROOT_USERNAME = "root"
 _systems_col_ok = True  # 乐观假设 systems 列存在，查询失败后置 False
 
 

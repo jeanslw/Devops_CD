@@ -2,7 +2,7 @@
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Depends
-from backend.auth import get_current_user, require_admin, get_db, CD_SYSTEM
+from backend.auth import get_current_user, require_admin, get_db, CD_SYSTEM, ROOT_USERNAME
 from backend.models import UserCreateRequest, ChangePasswordRequest
 from backend.database import Database
 
@@ -28,13 +28,13 @@ def create_user(
     db: Database = Depends(get_db),
     admin: dict = Depends(require_admin),
 ):
-    """创建新用户（仅 admin）。CD 侧不允许创建管理员账号。"""
+    """创建新用户（仅 admin）。只有 root admin 可以创建管理员账号。"""
     if not req.username or not req.password:
         raise HTTPException(400, "用户名和密码不能为空")
     if req.role not in ("admin", "viewer", "deployer"):
         raise HTTPException(400, "无效的角色")
-    if req.role == "admin":
-        raise HTTPException(400, "CD 侧不允许创建管理员账号，请联系 CI 系统")
+    if req.role == "admin" and admin["username"] != ROOT_USERNAME:
+        raise HTTPException(403, "只有 root admin 可以创建管理员账号")
 
     pwd_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
     with db.conn() as conn:
@@ -58,7 +58,7 @@ def delete_user(
     db: Database = Depends(get_db),
     admin: dict = Depends(require_admin),
 ):
-    """删除用户（仅 admin），不能删除自己，不能删除 admin 角色用户"""
+    """删除用户（仅 admin），不能删除自己。只有 root admin 可以删除管理员。"""
     if username == admin["username"]:
         raise HTTPException(400, "不能删除自己的账户")
 
@@ -68,8 +68,8 @@ def delete_user(
         ).fetchone()
         if target is None:
             raise HTTPException(404, f"用户 '{username}' 不存在")
-        if target["role"] == "admin":
-            raise HTTPException(403, "CD 侧不允许删除管理员账号")
+        if target["role"] == "admin" and admin["username"] != ROOT_USERNAME:
+            raise HTTPException(403, "只有 root admin 可以删除管理员账号")
 
         conn.execute("DELETE FROM admin_users WHERE username=?", (username,))
         conn.commit()
@@ -83,12 +83,12 @@ def change_role(
     db: Database = Depends(get_db),
     admin: dict = Depends(require_admin),
 ):
-    """修改用户角色（仅 admin），不能修改自己的角色，不能改入/改出 admin"""
+    """修改用户角色（仅 admin），不能修改自己的角色。只有 root admin 可指定/修改管理员角色。"""
     role = req.get("role", "")
     if role not in ("admin", "viewer", "deployer"):
         raise HTTPException(400, "无效的角色")
-    if role == "admin":
-        raise HTTPException(400, "CD 侧不允许设置为管理员角色，请联系 CI 系统")
+    if role == "admin" and admin["username"] != ROOT_USERNAME:
+        raise HTTPException(403, "只有 root admin 可以设置管理员角色")
     if username == admin["username"]:
         raise HTTPException(400, "不能修改自己的角色")
 
@@ -98,8 +98,8 @@ def change_role(
         ).fetchone()
         if target is None:
             raise HTTPException(404, f"用户 '{username}' 不存在")
-        if target["role"] == "admin":
-            raise HTTPException(403, "CD 侧不允许修改管理员角色")
+        if target["role"] == "admin" and admin["username"] != ROOT_USERNAME:
+            raise HTTPException(403, "只有 root admin 可以修改管理员角色")
 
         conn.execute(
             "UPDATE admin_users SET role=? WHERE username=?", (role, username)
