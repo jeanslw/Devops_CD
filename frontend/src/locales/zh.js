@@ -26,6 +26,19 @@ export default {
     selectAll: '全选',
     selectedAll: '已选全部 ({n})',
   },
+  landing: {
+    nav: { home: '首页', support: '技术支持', login: '登录' },
+    hero: { text1: 'Build Tag', text2: 'Deploy Anywhere' },
+    cards: {
+      ssh:    { title: '单机部署',     desc: 'SSH + 自定义命令 / Ansible Playbook<br>5 种预设模板' },
+      docker: { title: 'Docker Compose', desc: '远程 YAML / 在线编写<br>自动写 .env 固化版本' },
+      k8s:    { title: 'Kubernetes',    desc: 'kubectl / Helm / Argo CD<br>Flux CD 四模合一' },
+      verify: { title: '版本验证',      desc: '部署前后自动对比<br>版本不对即报失败' },
+      shell:  { title: 'Web Shell',     desc: '浏览器内终端 + 文件上传<br>无需 SSH 客户端' },
+      notify: { title: '钉钉/企微',     desc: '部署完成自动推送<br>群消息实时通知' },
+    },
+    footer: 'Copyright © 2026 by Blues.Inc',
+  },
   login: {
     title: '🔐 CD 部署系统',
     subtitle: '管理员账号',

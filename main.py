@@ -17,7 +17,7 @@ from backend.services.registry_service import start_background_sync, RegistrySer
 from backend.services.alert_service import start_alert_checker
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="1.1.1")
+app = FastAPI(title="Devops-Glue CD", version="1.2.0")
 BASE_DIR = Path(__file__).parent
 
 # ── 启动事件 ──

@@ -26,6 +26,19 @@ export default {
     selectAll: 'Select All',
     selectedAll: 'All Selected ({n})',
   },
+  landing: {
+    nav: { home: 'Home', support: 'Support', login: 'Login' },
+    hero: { text1: 'Build Tag', text2: 'Deploy Anywhere' },
+    cards: {
+      ssh:    { title: 'Single Host',       desc: 'SSH + Custom Commands / Ansible Playbook<br>5 preset templates' },
+      docker: { title: 'Docker Compose',     desc: 'Remote YAML / Online Editor<br>Auto .env version pinning' },
+      k8s:    { title: 'Kubernetes',         desc: 'kubectl / Helm / Argo CD<br>Flux CD — four modes in one' },
+      verify: { title: 'Version Check',      desc: 'Auto compare before & after deploy<br>Fail-fast on version mismatch' },
+      shell:  { title: 'Web Shell',          desc: 'In-browser terminal + file upload<br>No SSH client needed' },
+      notify: { title: 'IM Notifications',   desc: 'DingTalk / WeCom push<br>Real-time group alerts' },
+    },
+    footer: 'Copyright © 2026 by Blues.Inc',
+  },
   login: {
     title: 'CD Deployment System',
     subtitle: 'Admin Account',

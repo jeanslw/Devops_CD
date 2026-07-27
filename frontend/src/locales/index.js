@@ -3,7 +3,7 @@ import en from './en.js'
 import zh from './zh.js'
 
 const saved = localStorage.getItem('cd_lang')
-const defaultLocale = saved || navigator.language?.startsWith('zh') ? 'zh' : 'en'
+const defaultLocale = saved || (navigator.language?.startsWith('zh') ? 'zh' : 'en')
 
 const i18n = createI18n({
   legacy: false,

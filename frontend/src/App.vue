@@ -15,7 +15,8 @@
       </div>
     </div>
     <div v-else class="login-page">
-      <LoginView />
+      <LandingView v-if="$route.path !== '/login'" />
+      <LoginView v-else />
     </div>
   </div>
 </template>
@@ -26,6 +27,7 @@ import Topbar from '@/components/Topbar.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import Toast from '@/components/Toast.vue'
 import LoginView from '@/views/LoginView.vue'
+import LandingView from '@/views/LandingView.vue'
 import { provide, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 

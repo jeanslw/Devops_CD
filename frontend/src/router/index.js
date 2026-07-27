@@ -16,6 +16,11 @@ const routes = [
     meta: { title: 'CI构建结果' }
   },
   {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/LoginView.vue'),
+  },
+  {
     path: '/servers',
     name: 'Servers',
     component: () => import('@/views/ServersView.vue'),

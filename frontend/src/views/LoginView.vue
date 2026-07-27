@@ -1,4 +1,8 @@
 <template>
+  <div class="login-lang">
+    <button :class="{ active: locale === 'zh' }" @click="setLang('zh')">中文</button>
+    <button :class="{ active: locale === 'en' }" @click="setLang('en')">EN</button>
+  </div>
   <div class="login-card">
     <h3>{{ $t('login.title') }}</h3>
     <p>{{ $t('login.subtitle') }}</p>
@@ -14,10 +18,11 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
+import { setLang } from '@/locales'
 
 const router = useRouter()
 const auth = useAuth()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const user = ref('')
 const password = ref('')
 const err = ref('')
