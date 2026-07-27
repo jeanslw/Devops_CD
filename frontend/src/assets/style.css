@@ -440,7 +440,7 @@ label {
   display: flex; align-items: center; gap: 10px;
   font-size: 20px; font-weight: 700;
   background: linear-gradient(135deg,#00ff88,#00c6ff);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .nav-logo { height: 32px; width: auto; flex-shrink: 0; }
 .nav-links { display: flex; gap: 24px; align-items: center; }
@@ -477,7 +477,7 @@ label {
 .landing-hero h1 { font-size: 44px; font-weight: 800; line-height: 1.2; margin-bottom: 0; }
 .landing-hero .glow {
   background: linear-gradient(135deg,#00ff88,#00c6ff);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 
 .landing-cards {
