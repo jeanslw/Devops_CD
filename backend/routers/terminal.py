@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shlex
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends, Query
 from backend.database import Database
@@ -13,6 +14,34 @@ from backend.deployers.base import ssh_connect, DeployTarget
 from backend.crypto import decrypt
 
 router = APIRouter()
+
+# ── 危险命令黑名单（正则匹配，检测完整命令行）──
+_DANGEROUS_PATTERNS = [
+    r'\brm\s+.*-rf\s+/',                # rm -rf /
+    r'\brm\s+.*-rf\s+~',                # rm -rf ~
+    r'\bdd\s+if=',                       # dd if=/dev/zero of=/dev/sda
+    r'\bmkfs\.',                         # mkfs.ext4 /dev/sda
+    r':\(\)\s*\{.*:\|:&\s*\};:',        # fork bomb
+    r'>\s*/dev/sd',                      # redirect to disk device
+    r'\bchmod\s+.*777\s+/',             # chmod 777 /
+    r'>\s*/etc/passwd',                  # overwrite system files
+    r'\brm\s+.*--no-preserve-root\s+/', # rm --no-preserve-root /
+    r'\bchown\s+.*-R\s+\w+\s+/',        # chown -R on /
+    r'\bchmod\s+.*-R\s+\d+\s+/etc',     # chmod on /etc
+]
+
+_DANGEROUS_WARNING = "\r\n⚠️  危险命令已被拦截，未发送到服务器\r\n"
+
+
+def _check_dangerous(cmd: str) -> bool:
+    """检测命令行是否匹配危险模式"""
+    stripped = cmd.strip()
+    if not stripped:
+        return False
+    for pattern in _DANGEROUS_PATTERNS:
+        if re.search(pattern, stripped):
+            return True
+    return False
 
 
 async def _ws_verify(token: str | None = None) -> str:
@@ -94,7 +123,8 @@ async def terminal(websocket: WebSocket, server_id: int):
                 break
 
     async def ws_to_ssh():
-        """WebSocket 输入 → SSH，支持终端尺寸自适应"""
+        """WebSocket 输入 → SSH，支持终端尺寸自适应 + 危险命令拦截"""
+        buf = ""  # 行缓冲
         while not chan.closed:
             try:
                 data = await asyncio.wait_for(websocket.receive(), timeout=0.05)
@@ -110,6 +140,30 @@ async def terminal(websocket: WebSocket, server_id: int):
                                     continue
                             except Exception:
                                 pass
+
+                        # ── 危险命令检测 ──
+                        if "\r" in text:
+                            line = buf + text
+                            if _check_dangerous(line):
+                                buf = ""
+                                await websocket.send_text(_DANGEROUS_WARNING)
+                                continue
+                            buf = ""
+                        elif "\x03" in text or "\x04" in text:
+                            # Ctrl+C / Ctrl+D，清空缓冲区
+                            buf = ""
+                        elif text.startswith("\x1b"):
+                            # ANSI 转义序列（方向键等），保持缓冲区
+                            pass
+                        elif text == "\x7f" or text == "\x08":
+                            # 退格
+                            if buf:
+                                buf = buf[:-1]
+                        elif len(text) == 1 and ord(text) >= 32:
+                            buf += text
+                        else:
+                            buf = ""
+
                         chan.send(text)
                     elif "bytes" in data:
                         chan.send(data["bytes"])
