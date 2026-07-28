@@ -11,9 +11,10 @@ WORKDIR /backend
 # 国内构建太慢？取消下一行注释，用清华镜像替换 deb.debian.org
 # RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
 
-# 所有 Python 包均有预编译 wheel，不需要 build-essential
+# pip 23 太旧可能找不到部分包版本，先升级再装依赖
 COPY requirements.txt ./
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip \
+    && pip install -r requirements.txt
 
 COPY . .
 
