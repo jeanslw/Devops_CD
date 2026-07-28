@@ -69,6 +69,9 @@ SSH_DEFAULT_USER=root
 # ── Docker Deployment ──
 CONTAINER_RESTART_POLICY=always
 
+# ── K8s Deployment ──
+# FLUX_NAMESPACE=flux-system
+
 # ── Monitoring & Alerting (seconds) ──
 MONITOR_CACHE_SERVERS=60
 MONITOR_CACHE_SYSTEM=30

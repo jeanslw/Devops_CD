@@ -10,7 +10,9 @@ def deploy_helm(req, image, project, host, port, user, pwd, ssh_key="", callback
     """Helm: helm upgrade --install"""
     target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
     tag = req.tag
-    chart = req.path or f"/opt/helm/{project}"
+    if not req.path:
+        return {"success": False, "output": "Helm 部署必须指定 chart 路径"}
+    chart = req.path
     ns = req.k8s_ns
     ns_flag = f" -n {ns}" if ns else ""
 

@@ -64,11 +64,9 @@ def deploy_kubectl(req, image, project, host, port, user, pwd, ssh_key="", callb
 
         _log(callback, S("deploy_log.verifying_app"))
 
-        # ── 校验项目名与 YAML 部署名严格相等 ──
+        # ── 校验项目名与 YAML 部署名一致（不一致仅警告，不阻止部署）──
         if filter_name != deploy_name:
             _log(callback, S("deploy_log.project_yaml_mismatch", project=filter_name, deploy=deploy_name))
-            _log(callback, S("deploy_log.check_yaml_path", project=filter_name))
-            return {"success": False, "output": f"项目 [{filter_name}] 与 YAML 部署名 [{deploy_name}] 不匹配，请检查 YAML 路径。"}
 
         is_first_deploy = False
         if not before.strip():

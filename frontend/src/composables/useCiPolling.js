@@ -1,6 +1,8 @@
 import { ref, onUnmounted } from 'vue'
 import { useAuth } from './useAuth'
 
+const DEFAULT_INTERVAL = 30000
+
 export function useCiPolling() {
   const auth = useAuth()
   let _timer = null
@@ -9,7 +11,7 @@ export function useCiPolling() {
 
   function loadInterval() {
     const v = localStorage.getItem('cd_refresh_ci')
-    return v !== null ? parseInt(v) : 30000
+    return v !== null ? parseInt(v) : DEFAULT_INTERVAL
   }
 
   function saveInterval(ms) {

@@ -45,6 +45,7 @@
         </div>
       </div>
       <div style="margin-bottom:8px;font-size:11px;color:#667">{{ $t('k8sDeploy.namespaceHint') }}</div>
+      <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px;font-size:11px;color:#667">Flux CD {{ $t('k8sDeploy.fluxNamespaceHint') }}</div>
       <div v-if="cdType === 'kubectl' || cdType === 'helm'" style="margin-bottom:8px">
         <label>{{ $t('k8sDeploy.yamlPath') }}</label>
         <input v-model="path" placeholder="/opt/k8s/deploy.yaml">

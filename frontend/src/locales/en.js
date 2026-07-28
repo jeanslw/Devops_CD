@@ -169,6 +169,7 @@ export default {
     yamlPath: 'YAML Path',
     apiUrl: 'API URL',
     namespaceHint: 'Declare namespace in YAML, leave blank to omit -n',
+    fluxNamespaceHint: 'Namespace: flux-system (change FLUX_NAMESPACE in .env)',
     viewResources: 'View Resources',
   },
   logs: {

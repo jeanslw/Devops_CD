@@ -67,7 +67,8 @@ const { toast } = useToast()
 
 const projects = reactive([])
 const loading = ref(true)
-const interval = ref(parseInt(localStorage.getItem('cd_refresh_ci') || '30000'))
+const CI_DEFAULT_REFRESH = 30000
+const interval = ref(parseInt(localStorage.getItem('cd_refresh_ci') || CI_DEFAULT_REFRESH))
 const deployTargets = reactive({})
 let _timer = null
 

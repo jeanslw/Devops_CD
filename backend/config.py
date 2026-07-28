@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # ── Docker 部署（可选）──
     container_restart_policy: str = "always"
 
+    # ── K8s 部署（可选）──
+    flux_namespace: str = "flux-system"
+
     # ── 通知（可选）──
     dingtalk_secret: str = ""    # 钉钉加签密钥
     log_truncate_chars: int = 2000

@@ -10,7 +10,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
     """发现 Flux CD 资源名（HelmRelease / Kustomization），不盲猜等于项目名"""
     # 先尝试精确匹配
     for kind in ("helmrelease", "kustomization"):
-        r = _ssh_cmd(ssh, f"kubectl get {kind} {project_fallback} -n flux-system -o name 2>/dev/null")
+        r = _ssh_cmd(ssh, f"kubectl get {kind} {project_fallback} -n {settings.flux_namespace} -o name 2>/dev/null")
         if r:
             return project_fallback, kind
 
@@ -18,7 +18,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
     for kind in ("helmrelease", "kustomization"):
         r = _ssh_cmd(
             ssh,
-            f"kubectl get {kind} -n flux-system -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null",
+            f"kubectl get {kind} -n {settings.flux_namespace} -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null",
         )
         if not r:
             continue
@@ -26,7 +26,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
             name = name.strip()
             if not name:
                 continue
-            spec = _ssh_cmd(ssh, f"kubectl get {kind} {name} -n flux-system -o yaml 2>/dev/null")
+            spec = _ssh_cmd(ssh, f"kubectl get {kind} {name} -n {settings.flux_namespace} -o yaml 2>/dev/null")
             if image_name in spec or project_fallback in spec:
                 return name, kind
 
@@ -52,7 +52,7 @@ def deploy_fluxcd(req, image, project, host, pwd, ssh_key="", callback=None):
             return None
         raw = _ssh_cmd(
             ssh,
-            f"kubectl get {resource_kind} {resource_name} -n flux-system "
+            f"kubectl get {resource_kind} {resource_name} -n {settings.flux_namespace} "
             f"-o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}|{{.status.conditions[?(@.type==\"Ready\")].reason}}|{{.status.conditions[?(@.type==\"Ready\")].message}}' 2>/dev/null",
         )
         if not raw or "|" not in raw:
@@ -93,10 +93,10 @@ def deploy_fluxcd(req, image, project, host, pwd, ssh_key="", callback=None):
         log(S("deploy_log.flux_start"))
         log(S("deploy_log.flux_update"))
         patch_cmd = (
-            f"kubectl patch {flux_kind} {flux_name} -n flux-system --type=merge "
+            f"kubectl patch {flux_kind} {flux_name} -n {settings.flux_namespace} --type=merge "
             f"-p '{{\"spec\":{{\"values\":{{\"image\":{{\"tag\":\"{tag}\"}}}}}}}}' 2>/dev/null "
             if flux_kind == "helmrelease" else
-            f"kubectl patch {flux_kind} {flux_name} -n flux-system --type=merge "
+            f"kubectl patch {flux_kind} {flux_name} -n {settings.flux_namespace} --type=merge "
             f"-p '{{\"spec\":{{\"images\":[{{\"name\":\"{img_name}\",\"newTag\":\"{tag}\"}}]}}}}'"
         )
         result = _ssh_cmd(ssh, patch_cmd)
@@ -105,7 +105,7 @@ def deploy_fluxcd(req, image, project, host, pwd, ssh_key="", callback=None):
         # 3. 触发 Flux 立即协调
         log(S("deploy_log.flux_reconcile"))
         annotate_cmd = (
-            f"kubectl annotate {flux_kind} {flux_name} -n flux-system "
+            f"kubectl annotate {flux_kind} {flux_name} -n {settings.flux_namespace} "
             f"reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite 2>/dev/null"
         )
         result = _ssh_cmd(ssh, annotate_cmd)
