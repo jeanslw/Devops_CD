@@ -141,6 +141,101 @@ docker compose up -d
 
 > **SQLite note**: When deploying in containers, mount the database directory as a shared volume so both CD and PHP API can access the same `.db` file.
 
+#### Deploying with Devops-Glue
+
+CD Service shares the same MySQL database (`devops_glue`) with Devops-Glue (CI). Three deployment strategies depending on host layout:
+
+**Option A: Same-host Combined Deploy (Recommended)**
+
+Add the cd-service block into Devops-Glue's `docker-compose.yml`. Docker DNS works automatically within the same compose file:
+
+```yaml
+# Append to Devops-Glue's docker-compose.yml:
+  cd-service:
+    build:
+      context: ../cd_service
+      dockerfile: Dockerfile
+    container_name: cd-service
+    env_file:
+      - ../cd_service/.env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      HOST: 0.0.0.0
+      PORT: 8081
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+```
+
+Set `DB_HOST=devops-mysql` (the MySQL container name in CI) in `.env`.
+
+**Option B: Same-host Separate Deploy**
+
+Two independent compose files on the same machine, connected via an external Docker network:
+
+```bash
+# 1. Create a shared network
+docker network create devops-net
+```
+
+Both compose files join this network:
+
+```yaml
+# CD Service docker-compose.yml
+networks:
+  devops-net:
+    external: true
+```
+
+```yaml
+# Devops-Glue docker-compose.yml — append:
+services:
+  mysql:
+    networks:
+      - devops-net
+  devops-glue:
+    networks:
+      - devops-net
+
+networks:
+  devops-net:
+    external: true
+```
+
+Set `DB_HOST=devops-mysql` in the CD Service `.env`. Docker's built-in DNS resolves container names across the shared network. MySQL does not need to expose ports to the host.
+
+**Option C: Cross-host Deploy**
+
+CD Service and MySQL run on different machines. Container-name DNS no longer works — MySQL must expose its port and CD Service connects via the host IP.
+
+Expose MySQL port in the CI compose file:
+
+```yaml
+# Devops-Glue docker-compose.yml
+services:
+  mysql:
+    ports:
+      - "3306:3306"   # Expose MySQL to host network
+```
+
+Ensure MySQL allows remote connections (default in the container), and open port 3306 in your firewall/security group.
+
+CD Service `.env`:
+
+```env
+DB_DRIVER=mysql
+DB_HOST=192.168.x.x    # IP of the MySQL host machine
+DB_PORT=3306
+DB_NAME=devops_glue
+DB_USER=root
+DB_PASS=your_password
+```
+
+> **Note**: In cross-host mode, the CD Service compose file can omit `networks` entirely (or use the default bridge) — `devops-net` is not needed.
+
 ### Frontend Build
 
 ```bash

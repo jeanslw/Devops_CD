@@ -6,6 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: devops-cd:latest
     container_name: cd-service
     env_file:
       - .env
@@ -25,16 +26,9 @@ services:
 
     # MySQL / MariaDB 模式（推荐）：和 PHP 端共用 devops_glue 库
     # 需要在 .env 中配置 DB_DRIVER=mysql 及连接信息
-    networks:
-      - devops-net
-
-    # ── SQLite 模式（可选，取消下面注释并注释掉 networks）──
+    # ── SQLite 模式（可选，取消下面注释）──
     # environment:
     #   DB_DRIVER: sqlite
     #   DB_PATH: /data/data.db
     # volumes:
     #   - ../Devops-Glue/config/data:/data:rw
-
-networks:
-  devops-net:
-    external: true
