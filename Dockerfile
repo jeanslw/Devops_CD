@@ -8,13 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /backend
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# 国内构建太慢？取消下一行注释，用清华镜像替换 deb.debian.org
+# RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
 
+# 所有 Python 包均有预编译 wheel，不需要 build-essential
 COPY requirements.txt ./
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+RUN pip install -r requirements.txt
 
 COPY . .
 

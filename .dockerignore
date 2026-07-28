@@ -8,6 +8,20 @@
 .env
 .editorconfig
 venv/
+.venv/
 Dockerfile
 *.md
 LICENSE
+
+# 前端依赖和构建缓存（不需要打进镜像）
+frontend/node_modules
+frontend/dist
+
+# Python 缓存
+__pycache__
+*.pyc
+*.pyo
+
+# 本地测试文件
+test/
+.codebuddy/
