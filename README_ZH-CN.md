@@ -68,6 +68,10 @@ docker compose up -d
 | [更新日志](docs/CHANGELOG.md) | 版本发布记录 |
 | [架构全景图](docs/用户说明.md) | 系统整体架构图解 |
 
+## 相关项目
+
+- **Devops-Glue** — 持续集成服务，本系统依赖的系统。([https://gitee.com/jeanslw/devops_glue](https://gitee.com/jeanslw/devops_glue))
+
 ## 更新日志
 
 - v1.0.0 | 2026-07-15 | 初始版本，衔接 CI 项目完善 CD 部署功能和部署校验，输出数据流日志；增加 SSH 单机 / Docker / K8s 集群的部署，增加主机资源监控，优化 Bot 通知模板。

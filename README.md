@@ -62,6 +62,10 @@ docker compose up -d
 | [Changelog](docs/CHANGELOG.md) | Release history |
 | [System Overview](docs/用户说明.md) | Architecture diagram |
 
+## Related Projects
+
+- **Devops-Glue** — The CI service that this system depends on ([https://github.com/jeanslw/Devops_Glue](https://github.com/jeanslw/Devops_Glue))
+
 ## Changelog
 
 - **v1.0.0** (2026-07-15) — Initial release: end-to-end CI/CD workflow, SSH single-host / Docker / K8s cluster deployment, host resource monitoring, optimized notification templates.
