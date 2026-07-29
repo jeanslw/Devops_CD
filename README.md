@@ -64,7 +64,7 @@ docker compose up -d
 
 ## Related Projects
 
-- **Devops-Glue** — The CI service that this system depends on ([https://github.com/jeanslw/Devops_Glue](https://github.com/jeanslw/Devops_Glue))
+- **Devops-Glue** — The CI service that this system depends on ([https://github.com/jeanslw/Devops-Glue](https://github.com/jeanslw/Devops-Glue))
 
 ## Changelog
 
