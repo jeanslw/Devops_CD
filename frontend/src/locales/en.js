@@ -37,7 +37,7 @@ export default {
       shell:  { title: 'Web Shell',          desc: 'In-browser terminal + file upload<br>No SSH client needed' },
       notify: { title: 'IM Notifications',   desc: 'DingTalk / WeCom push<br>Real-time group alerts' },
     },
-    footer: 'Copyright © 2026 by Blues.Inc',
+    footer: 'Copyright © 2026 jeanslw',
   },
   login: {
     title: 'CD Deployment System',

@@ -37,7 +37,7 @@ export default {
       shell:  { title: 'Web Shell',     desc: '浏览器内终端 + 文件上传<br>无需 SSH 客户端' },
       notify: { title: '钉钉/企微',     desc: '部署完成自动推送<br>群消息实时通知' },
     },
-    footer: 'Copyright © 2026 by Blues.Inc',
+    footer: 'Copyright © 2026 jeanslw',
   },
   login: {
     title: '🔐 CD 部署系统',
