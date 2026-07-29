@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Depends
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_admin
+from backend.auth import get_db, verify_token, require_perm
 from backend.models import BotRequest
 
 router = APIRouter(prefix="/api/bots", tags=["bots"])
@@ -24,7 +24,7 @@ def list_bots(
 def add_bot(
     req: BotRequest,
     db: Database = Depends(get_db),
-    user: dict = Depends(require_admin),
+    _user: dict = Depends(require_perm("cd.admin")),
 ):
     with db.conn() as conn:
         try:
@@ -42,7 +42,7 @@ def add_bot(
 def delete_bot(
     bid: int,
     db: Database = Depends(get_db),
-    user: dict = Depends(require_admin),
+    _user: dict = Depends(require_perm("cd.admin")),
 ):
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_bots WHERE id=?", (bid,))

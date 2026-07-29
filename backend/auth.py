@@ -72,7 +72,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Database = Depends(get_db),
 ) -> dict:
-    """获取当前登录用户完整信息 {username, role, systems}。
+    """获取当前登录用户完整信息 {username, role, systems, permissions}。
     同时检查 systems 字段（如果存在）是否允许 CD 访问。"""
     if credentials is None:
         raise HTTPException(401, "Please login first")
@@ -98,33 +98,52 @@ def get_current_user(
     if not _timing_safe_compare(token, expected):
         raise HTTPException(401, "Invalid or expired token")
 
+    # 查询该角色的权限列表
+    role_name = row.get("role", settings.admin_role)
+    permissions = _query_permissions(db, role_name)
+
     return {
         "username": row["username"],
-        "role": row.get("role", settings.admin_role),
+        "role": role_name,
         "systems": row.get("systems"),
+        "permissions": permissions,
     }
 
 
-def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """管理员权限依赖：admin 或 super_admin 可访问"""
-    if user.get("role") not in (settings.admin_role, settings.super_admin_role):
-        raise HTTPException(403, "Permission denied: admin required")
-    return user
+def _query_permissions(db: Database, role_name: str) -> list:
+    """通过 roles / role_permissions 表查询指定角色的权限列表。"""
+    try:
+        with db.conn() as conn:
+            rows = conn.execute(
+                "SELECT rp.perm_key FROM role_permissions rp "
+                "JOIN roles r ON r.id = rp.role_id "
+                "WHERE r.name=?",
+                (role_name,),
+            ).fetchall()
+            return [r["perm_key"] for r in rows]
+    except Exception:
+        return []  # 表不存在或查询失败时优雅降级
 
 
-def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
-    """超管权限依赖：仅 super_admin 可操作管理员账号"""
-    if user.get("role") != settings.super_admin_role:
-        raise HTTPException(403, "Permission denied: super_admin required")
-    return user
+def require_perm(perm_key: str):
+    """权限依赖工厂：检查当前用户是否拥有指定权限。
+    super_admin 隐含所有 cd.* 权限（无需在 roles 表中重复配置）。
+    用法: Depends(require_perm("cd.deploy"))  → 返回 user dict"""
+    def checker(user: dict = Depends(get_current_user)):
+        perms = user.get("permissions", [])
+        # super_admin 隐含所有 cd.* 权限
+        if perm_key.startswith("cd.") and "cd.super_admin" in perms:
+            return user
+        if perm_key not in perms:
+            raise HTTPException(403, f"Permission denied: {perm_key} required")
+        return user
+    return checker
 
 
-def require_deployer(user: dict = Depends(get_current_user)) -> str:
-    """部署者权限依赖：admin / super_admin / deployer 可执行部署操作，返回 username"""
-    role = user.get("role", "")
-    if role not in (settings.admin_role, settings.super_admin_role, settings.deployer_role):
-        raise HTTPException(403, "Permission denied: deployer or admin required")
-    return user["username"]
+# ── 以下为旧版兼容别名（已废弃，请直接使用 require_perm("cd.xxx")）──
+require_admin = require_perm("cd.admin")
+require_super_admin = require_perm("cd.super_admin")
+require_deployer = require_perm("cd.deploy")
 
 
 def authenticate(user: str, password: str, db: Database) -> str | None:

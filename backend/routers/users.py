@@ -2,7 +2,7 @@
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Depends
-from backend.auth import get_current_user, require_admin, get_db, CD_SYSTEM
+from backend.auth import get_current_user, require_perm, get_db, CD_SYSTEM
 from backend.config import settings
 from backend.models import UserCreateRequest, ChangePasswordRequest
 from backend.database import Database
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 @router.get("")
 def list_users(
     db: Database = Depends(get_db),
-    admin: dict = Depends(require_admin),
+    _user: dict = Depends(require_perm("cd.admin")),
 ):
     """列出所有用户（仅 admin）"""
     with db.conn() as conn:
@@ -27,14 +27,14 @@ def list_users(
 def create_user(
     req: UserCreateRequest,
     db: Database = Depends(get_db),
-    admin: dict = Depends(require_admin),
+    user: dict = Depends(require_perm("cd.admin")),
 ):
     """创建新用户（仅 admin）。只有 super_admin 可以创建管理员账号。"""
     if not req.username or not req.password:
         raise HTTPException(400, "用户名和密码不能为空")
     if req.role not in (settings.admin_role, settings.viewer_role, settings.deployer_role):
         raise HTTPException(400, "无效的角色")
-    if req.role == settings.admin_role and admin["role"] != settings.super_admin_role:
+    if req.role == settings.admin_role and "cd.super_admin" not in user.get("permissions", []):
         raise HTTPException(403, "只有 super_admin 可以创建管理员账号")
 
     pwd_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
@@ -57,10 +57,10 @@ def create_user(
 def delete_user(
     username: str,
     db: Database = Depends(get_db),
-    admin: dict = Depends(require_admin),
+    user: dict = Depends(require_perm("cd.admin")),
 ):
     """删除用户（仅 admin），不能删除自己。只有 super_admin 可以删除管理员。"""
-    if username == admin["username"]:
+    if username == user["username"]:
         raise HTTPException(400, "不能删除自己的账户")
 
     with db.conn() as conn:
@@ -69,7 +69,7 @@ def delete_user(
         ).fetchone()
         if target is None:
             raise HTTPException(404, f"用户 '{username}' 不存在")
-        if target["role"] in (settings.admin_role, settings.super_admin_role) and admin["role"] != settings.super_admin_role:
+        if target["role"] in (settings.admin_role, settings.super_admin_role) and "cd.super_admin" not in user.get("permissions", []):
             raise HTTPException(403, "只有 super_admin 可以删除管理员账号")
 
         conn.execute("DELETE FROM admin_users WHERE username=?", (username,))
@@ -82,15 +82,15 @@ def change_role(
     username: str,
     req: dict,
     db: Database = Depends(get_db),
-    admin: dict = Depends(require_admin),
+    user: dict = Depends(require_perm("cd.admin")),
 ):
     """修改用户角色（仅 admin），不能修改自己的角色。只有 super_admin 可指定/修改管理员角色。"""
     role = req.get("role", "")
     if role not in (settings.admin_role, settings.viewer_role, settings.deployer_role):
         raise HTTPException(400, "无效的角色")
-    if role == settings.admin_role and admin["role"] != settings.super_admin_role:
+    if role == settings.admin_role and "cd.super_admin" not in user.get("permissions", []):
         raise HTTPException(403, "只有 super_admin 可以设置管理员角色")
-    if username == admin["username"]:
+    if username == user["username"]:
         raise HTTPException(400, "不能修改自己的角色")
 
     with db.conn() as conn:
@@ -99,7 +99,7 @@ def change_role(
         ).fetchone()
         if target is None:
             raise HTTPException(404, f"用户 '{username}' 不存在")
-        if target["role"] in (settings.admin_role, settings.super_admin_role) and admin["role"] != settings.super_admin_role:
+        if target["role"] in (settings.admin_role, settings.super_admin_role) and "cd.super_admin" not in user.get("permissions", []):
             raise HTTPException(403, "只有 super_admin 可以修改管理员角色")
 
         conn.execute(
@@ -117,7 +117,10 @@ def change_password(
     user: dict = Depends(get_current_user),
 ):
     """修改密码：super_admin 可改任意用户；admin 只能改 deployer/viewer；普通用户只能改自己"""
-    if user["role"] not in (settings.admin_role, settings.super_admin_role) and user["username"] != username:
+    permissions = user.get("permissions", [])
+    is_cd_admin = "cd.admin" in permissions and "cd.super_admin" not in permissions
+    is_super_admin = "cd.super_admin" in permissions
+    if not is_super_admin and not is_cd_admin and user["username"] != username:
         raise HTTPException(403, "无权修改其他用户的密码")
 
     with db.conn() as conn:
@@ -128,11 +131,11 @@ def change_password(
             raise HTTPException(404, f"用户 '{username}' 不存在")
 
         # admin 不能改上级（super_admin / admin）的密码
-        if user["role"] == settings.admin_role and row["role"] in (settings.super_admin_role, settings.admin_role) and user["username"] != username:
+        if is_cd_admin and row["role"] in (settings.super_admin_role, settings.admin_role) and user["username"] != username:
             raise HTTPException(403, "无权修改该用户的密码")
 
         # 非 admin / super_admin 需要验证旧密码
-        if user["role"] not in (settings.admin_role, settings.super_admin_role):
+        if not is_super_admin and not is_cd_admin:
             if not req.old_password:
                 raise HTTPException(400, "请输入旧密码")
             if not bcrypt.checkpw(req.old_password.encode(), row["password_hash"].encode()):

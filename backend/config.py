@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8081
 
-    # ── 角色（可选）──
+    # ── 角色（仅用于 admin_users.role 字段校验，权限判断已迁移至 roles/permissions/role_permissions 表）──
     # 超级管理员角色名：唯一可以创建/删除/修改管理员账号的角色
     super_admin_role: str = "super_admin"
     # 普通管理员角色名
@@ -52,6 +52,13 @@ class Settings(BaseSettings):
 
     # ── 镜像仓库同步（可选）──
     registry_sync_interval: int = 30  # 分钟，0 关闭
+
+    # ── CI 集成（可选）──
+    # CI 服务地址（如 http://localhost:8080），留空则不启用构建管理功能
+    ci_api_url: str = ""
+    ci_admin_user: str = ""
+    ci_admin_pass: str = ""
+    ci_timeout: int = 30
 
     # ── 监控（可选）──
     monitoring_enabled: bool = True

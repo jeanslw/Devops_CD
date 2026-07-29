@@ -16,6 +16,12 @@ const routes = [
     meta: { title: 'CI构建结果' }
   },
   {
+    path: '/ci-build',
+    name: 'CiBuild',
+    component: () => import('@/views/CiBuildView.vue'),
+    meta: { title: '构建管理' }
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('@/views/LoginView.vue'),
@@ -98,18 +104,7 @@ const routes = [
     component: () => import('@/views/CustomMonitorsView.vue'),
     meta: { title: '自定义资源' }
   },
-  {
-    path: '/users',
-    name: 'Users',
-    component: () => import('@/views/UsersView.vue'),
-    meta: { title: '用户管理', admin: true }
-  },
-  {
-    path: '/users/create',
-    name: 'UserCreate',
-    component: () => import('@/views/UserCreateView.vue'),
-    meta: { title: '新建用户', admin: true }
-  }
+
 ]
 
 const router = createRouter({

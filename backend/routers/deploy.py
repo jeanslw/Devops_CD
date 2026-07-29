@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_deployer
+from backend.auth import get_db, verify_token, require_perm
 from backend.models import DeployRequest
 from backend.services.deploy_service import DeployService
 from backend.deployers import DeployTarget
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api", tags=["deploy"])
 def deploy(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(require_deployer),
+    _user: dict = Depends(require_perm("cd.deploy")),
 ):
     svc = DeployService(db)
     try:
@@ -46,7 +46,7 @@ def deploy(
 def stop(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(require_deployer),
+    _user: dict = Depends(require_perm("cd.deploy")),
 ):
     """停止服务"""
     if not req.server_ids:
@@ -92,7 +92,7 @@ def stop(
 def stop_k8s(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(require_deployer),
+    _user: dict = Depends(require_perm("cd.deploy")),
 ):
     """K8S 停止: kubectl delete -f YAML 或 kubectl delete deployment"""
     if not req.server_ids:
@@ -125,7 +125,7 @@ def stop_k8s(
 async def deploy_stream(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(require_deployer),
+    _user: dict = Depends(require_perm("cd.deploy")),
 ):
     """实时部署（SSE 流式推送）"""
     import asyncio

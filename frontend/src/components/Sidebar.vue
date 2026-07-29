@@ -4,6 +4,9 @@
     <div class="item" :class="{ active: isActive('/') }" @click="$router.push('/')">
       {{ $t('sidebar.ciBuild') }}
     </div>
+    <div class="item" :class="{ active: isActive('/ci-build') }" @click="$router.push('/ci-build')">
+      {{ $t('sidebar.ciBuildManage') }}
+    </div>
 
     <!-- 部署管理：admin / deployer -->
     <template v-if="auth.canDeploy()">
@@ -65,10 +68,7 @@
       {{ $t('sidebar.notifications') }}
     </div>
 
-    <!-- 用户管理：仅 admin -->
-    <div v-if="auth.isAdmin()" class="item" :class="{ active: isActive('/users') }" @click="$router.push('/users')">
-      {{ $t('sidebar.userMgmt') }}
-    </div>
+
   </div>
 </template>
 

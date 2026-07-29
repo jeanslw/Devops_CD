@@ -95,9 +95,9 @@ const delTarget = ref(null)
 const visibleUsers = computed(() => users.value.filter(u => u.role === 'deployer' || u.role === 'viewer'))
 
 // 当前用户是否是 super_admin
-const isSuperAdmin = computed(() => auth.state.user?.role === 'super_admin')
-// 当前用户是否是 admin
-const isAdmin = computed(() => auth.state.user?.role === 'admin')
+const isSuperAdmin = computed(() => auth.isSuperAdmin())
+// 当前用户是否是 admin（不含 super_admin）
+const isAdmin = computed(() => auth.isAdmin() && !auth.isSuperAdmin())
 
 // 是否可以删除该用户：只能删除下级
 function canDelete(u) {

@@ -1,0 +1,115 @@
+"""CI 构建管理路由 — 代理 CI API，CD 前端统一入口（对照 CI OpenAPI 实现）"""
+import traceback
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
+from backend.auth import verify_token, require_perm
+from backend.services.ci_client import get_ci_client, CiClientError
+
+router = APIRouter(prefix="/api/ci", tags=["ci-build"])
+
+
+def _client():
+    """获取 CI 客户端，未配置时返回明确错误"""
+    try:
+        return get_ci_client()
+    except CiClientError as e:
+        raise HTTPException(503, str(e))
+
+
+# ── 项目列表 ──
+@router.get("/projects")
+def list_projects(_user: str = Depends(verify_token)):
+    """获取 CI 项目列表 → CI GET /api/build/jobs/list"""
+    try:
+        return _client().list_projects()
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 服务不可用: {e}")
+
+
+# ── 构建历史 ──
+@router.get("/projects/{project:path}/builds")
+def get_builds(project: str, _user: str = Depends(verify_token)):
+    """获取项目构建历史 → CI GET /api/build/{path}/pipelines"""
+    try:
+        return _client().get_builds(project)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 服务不可用: {e}")
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ci_build get_builds] {tb}", flush=True)
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+
+
+# ── 触发构建 ──
+@router.post("/projects/{project:path}/build")
+def trigger_build(project: str, body: dict, _user: dict = Depends(require_perm("ci.trigger"))):
+    """触发一次构建 → CI POST /api/build/{path}/trigger。
+    ref 仅 GitLab CI 模式必填；Jenkins 模式可省略。"""
+    try:
+        ref = body.get("ref")
+        variables = body.get("variables")
+        return _client().trigger_build(project, ref, variables)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 触发失败: {e}")
+
+
+# ── 构建日志 ──
+@router.get("/projects/{project:path}/builds/{id}/log")
+def get_build_log(project: str, id: str, _user: str = Depends(verify_token)):
+    """获取构建日志 → CI GET /api/build/{path}/logs/{id}"""
+    try:
+        log = _client().get_build_log(project, id)
+        return PlainTextResponse(log)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 日志获取失败: {e}")
+
+
+# ── 构建变量 ──
+@router.get("/projects/{project:path}/variables")
+def get_variables(project: str, _user: str = Depends(verify_token)):
+    """获取项目构建变量 → CI GET /api/build/{path}/variables"""
+    try:
+        return _client().get_variables(project)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 服务不可用: {e}")
+
+
+# ── 分支列表 ──
+@router.get("/projects/{project:path}/branches")
+def get_branches(project: str, _user: str = Depends(verify_token)):
+    """获取项目分支列表 → CI GET /api/build/{path}/branches（返回纯字符串数组）"""
+    try:
+        return _client().get_branches(project)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 服务不可用: {e}")
+
+
+# ── 重试 Pipeline（仅 GitLab CI）──
+@router.post("/projects/{project:path}/builds/{id}/retry")
+def retry_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci.trigger"))):
+    """重试 Pipeline → CI POST /api/build/{path}/pipelines/{id}/retry"""
+    try:
+        return _client().retry_pipeline(project, id)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 重试失败: {e}")
+
+
+# ── 取消 Pipeline（仅 GitLab CI）──
+@router.post("/projects/{project:path}/builds/{id}/cancel")
+def cancel_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci.trigger"))):
+    """取消 Pipeline → CI POST /api/build/{path}/pipelines/{id}/cancel"""
+    try:
+        return _client().cancel_pipeline(project, id)
+    except CiClientError as e:
+        raise HTTPException(502, f"CI 取消失败: {e}")
+
+
+# ── 健康检查 ──
+@router.get("/health")
+def ci_health(_user: str = Depends(verify_token)):
+    """检查 CI 服务连通性"""
+    try:
+        _client().list_projects()
+        return {"status": "ok", "message": "CI 服务连接正常"}
+    except CiClientError as e:
+        return {"status": "error", "message": str(e)}

@@ -45,7 +45,7 @@ const router = useRouter()
 const { t } = useI18n()
 const { toast } = useToast()
 
-const isSuperAdmin = computed(() => auth.state.user?.role === 'super_admin')
+const isSuperAdmin = computed(() => auth.isSuperAdmin())
 
 const form = ref({ username: '', password: '', role: 'viewer' })
 

@@ -3,7 +3,7 @@ import { reactive, watch } from 'vue'
 const state = reactive({
   token: sessionStorage.getItem('cd_token') || '',
   initialized: !!sessionStorage.getItem('cd_token'),
-  user: null,          // { username, role }
+  user: null,          // { username, role, permissions: [...] }
 })
 
 export function useAuth() {
@@ -49,25 +49,33 @@ export function useAuth() {
     return false
   }
 
-  function isSuperAdmin() {
-    return state.user?.role === 'super_admin'
+  function hasPerm(key) {
+    return state.user?.permissions?.includes(key) || false
   }
 
   function isAdmin() {
-    return state.user?.role === 'admin' || state.user?.role === 'super_admin'
+    return hasPerm('cd.admin')
+  }
+
+  function isSuperAdmin() {
+    return hasPerm('cd.super_admin')
   }
 
   function isDeployer() {
-    return state.user?.role === 'deployer'
+    return hasPerm('cd.deploy') && !hasPerm('cd.admin') && !hasPerm('cd.super_admin')
   }
 
   function canDeploy() {
-    return state.user?.role === 'admin' || state.user?.role === 'super_admin' || state.user?.role === 'deployer'
+    return hasPerm('cd.deploy') || isSuperAdmin()
   }
 
   function canManage() {
-    return state.user?.role === 'admin' || state.user?.role === 'super_admin'
+    return hasPerm('cd.admin') || isSuperAdmin()
   }
 
-  return { state, A, setToken, setUser, fetchMe, logout, handle401, isAdmin, isDeployer, isSuperAdmin, canDeploy, canManage }
+  function canTriggerBuild() {
+    return hasPerm('ci.trigger')
+  }
+
+  return { state, A, setToken, setUser, fetchMe, logout, handle401, hasPerm, isAdmin, isDeployer, isSuperAdmin, canDeploy, canManage, canTriggerBuild }
 }

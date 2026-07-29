@@ -12,12 +12,12 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.database import Database
-from backend.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry, alerts, custom_monitors, users
+from backend.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry, alerts, custom_monitors, ci_build
 from backend.services.registry_service import start_background_sync, RegistryService
 from backend.services.alert_service import start_alert_checker
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="1.2.0")
+app = FastAPI(title="Devops-Glue CD", version="1.2.1")
 BASE_DIR = Path(__file__).parent
 
 # ── 启动事件 ──
@@ -47,7 +47,7 @@ app.include_router(monitor.router)
 app.include_router(registry.router)
 app.include_router(alerts.router)
 app.include_router(custom_monitors.router)
-app.include_router(users.router)
+app.include_router(ci_build.router)
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
