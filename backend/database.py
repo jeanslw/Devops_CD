@@ -1,7 +1,11 @@
-"""数据库访问层 — SQLite / MySQL 双驱动，PHP 和 CD 共用"""
+"""数据库访问层 — SQLite / MySQL 双驱动，PHP 和 CD 共用。
+- MySQL: DBUtils 连接池，事务自动提交（成功）/ 回滚（异常）
+- SQLite: 写入自动 commit，读取自动 close，WAL 模式
+"""
 
 import re
 import sqlite3
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from backend.config import settings
@@ -10,17 +14,33 @@ from backend.config import settings
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 
 
-class _MysqlWrapper:
-    """pymysql 包装——提供 sqlite3 风格的 execute/commit/close + context manager"""
+def _dict_row_factory(cursor, row):
+    """SQLite row_factory：返回普通 dict（支持 .get()），兼容 pymysql DictCursor"""
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
 
-    def __init__(self, conn):
+
+class _MysqlWrapper:
+    """pymysql 包装——提供 sqlite3 风格的 execute/commit + context manager。
+    退出时自动 commit（成功）或 rollback（异常），然后归还连接到池。
+    """
+
+    def __init__(self, conn, pool=None):
         self._conn = conn
+        self._pool = pool
+        self._exc_type = None
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *args):
-        self.close()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+                self._exc_type = exc_type
+        finally:
+            self._conn.close()
         return False
 
     def execute(self, sql, params=None):
@@ -32,12 +52,15 @@ class _MysqlWrapper:
     def commit(self):
         self._conn.commit()
 
+    def rollback(self):
+        self._conn.rollback()
+
     def close(self):
         self._conn.close()
 
 
 class _SqliteWrapper:
-    """sqlite3 包装——提供 context manager 保证 close（而非 sqlite3 自带的 commit）"""
+    """sqlite3 包装——提供 context manager。退出时自动 commit（成功）或 close（异常）"""
 
     def __init__(self, conn):
         self._conn = conn
@@ -45,7 +68,9 @@ class _SqliteWrapper:
     def __enter__(self):
         return self._conn
 
-    def __exit__(self, *args):
+    def __exit__(self, exc_type, *_):
+        if exc_type is None:
+            self._conn.commit()
         self._conn.close()
         return False
 
@@ -53,12 +78,13 @@ class _SqliteWrapper:
 class Database:
     """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API（php_api）。
     SQLite 模式：自动建表。
-    MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。
+    MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。使用 DBUtils 连接池。
     启动时校验 ci_pipeline_tags 表是否存在，不存在则报错（数据库指向错误）。
     """
 
     DRIVERS = ("sqlite", "mysql")
     _tables_ensured = False  # 类变量：建表只执行一次
+    _pool = None  # MySQL 连接池实例（延迟初始化）
 
     def __init__(self, db_path: str = ""):
         self._driver = settings.db_driver
@@ -69,10 +95,36 @@ class Database:
         self._path = Path(db_path or settings.db_path)
         self._validate_shared_db()
 
+    def _init_pool(self):
+        """延迟初始化 MySQL 连接池（避免 import 时连接失败阻塞启动）"""
+        if self._driver != "mysql":
+            return
+        try:
+            from dbutils.pooled_db import PooledDB
+            import pymysql
+
+            if Database._pool is None:
+                Database._pool = PooledDB(
+                    creator=pymysql,
+                    maxconnections=settings.db_pool_max,
+                    mincached=settings.db_pool_min,
+                    blocking=True,
+                    ping=1,  # 取出连接前先 ping 检测有效性
+                    host=settings.db_host,
+                    port=settings.db_port,
+                    user=settings.db_user,
+                    password=settings.db_pass,
+                    database=settings.db_name,
+                    charset="utf8mb4",
+                    cursorclass=pymysql.cursors.DictCursor,
+                )
+        except ImportError:
+            raise RuntimeError(
+                "MySQL 模式需要安装 dbutils: pip install dbutils"
+            )
+
     def _validate_shared_db(self):
-        """校验数据库是否为 php_api 的共享数据库。
-        ci_pipeline_tags 是 php_api 维护的核心表，不存在说明数据库指向错误。
-        """
+        """校验数据库是否为 php_api 的共享数据库。"""
         try:
             if self._driver == "mysql":
                 import pymysql
@@ -106,35 +158,45 @@ class Database:
 
     @contextmanager
     def conn(self):
-        """获取数据库连接（context manager，退出时自动关闭）"""
+        """获取数据库连接（context manager，退出时自动 commit/rollback + close/归还池）"""
         if self._driver == "mysql":
-            raw = self._connect_mysql()
+            self._init_pool()
+            raw = Database._pool.connection()
             wrapper = _MysqlWrapper(raw)
-            conn = wrapper._conn  # 裸连接用于建表等操作
         else:
             raw = self._connect_sqlite()
             wrapper = _SqliteWrapper(raw)
-            conn = raw
 
         if not Database._tables_ensured and self._driver == "sqlite":
-            self._ensure_cd_tables(conn)
+            self._ensure_cd_tables(raw)
             try:
-                conn.execute("ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'admin'")
+                raw.execute("ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'admin'")
             except Exception:
                 pass
-            conn.commit()
+            raw.commit()
             Database._tables_ensured = True
 
         try:
-            yield wrapper if self._driver == "mysql" else conn
+            # MySQL: yield wrapper (has .execute/.commit/.rollback)
+            # SQLite: yield raw conn (has .execute/.commit native methods)
+            yield wrapper if self._driver == "mysql" else raw
+        except Exception:
+            if self._driver == "mysql":
+                wrapper.rollback()
+            raise
+        else:
+            if self._driver == "mysql":
+                wrapper.commit()
+            else:
+                raw.commit()
         finally:
-            wrapper.close() if self._driver == "mysql" else conn.close()
+            wrapper.close() if self._driver == "mysql" else raw.close()
 
     # ── SQLite ──
 
     def _connect_sqlite(self):
         conn = sqlite3.connect(str(self._path))
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = _dict_row_factory
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 

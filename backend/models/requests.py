@@ -57,3 +57,8 @@ class DeployRequest(BaseModel):
     env_file: str = ""              # docker-compose --env-file 路径，空=默认 .env
     bot_id: int = 0
     lang: str = "en"               # 前端当前语言 en/zh，用于 bot 通知消息国际化
+
+
+class BuildTriggerRequest(BaseModel):
+    ref: str = ""                  # GitLab CI 必填（分支/tag），Jenkins 可省略
+    variables: dict = {}           # 自定义构建变量

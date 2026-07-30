@@ -12,6 +12,8 @@ from backend.auth import verify_token, get_db, require_perm, _query_permissions
 from backend.config import settings
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.crypto import decrypt
+from backend.exceptions import NotFoundError, ValidationError
+from backend.responses import ok
 
 router = APIRouter()
 
@@ -207,16 +209,16 @@ async def upload_file(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise HTTPException(400, "服务器不存在")
+        raise NotFoundError("服务器不存在")
 
     # 安全校验：文件名防路径穿越
     safe_filename = os.path.basename(file.filename)
     if not safe_filename:
-        raise HTTPException(400, "无效文件名")
+        raise ValidationError("无效文件名")
 
     # 安全校验：路径必须为绝对路径
     if not path.startswith("/"):
-        raise HTTPException(400, "路径必须为绝对路径，如 /tmp")
+        raise ValidationError("路径必须为绝对路径，如 /tmp")
 
     target = path.rstrip("/") + "/" + safe_filename
 
@@ -227,7 +229,7 @@ async def upload_file(
     try:
         ssh = await asyncio.to_thread(ssh_connect, dt, settings.ssh_timeout)
     except Exception as e:
-        raise HTTPException(400, f"SSH 连接失败: {e}")
+        raise ValidationError(f"SSH 连接失败: {e}")
 
     try:
         sftp = ssh.open_sftp()
@@ -240,7 +242,7 @@ async def upload_file(
                 f.write(chunk)
         sftp.close()
         ssh.close()
-        return {"success": True, "path": target}
+        return ok(data={"path": target}, message="文件上传成功")
     except Exception as e:
         ssh.close()
-        raise HTTPException(500, f"上传失败: {e}")
+        raise ValidationError(f"上传失败: {e}")

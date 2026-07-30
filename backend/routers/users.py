@@ -1,11 +1,15 @@
 """用户管理路由 — 仅 admin 可操作"""
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Depends
+import pymysql
+from fastapi import APIRouter, Depends
 from backend.auth import get_current_user, require_perm, get_db, CD_SYSTEM
 from backend.config import settings
 from backend.models import UserCreateRequest, ChangePasswordRequest
 from backend.database import Database
+from backend.exceptions import (
+    AppException, ValidationError, NotFoundError, ConflictError,
+)
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -31,11 +35,11 @@ def create_user(
 ):
     """创建新用户（仅 admin）。只有 super_admin 可以创建管理员账号。"""
     if not req.username or not req.password:
-        raise HTTPException(400, "用户名和密码不能为空")
+        raise ValidationError("用户名和密码不能为空")
     if req.role not in (settings.admin_role, settings.viewer_role, settings.deployer_role):
-        raise HTTPException(400, "无效的角色")
+        raise ValidationError("无效的角色")
     if req.role == settings.admin_role and "cd.super_admin" not in user.get("permissions", []):
-        raise HTTPException(403, "只有 super_admin 可以创建管理员账号")
+        raise AppException("只有 super_admin 可以创建管理员账号", status_code=403)
 
     pwd_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
     with db.conn() as conn:
@@ -43,13 +47,12 @@ def create_user(
             "SELECT username FROM admin_users WHERE username=?", (req.username,)
         ).fetchone()
         if existing:
-            raise HTTPException(409, f"用户 '{req.username}' 已存在")
+            raise ConflictError(f"用户 '{req.username}' 已存在")
 
         conn.execute(
             f"INSERT INTO admin_users (username, password_hash, role, systems) VALUES (?, ?, ?, '{CD_SYSTEM}')",
             (req.username, pwd_hash, req.role),
         )
-        conn.commit()
         return {"username": req.username, "role": req.role, "systems": CD_SYSTEM}
 
 
@@ -61,19 +64,18 @@ def delete_user(
 ):
     """删除用户（仅 admin），不能删除自己。只有 super_admin 可以删除管理员。"""
     if username == user["username"]:
-        raise HTTPException(400, "不能删除自己的账户")
+        raise ValidationError("不能删除自己的账户")
 
     with db.conn() as conn:
         target = conn.execute(
             "SELECT role FROM admin_users WHERE username=?", (username,)
         ).fetchone()
         if target is None:
-            raise HTTPException(404, f"用户 '{username}' 不存在")
+            raise NotFoundError(f"用户 '{username}' 不存在")
         if target["role"] in (settings.admin_role, settings.super_admin_role) and "cd.super_admin" not in user.get("permissions", []):
-            raise HTTPException(403, "只有 super_admin 可以删除管理员账号")
+            raise AppException("只有 super_admin 可以删除管理员账号", status_code=403)
 
         conn.execute("DELETE FROM admin_users WHERE username=?", (username,))
-        conn.commit()
         return {"deleted": username}
 
 
@@ -87,25 +89,24 @@ def change_role(
     """修改用户角色（仅 admin），不能修改自己的角色。只有 super_admin 可指定/修改管理员角色。"""
     role = req.get("role", "")
     if role not in (settings.admin_role, settings.viewer_role, settings.deployer_role):
-        raise HTTPException(400, "无效的角色")
+        raise ValidationError("无效的角色")
     if role == settings.admin_role and "cd.super_admin" not in user.get("permissions", []):
-        raise HTTPException(403, "只有 super_admin 可以设置管理员角色")
+        raise AppException("只有 super_admin 可以设置管理员角色", status_code=403)
     if username == user["username"]:
-        raise HTTPException(400, "不能修改自己的角色")
+        raise ValidationError("不能修改自己的角色")
 
     with db.conn() as conn:
         target = conn.execute(
             "SELECT role FROM admin_users WHERE username=?", (username,)
         ).fetchone()
         if target is None:
-            raise HTTPException(404, f"用户 '{username}' 不存在")
+            raise NotFoundError(f"用户 '{username}' 不存在")
         if target["role"] in (settings.admin_role, settings.super_admin_role) and "cd.super_admin" not in user.get("permissions", []):
-            raise HTTPException(403, "只有 super_admin 可以修改管理员角色")
+            raise AppException("只有 super_admin 可以修改管理员角色", status_code=403)
 
         conn.execute(
             "UPDATE admin_users SET role=? WHERE username=?", (role, username)
         )
-        conn.commit()
         return {"username": username, "role": role}
 
 
@@ -121,30 +122,29 @@ def change_password(
     is_cd_admin = "cd.admin" in permissions and "cd.super_admin" not in permissions
     is_super_admin = "cd.super_admin" in permissions
     if not is_super_admin and not is_cd_admin and user["username"] != username:
-        raise HTTPException(403, "无权修改其他用户的密码")
+        raise AppException("无权修改其他用户的密码", status_code=403)
 
     with db.conn() as conn:
         row = conn.execute(
             "SELECT username, role, password_hash FROM admin_users WHERE username=?", (username,)
         ).fetchone()
         if not row:
-            raise HTTPException(404, f"用户 '{username}' 不存在")
+            raise NotFoundError(f"用户 '{username}' 不存在")
 
         # admin 不能改上级（super_admin / admin）的密码
         if is_cd_admin and row["role"] in (settings.super_admin_role, settings.admin_role) and user["username"] != username:
-            raise HTTPException(403, "无权修改该用户的密码")
+            raise AppException("无权修改该用户的密码", status_code=403)
 
         # 非 admin / super_admin 需要验证旧密码
         if not is_super_admin and not is_cd_admin:
             if not req.old_password:
-                raise HTTPException(400, "请输入旧密码")
+                raise ValidationError("请输入旧密码")
             if not bcrypt.checkpw(req.old_password.encode(), row["password_hash"].encode()):
-                raise HTTPException(400, "旧密码错误")
+                raise ValidationError("旧密码错误")
 
         new_hash = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
         conn.execute(
             "UPDATE admin_users SET password_hash=? WHERE username=?",
             (new_hash, username),
         )
-        conn.commit()
         return {"updated": username}

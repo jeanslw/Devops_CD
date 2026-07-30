@@ -45,7 +45,6 @@ class RegistryService:
                 "REPLACE INTO cd_config (key_name, value) VALUES (?, ?)",
                 (key, value),
             )
-            conn.commit()
 
     def get_sync_interval(self) -> int:
         """获取同步间隔（分钟），0=关闭。DB 优先，fallback 到环境变量"""
@@ -118,7 +117,6 @@ class RegistryService:
                 (project, repo)
             )
             repo_id = cur.lastrowid
-            conn.commit()
 
         # 从 Harbor 拉取
         try:
@@ -164,7 +162,6 @@ class RegistryService:
                      art["vuln_low"], art["vuln_fixable"], now)
                 )
             count += 1
-        conn.commit()
         return count
 
     def sync_all(self) -> dict:
@@ -201,7 +198,6 @@ class RegistryService:
                     except Exception as e:
                         errors.append(f"{cr['repo']}: {e}")
                         logger.error(f"同步 {cr['repo']}: {e}")
-                conn.commit()
                 return {"ok": True, "total": total, "repos": len(ci_repos), "errors": errors}
             except HarborUnavailableError:
                 return {"ok": False, "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态"}
@@ -473,7 +469,6 @@ class RegistryService:
 
             # 更新数据库
             conn.execute("DELETE FROM cd_registry_artifacts WHERE id=?", (artifact_row["id"],))
-            conn.commit()
             return {"ok": True}
 
     def _check_running(self, conn, project: str, tag: str) -> str | None:

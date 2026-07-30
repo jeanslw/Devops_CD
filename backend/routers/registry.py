@@ -1,12 +1,15 @@
 """镜像制品库 API — 仓库/Artifact/同步/扫描/删除"""
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from backend.auth import verify_token, get_db, require_perm
 from backend.database import Database
 from backend.services.registry_service import RegistryService, HarborUnavailableError
+from backend.exceptions import NotFoundError, ValidationError, ConflictError, ServiceUnavailableError
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/registry", tags=["registry"])
 
 
@@ -59,9 +62,9 @@ def get_scan_report(
     svc = RegistryService(db)
     result = svc.get_scan_report(repo_id, tag)
     if result is None:
-        raise HTTPException(404, "扫描报告未找到")
+        raise NotFoundError("扫描报告未找到")
     if isinstance(result, dict) and "error" in result:
-        raise HTTPException(404, result["error"])
+        raise NotFoundError(result["error"])
     return result
 
 
@@ -77,10 +80,10 @@ def trigger_scan(
         svc = RegistryService(db)
         result = svc.trigger_scan(repo_id, tag)
         if not result.get("ok"):
-            raise HTTPException(400, result.get("error", "触发失败"))
+            raise ValidationError(result.get("error", "触发失败"))
         return result
     except HarborUnavailableError as e:
-        raise HTTPException(503, str(e))
+        raise ServiceUnavailableError(str(e))
 
 
 # ── 删除 ──
@@ -97,10 +100,10 @@ def delete_artifact(
         svc = RegistryService(db)
         result = svc.delete_artifact(repo_id, body.tag)
         if not result["ok"]:
-            raise HTTPException(409, result.get("error", "删除失败"))
+            raise ConflictError(result.get("error", "删除失败"))
         return {"ok": True, "detail": f"Tag '{body.tag}' 已删除"}
     except HarborUnavailableError as e:
-        raise HTTPException(503, str(e))
+        raise ServiceUnavailableError(str(e))
 
 
 # ── 同步 ──
@@ -118,7 +121,7 @@ def trigger_sync(
             return svc.sync_for_project(project)
         return svc.sync_all()
     except HarborUnavailableError as e:
-        raise HTTPException(503, str(e))
+        raise ServiceUnavailableError(str(e))
 
 
 # ── 同步配置 ──
@@ -135,7 +138,7 @@ def get_sync_config(
         return {"interval": interval}
     except Exception as e:
         logger.error(f"get_sync_config error: {e}")
-        raise HTTPException(500, f"读取配置失败: {e}")
+        raise ServiceUnavailableError(f"读取配置失败: {e}")
 
 
 @router.put("/config")
@@ -146,13 +149,13 @@ def update_sync_config(
 ):
     """更新定时同步间隔（分钟，0=关闭）"""
     if body.interval < 0:
-        raise HTTPException(400, "间隔不能为负数")
+        raise ValidationError("间隔不能为负数")
     try:
         svc = RegistryService(db)
         svc.set_sync_interval(body.interval)
     except Exception as e:
         logger.error(f"update_sync_config error: {e}")
-        raise HTTPException(500, f"保存配置失败: {e}")
+        raise ServiceUnavailableError(f"保存配置失败: {e}")
     if body.interval <= 0:
         return {"ok": True, "interval": 0, "detail": "定时同步已关闭"}
     return {"ok": True, "interval": body.interval, "detail": f"定时同步已设为每 {body.interval} 分钟"}

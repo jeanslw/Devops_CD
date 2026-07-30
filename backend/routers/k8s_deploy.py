@@ -1,6 +1,6 @@
 """K8S 部署路由 — kubectl SSH / Argo CD / Flux CD / Helm"""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -10,6 +10,7 @@ from backend.services.ci_service import CiService
 from backend.services.notification import notify_deploy
 from backend.crypto import decrypt
 from backend.config import settings
+from backend.exceptions import ValidationError, NotFoundError, AppException
 
 from backend.deployers.k8s_kubectl import deploy_kubectl
 from backend.deployers.k8s_argocd import deploy_argocd
@@ -37,11 +38,11 @@ def _resolve_cluster(db, req):
         with db.conn() as conn:
             srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (req.cluster_id,)).fetchone()
         if not srv:
-            raise HTTPException(400, "集群不存在")
+            raise NotFoundError("集群不存在")
         host, port, user, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
         ssh_key = decrypt(srv["ssh_key"] or "")
         return host, port, user, pwd, ssh_key
-    raise HTTPException(400, "请选择目标集群")
+    raise ValidationError("请选择目标集群")
 
 
 def _resolve_image(db, req):
@@ -49,7 +50,7 @@ def _resolve_image(db, req):
     svc = CiService(db)
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
-        raise HTTPException(400, f"项目 '{req.project}' 未配置 harbor_repository")
+        raise ValidationError(f"项目 '{req.project}' 未配置 harbor_repository")
     image = f"{settings.harbor_registry}/{harbor_repo}:{req.tag}"
     project_key = svc.resolve_project_key(req.project) or req.project
     project_short = project_key.split("/")[-1]
@@ -65,7 +66,6 @@ def _record_deploy(db, project_key, tag, image, cd_type, host, ok, output):
              "ok" if ok else "failed",
              output[:settings.log_truncate_chars] if output else ""),
         )
-        conn.commit()
 
 
 def _notify_k8s(db, bot_id, tag, project_key, host, cd_type, image, ok, lang="en"):
@@ -115,16 +115,16 @@ async def deploy_k8s_stream(
 
     try:
         image, project_key, project_short = _resolve_image(db, req)
-    except HTTPException as e:
+    except AppException as e:
         async def err_no_repo():
-            yield f"data: ERROR:{e.detail}\n\n"
+            yield f"data: ERROR:{e.message}\n\n"
         return StreamingResponse(err_no_repo(), media_type="text/event-stream")
 
     try:
         host, port, user, pwd, ssh_key = _resolve_cluster(db, req)
-    except HTTPException as e:
+    except AppException as e:
         async def err_no_cluster():
-            yield f"data: ERROR:{e.detail}\n\n"
+            yield f"data: ERROR:{e.message}\n\n"
         return StreamingResponse(err_no_cluster(), media_type="text/event-stream")
 
     def do_deploy():

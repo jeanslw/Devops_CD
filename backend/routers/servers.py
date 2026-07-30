@@ -1,11 +1,14 @@
 """服务器管理路由"""
 
-from fastapi import APIRouter, HTTPException, Depends
+import pymysql
+from fastapi import APIRouter, Depends
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
 from backend.models import ServerRequest
 from backend.crypto import encrypt, decrypt_server_row
 from backend.services.monitor_utils import clear_server_cache
+from backend.exceptions import ConflictError, DatabaseError
+from backend.responses import ok
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
 
@@ -33,11 +36,10 @@ def add_server(
                 (req.name, req.host, req.port, req.user, req.auth_type,
                  encrypt(req.password), encrypt(req.ssh_key), req.type, req.tags),
             )
-            conn.commit()
             clear_server_cache()
-            return {"success": True}
-        except Exception as e:
-            raise HTTPException(400, str(e))
+            return ok(message=f"服务器 '{req.name}' 已添加")
+        except pymysql.err.IntegrityError:
+            raise ConflictError(f"服务器 '{req.name}' 已存在")
 
 
 @router.put("/{sid}")
@@ -54,11 +56,10 @@ def update_server(
                 (req.name, req.host, req.port, req.user, req.auth_type,
                  encrypt(req.password), encrypt(req.ssh_key), req.type, req.tags, sid),
             )
-            conn.commit()
             clear_server_cache()
-            return {"success": True}
-        except Exception as e:
-            raise HTTPException(400, str(e))
+            return ok(message=f"服务器 '{req.name}' 已更新")
+        except pymysql.err.IntegrityError:
+            raise ConflictError(f"服务器 '{req.name}' 已存在")
 
 
 @router.delete("/{sid}")
@@ -69,6 +70,5 @@ def delete_server(
 ):
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_servers WHERE id=?", (sid,))
-        conn.commit()
         clear_server_cache()
-        return {"success": True}
+        return ok(message="服务器已删除")

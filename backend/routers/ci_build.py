@@ -1,9 +1,11 @@
 """CI 构建管理路由 — 代理 CI API，CD 前端统一入口（对照 CI OpenAPI 实现）"""
 import traceback
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 from backend.auth import verify_token, require_perm
 from backend.services.ci_client import get_ci_client, CiClientError
+from backend.models import BuildTriggerRequest
+from backend.exceptions import ServiceUnavailableError
 
 router = APIRouter(prefix="/api/ci", tags=["ci-build"])
 
@@ -13,7 +15,7 @@ def _client():
     try:
         return get_ci_client()
     except CiClientError as e:
-        raise HTTPException(503, str(e))
+        raise ServiceUnavailableError(str(e))
 
 
 # ── 项目列表 ──
@@ -23,7 +25,7 @@ def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
     try:
         return _client().list_projects()
     except CiClientError as e:
-        raise HTTPException(502, f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
 
 
 # ── 构建历史 ──
@@ -33,24 +35,24 @@ def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"
     try:
         return _client().get_builds(project)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ci_build get_builds] {tb}", flush=True)
-        raise HTTPException(500, f"{type(e).__name__}: {e}")
+        raise ServiceUnavailableError(f"{type(e).__name__}: {e}")
 
 
 # ── 触发构建 ──
 @router.post("/projects/{project:path}/build")
-def trigger_build(project: str, body: dict, _user: dict = Depends(require_perm("ci.trigger"))):
+def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(require_perm("ci.trigger"))):
     """触发一次构建 → CI POST /api/build/{path}/trigger。
     ref 仅 GitLab CI 模式必填；Jenkins 模式可省略。"""
     try:
-        ref = body.get("ref")
-        variables = body.get("variables")
+        ref = req.ref or None
+        variables = req.variables or None
         return _client().trigger_build(project, ref, variables)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 触发失败: {e}")
+        raise ServiceUnavailableError(f"CI 触发失败: {e}")
 
 
 # ── 构建日志 ──
@@ -61,7 +63,7 @@ def get_build_log(project: str, id: str, _user: str = Depends(require_perm("cd.b
         log = _client().get_build_log(project, id)
         return PlainTextResponse(log)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 日志获取失败: {e}")
+        raise ServiceUnavailableError(f"CI 日志获取失败: {e}")
 
 
 # ── 构建变量 ──
@@ -71,7 +73,7 @@ def get_variables(project: str, _user: str = Depends(require_perm("cd.build-mana
     try:
         return _client().get_variables(project)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
 
 
 # ── 分支列表 ──
@@ -81,7 +83,7 @@ def get_branches(project: str, _user: str = Depends(require_perm("cd.build-manag
     try:
         return _client().get_branches(project)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
 
 
 # ── 重试 Pipeline（仅 GitLab CI）──
@@ -91,7 +93,7 @@ def retry_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci
     try:
         return _client().retry_pipeline(project, id)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 重试失败: {e}")
+        raise ServiceUnavailableError(f"CI 重试失败: {e}")
 
 
 # ── 取消 Pipeline（仅 GitLab CI）──
@@ -101,7 +103,7 @@ def cancel_pipeline(project: str, id: str, _user: dict = Depends(require_perm("c
     try:
         return _client().cancel_pipeline(project, id)
     except CiClientError as e:
-        raise HTTPException(502, f"CI 取消失败: {e}")
+        raise ServiceUnavailableError(f"CI 取消失败: {e}")
 
 
 # ── 健康检查 ──

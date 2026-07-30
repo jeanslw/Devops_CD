@@ -133,7 +133,6 @@ class DeployService:
                     (deploy_id, project_key, tag, image, deploy_type, f"#{r['server_id']} {r['host']}",
                      r["status"], r["output"][:settings.log_truncate_chars]),
                 )
-            conn.commit()
 
         # 通知
         ok_count = sum(1 for r in results if r["status"] == "ok")

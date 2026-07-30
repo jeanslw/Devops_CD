@@ -5,7 +5,7 @@ import io
 import json as _json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from backend.database import Database
@@ -13,6 +13,8 @@ from backend.auth import get_db, verify_token, require_perm
 from backend.services.monitor_utils import _make_target, _ssh_cmd
 from backend.deployers.base import ssh_connect
 from backend.config import settings
+from backend.exceptions import NotFoundError
+from backend.responses import ok
 
 router = APIRouter(prefix="/api/custom-monitors", tags=["custom-monitors"])
 
@@ -349,8 +351,7 @@ def create_monitor(
         new_id = cur.lastrowid  # sqlite3 / pymysql 都支持
         if req.metrics:
             _save_metrics(conn, new_id, req.metrics)
-        conn.commit()
-    return {"success": True}
+    return ok(message=f"监控项 '{req.name}' 已创建")
 
 
 @router.put("/{monitor_id}")
@@ -364,7 +365,7 @@ def update_monitor(
     with db.conn() as conn:
         existing = conn.execute("SELECT id FROM cd_custom_monitors WHERE id=?", (monitor_id,)).fetchone()
         if not existing:
-            raise HTTPException(404, "监控项不存在")
+            raise NotFoundError("监控项不存在")
 
         conn.execute(
             "UPDATE cd_custom_monitors SET name=?, command=?, output_format=?, description=?, "
@@ -373,8 +374,7 @@ def update_monitor(
              req.server_ids, 1 if req.enabled else 0, monitor_id),
         )
         _save_metrics(conn, monitor_id, req.metrics)
-        conn.commit()
-    return {"success": True}
+    return ok(message=f"监控项 '{req.name}' 已更新")
 
 
 @router.delete("/{monitor_id}")
@@ -387,8 +387,7 @@ def delete_monitor(
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_custom_monitor_metrics WHERE monitor_id=?", (monitor_id,))
         conn.execute("DELETE FROM cd_custom_monitors WHERE id=?", (monitor_id,))
-        conn.commit()
-    return {"success": True}
+    return ok(message="监控项已删除")
 
 
 @router.post("/{monitor_id}/test")

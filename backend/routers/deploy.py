@@ -1,6 +1,6 @@
 """部署路由"""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
@@ -10,6 +10,7 @@ from backend.deployers import DeployTarget
 from backend.deployers.base import ssh_connect
 from backend.crypto import decrypt
 from backend.config import settings
+from backend.exceptions import ValidationError, NotFoundError
 
 router = APIRouter(prefix="/api", tags=["deploy"])
 
@@ -39,7 +40,7 @@ def deploy(
             lang=req.lang,
         )
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise ValidationError(str(e))
 
 
 @router.post("/stop")
@@ -50,15 +51,15 @@ def stop(
 ):
     """停止服务"""
     if not req.server_ids:
-        raise HTTPException(400, "Please select target server(s)")
+        raise ValidationError("请选择目标服务器")
     with db.conn() as conn:
         try:
             sid = int(req.server_ids.split(",")[0])
         except (ValueError, IndexError):
-            raise HTTPException(400, "Please select target server(s)")
+            raise ValidationError("请选择目标服务器")
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:
-        raise HTTPException(400, "Server not found")
+        raise NotFoundError("服务器不存在")
     target = DeployTarget(
         host=srv["host"], port=srv["port"], user=srv["user"],
         password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""), path=req.target_path,
@@ -75,7 +76,7 @@ def stop(
         image_name = req.project.split("/")[-1]
         cmd = req.commands.replace("{image}", image).replace("{image_name}", image_name).replace("{tag}", req.tag).replace("{project}", req.project)
     else:
-        raise HTTPException(400, "SSH stop requires custom commands, or use compose/k8s deploy type")
+        raise ValidationError("SSH 模式需要填写停止命令，或改用 compose/k8s 部署类型")
 
     try:
         ssh = ssh_connect(target, settings.ssh_timeout)
@@ -96,15 +97,15 @@ def stop_k8s(
 ):
     """K8S 停止: kubectl delete -f YAML 或 kubectl delete deployment"""
     if not req.server_ids:
-        raise HTTPException(400, "Please select target cluster")
+        raise ValidationError("请选择目标集群")
     try:
         sid = int(req.server_ids.split(",")[0])
     except (ValueError, IndexError):
-        raise HTTPException(400, "Please select target cluster")
+        raise ValidationError("请选择目标集群")
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:
-        raise HTTPException(400, "Cluster not found")
+        raise NotFoundError("集群不存在")
 
     target = DeployTarget(host=srv["host"], port=srv["port"], user=srv["user"], password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""))
     project = req.project

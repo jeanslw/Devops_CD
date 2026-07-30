@@ -1,10 +1,12 @@
 """告警规则管理路由"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
+from backend.exceptions import NotFoundError
+from backend.responses import ok
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -46,8 +48,7 @@ def create_alert(
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (req.name, req.target_type, req.resource_type, req.server_ids, req.threshold, req.bot_id, req.template, 1 if req.enabled else 0, req.cooldown_minutes, req.duration_minutes),
         )
-        conn.commit()
-        return {"success": True}
+        return ok(message="告警规则已创建")
 
 
 @router.put("/{rule_id}")
@@ -61,15 +62,14 @@ def update_alert(
     with db.conn() as conn:
         existing = conn.execute("SELECT id FROM cd_alert_rules WHERE id=?", (rule_id,)).fetchone()
         if not existing:
-            raise HTTPException(404, "Alert rule not found")
+            raise NotFoundError("告警规则不存在")
 
         conn.execute(
             "UPDATE cd_alert_rules SET name=?, target_type=?, resource_type=?, server_ids=?, threshold=?, bot_id=?, template=?, enabled=?, cooldown_minutes=?, duration_minutes=? "
             "WHERE id=?",
             (req.name, req.target_type, req.resource_type, req.server_ids, req.threshold, req.bot_id, req.template, 1 if req.enabled else 0, req.cooldown_minutes, req.duration_minutes, rule_id),
         )
-        conn.commit()
-        return {"success": True}
+        return ok(message="告警规则已更新")
 
 
 @router.delete("/{rule_id}")
@@ -81,8 +81,7 @@ def delete_alert(
     """删除告警规则"""
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_alert_rules WHERE id=?", (rule_id,))
-        conn.commit()
-        return {"success": True}
+        return ok(message="告警规则已删除")
 
 
 @router.get("/resource-types")
@@ -149,4 +148,4 @@ def manual_check(
     """手动触发一次告警检测"""
     from backend.services.alert_service import check_all_rules
     check_all_rules()
-    return {"success": True}
+    return ok(message="手动告警检测已触发")

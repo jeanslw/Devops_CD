@@ -438,6 +438,8 @@ export default {
     registry_login_fail: '⚠ 仓库登录失败，将尝试无认证拉取',
     registry_no_creds: '⚠ 未配置仓库用户名和密码，跳过登录',
     pulling_image: '正在拉取镜像...',
+    image_digest: '镜像摘要: {digest}',
+    image_status: '镜像状态: 已下载 {status}',
     image_not_local_will_pull: '本地无该镜像，准备拉取',
     image_up_to_date: '✅ 镜像 digest 与远程一致，跳过拉取',
     no_remote_digest_will_pull: '⚠️ 无法获取远程镜像版本信息，仍将尝试拉取',

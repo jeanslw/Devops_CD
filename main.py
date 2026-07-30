@@ -7,12 +7,13 @@ FastAPI 部署执行器 — SSH / docker-compose / K8s
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.database import Database
-from backend.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry, alerts, custom_monitors, ci_build
+from backend.exceptions import AppException
+from backend.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry, alerts, custom_monitors, ci_build, users
 from backend.services.registry_service import start_background_sync, RegistryService
 from backend.services.alert_service import start_alert_checker
 
@@ -48,6 +49,15 @@ app.include_router(registry.router)
 app.include_router(alerts.router)
 app.include_router(custom_monitors.router)
 app.include_router(ci_build.router)
+app.include_router(users.router)
+
+# ── 异常处理器 ──
+@app.exception_handler(AppException)
+async def app_exception_handler(request, exc: AppException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "error": exc.message, "detail": exc.detail, "code": exc.status_code},
+    )
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")

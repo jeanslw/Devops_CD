@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     db_name: str = ""
     db_user: str = ""
     db_pass: str = ""
+    db_pool_max: int = 10       # MySQL 连接池最大值
+    db_pool_min: int = 2        # MySQL 连接池最小值（常开连接数）
 
     # ── 加密密钥（可选）──
     # 用于加密 cd_servers 的 password / ssh_key；留空则自动生成 .cd_secret_key 文件

@@ -1,9 +1,10 @@
 """认证路由"""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from backend.auth import authenticate, get_db, get_current_user
 from backend.models import LoginRequest
 from backend.database import Database
+from backend.exceptions import AppException
 
 router = APIRouter(tags=["auth"])
 
@@ -13,7 +14,7 @@ def login(req: LoginRequest, db: Database = Depends(get_db)):
     token = authenticate(req.user, req.password, db)
     if token:
         return {"token": token}
-    raise HTTPException(401, "账号或密码错误")
+    raise AppException("账号或密码错误", status_code=401)
 
 
 @router.get("/api/me")

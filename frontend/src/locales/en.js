@@ -438,6 +438,8 @@ export default {
     registry_login_fail: '⚠ Registry login failed, trying without auth',
     registry_no_creds: '⚠ Registry credentials not configured, skipping login',
     pulling_image: 'Pulling image...',
+    image_digest: 'Digest: {digest}',
+    image_status: 'Status: Downloaded newer image for {status}',
     image_not_local_will_pull: 'Image not found locally, will pull',
     image_up_to_date: '✅ Image digest matches remote, skipping pull',
     no_remote_digest_will_pull: '⚠️ Cannot get remote image version info, will attempt pull',

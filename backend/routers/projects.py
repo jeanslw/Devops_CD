@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from backend.database import Database
 from backend.auth import get_db, verify_token
 from backend.services.ci_service import CiService
+from backend.exceptions import NotFoundError
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
@@ -75,6 +76,5 @@ def pipeline_status(
     """获取项目实时 pipeline 状态（调 PHP API）"""
     result = CiService(db).get_pipeline_status(project)
     if result is None:
-        from fastapi import HTTPException
-        raise HTTPException(404, f"Project '{project}' not found")
+        raise NotFoundError(f"项目 '{project}' 未找到")
     return result

@@ -202,10 +202,10 @@ class ComposeDeployer(Deployer):
                     pass
                 # 过滤 docker-compose 截断的 digest/status 行，替换为完整 inspect 输出
                 if img_digest:
-                    self._log(callback, f"Digest: {img_digest}")
+                    self._log(callback, S("deploy_log.image_digest", digest=img_digest))
                     pull_clean.append(f"Digest: {img_digest}")
                 if img_status:
-                    self._log(callback, f"Status: Downloaded newer image for {img_status}")
+                    self._log(callback, S("deploy_log.image_status", status=img_status))
                     pull_clean.append(f"Status: Downloaded newer image for {img_status}")
                 for line in pull_lines:
                     low = line.lower()
@@ -220,7 +220,7 @@ class ComposeDeployer(Deployer):
                     f"cd {target.path} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
                     image)
                 self._log(callback, S("deploy_log.current_version"))
-                self._log(callback, before.output or "(无)")
+                self._log(callback, before.output or S("deploy_log.no_output"))
 
                 # 6. 执行部署
                 self._log(callback, S("deploy_log.starting_deploy"))
@@ -256,7 +256,7 @@ class ComposeDeployer(Deployer):
                     result = DeployResult(image=image, status="failed",
                         output=f"Before version:\n{before.output or '(none)'}\n\nDeploy output:\n{deploy_text}\n\nAfter version:\n{running.output or '(none)'}\n\nVerification: ❌ Deploy failed!")
                     self._log(callback, S("deploy_log.after_version"))
-                    self._log(callback, running.output or "(无)")
+                    self._log(callback, running.output or S("deploy_log.no_output"))
                     self._log(callback, S("deploy_log.verify_fail"))
                 else:
                     self._log(callback, S("deploy_log.container_failed"))
