@@ -1,0 +1,12 @@
+{
+  "include": ["backend", "main.py"],
+  "typeCheckingMode": "basic",
+  "reportUnknownVariableType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownMemberType": false,
+  "reportMissingParameterType": false,
+  "reportMissingTypeArgument": false,
+  "reportPrivateUsage": false,
+  "reportUnusedCallResult": false,
+  "reportUnknownArgumentType": false
+}
