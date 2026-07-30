@@ -3,20 +3,20 @@
     <div class="app-card">
       <div class="card-header">
         <h3>{{ $t('bots.title') }}</h3>
-        <button v-if="auth.canManage()" class="btn btn-primary" @click="$router.push('/bots/create')">{{ $t('bots.createBot') }}</button>
+        <button v-if="auth.canNotificationManage()" class="btn btn-primary" @click="$router.push('/bots/create')">{{ $t('bots.createBot') }}</button>
       </div>
 
       <table class="table" v-if="bots.length">
         <thead>
-          <tr><th>{{ $t('bots.name') }}</th><th>{{ $t('bots.type') }}</th><th>URL</th><th v-if="auth.canManage()">{{ $t('common.action') }}</th></tr>
+          <tr><th>{{ $t('bots.name') }}</th><th>{{ $t('bots.type') }}</th><th>URL</th><th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th></tr>
         </thead>
         <tbody>
-          <tr v-if="loading"><td :colspan="auth.canManage() ? 4 : 3" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+          <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 4 : 3" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
           <tr v-for="b in bots" :key="b.id">
             <td>{{ b.name }}</td>
             <td>{{ b.type }}</td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ b.webhook_url }}</td>
-            <td v-if="auth.canManage()"><button class="btn btn-xs btn-danger" @click="del(b.id)">{{ $t('common.delete') }}</button></td>
+            <td v-if="auth.canNotificationManage()"><button class="btn btn-xs btn-danger" @click="del(b.id)">{{ $t('common.delete') }}</button></td>
           </tr>
         </tbody>
       </table>

@@ -77,7 +77,7 @@ def _notify_k8s(db, bot_id, tag, project_key, host, cd_type, image, ok, lang="en
 def deploy_k8s(
     req: K8sDeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy")),
+    _user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     image, project_key, project_short = _resolve_image(db, req)
     host, port, user, pwd, ssh_key = _resolve_cluster(db, req)
@@ -103,7 +103,7 @@ def deploy_k8s(
 async def deploy_k8s_stream(
     req: K8sDeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy")),
+    _user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     """K8S 实时部署（SSE 流式推送）"""
     import asyncio

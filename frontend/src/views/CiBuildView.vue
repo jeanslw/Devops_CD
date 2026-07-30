@@ -13,7 +13,7 @@
       <button v-if="auth.canTriggerBuild()" class="btn btn-green" :disabled="!selectedProject" @click="showTrigger = true">
         {{ $t('ciBuild.triggerBuild') }}
       </button>
-      <button class="btn btn-sm" @click="loadProjects" :disabled="loading">
+      <button class="btn btn-sm" @click="refreshAll" :disabled="loading || buildsLoading">
         {{ $t('ciBuild.refresh') }}
       </button>
     </div>
@@ -221,6 +221,12 @@ async function loadProjects() {
   } finally {
     loading.value = false
   }
+}
+
+// ── 刷新（项目列表 + 当前项目的构建历史）──
+async function refreshAll() {
+  await loadProjects()
+  if (selectedProject.value) await onProjectChange()
 }
 
 // ── 切换项目 → 加载构建历史 ──

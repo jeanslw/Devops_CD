@@ -61,7 +61,7 @@ class DeployTarget:
       - ansible:  ansible-playbook {path} -e image={image} tag={tag} project={project}
 
     Compose 模式:
-      - remote: cd {path} && IMAGE_TAG={tag} docker compose up -d (默认)
+      - remote: cd {path} && IMAGE_TAG={tag} docker-compose up -d (默认)
       - commands: options["commands"]
 
     K8s 模式:

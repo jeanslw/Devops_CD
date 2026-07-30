@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Depends
 from backend.database import Database
-from backend.auth import get_db, verify_token
+from backend.auth import get_db, verify_token, require_perm
 from backend.models import ServerRequest
 from backend.crypto import encrypt, decrypt_server_row
 from backend.services.monitor_utils import clear_server_cache
@@ -24,7 +24,7 @@ def list_servers(
 def add_server(
     req: ServerRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.server-manage")),
 ):
     with db.conn() as conn:
         try:
@@ -45,7 +45,7 @@ def update_server(
     sid: int,
     req: ServerRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.server-manage")),
 ):
     with db.conn() as conn:
         try:
@@ -65,7 +65,7 @@ def update_server(
 def delete_server(
     sid: int,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.server-manage")),
 ):
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_servers WHERE id=?", (sid,))

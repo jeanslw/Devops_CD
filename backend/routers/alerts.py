@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.database import Database
-from backend.auth import get_db, verify_token
+from backend.auth import get_db, verify_token, require_perm
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -37,7 +37,7 @@ def list_alerts(
 def create_alert(
     req: AlertRuleRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.alert")),
 ):
     """创建告警规则"""
     with db.conn() as conn:
@@ -55,7 +55,7 @@ def update_alert(
     rule_id: int,
     req: AlertRuleRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.alert")),
 ):
     """更新告警规则"""
     with db.conn() as conn:
@@ -76,7 +76,7 @@ def update_alert(
 def delete_alert(
     rule_id: int,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.alert")),
 ):
     """删除告警规则"""
     with db.conn() as conn:
@@ -144,7 +144,7 @@ def list_resource_types(
 
 @router.post("/check")
 def manual_check(
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.alert")),
 ):
     """手动触发一次告警检测"""
     from backend.services.alert_service import check_all_rules

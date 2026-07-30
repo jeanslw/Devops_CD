@@ -58,8 +58,12 @@
           </div>
         </div>
         <div v-if="mode === 'remote'" style="margin-bottom:8px">
-          <label>{{ $t('dockerDeploy.inlineYaml') }}</label>
-          <textarea v-model="yamlContent" rows="14" :placeholder="$t('dockerDeploy.yamlPlaceholder')" style="width:100%;resize:vertical;font-family:monospace"></textarea>
+          <label @click="yamlExpanded = !yamlExpanded" style="cursor:pointer;user-select:none">
+            <span style="display:inline-block;width:14px;transition:transform 0.2s" :style="{ transform: yamlExpanded ? 'rotate(90deg)' : '' }">&#9654;</span>
+            {{ $t('dockerDeploy.inlineYaml') }}
+            <span v-if="!yamlExpanded && yamlContent" style="color:#999;font-weight:normal">（{{ $t('dockerDeploy.yamlFilled') }}）</span>
+          </label>
+          <textarea v-if="yamlExpanded" v-model="yamlContent" rows="14" :placeholder="$t('dockerDeploy.yamlPlaceholder')" style="width:100%;resize:vertical;font-family:monospace"></textarea>
         </div>
         <div v-if="mode === 'commands'" style="margin-bottom:8px">
           <label>{{ $t('deploy.commands') }}</label>
@@ -99,6 +103,7 @@ const path = ref('')
 const envFile = ref('')
 const commands = ref('')
 const yamlContent = ref('')
+const yamlExpanded = ref(false)
 
 async function onProjectChange() {
   await changeProject(selectedProject.value)
@@ -151,6 +156,7 @@ async function doStop() {
   if (!confirm(t('deploy.confirmStop'))) return
   const body = {
     project: selectedProject.value,
+    tag: selectedTag.value,
     deploy_type: 'compose',
     server_ids: selectedServers.value.join(','),
     target_path: path.value

@@ -8,7 +8,7 @@ import re
 import shlex
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends, Query
 from backend.database import Database
-from backend.auth import verify_token, get_db
+from backend.auth import verify_token, get_db, require_perm, _query_permissions
 from backend.config import settings
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.crypto import decrypt
@@ -74,10 +74,22 @@ async def terminal(websocket: WebSocket, server_id: int):
     # 从 query string 获取 token 并校验
     token = websocket.query_params.get("token")
     try:
-        await _ws_verify(token)
+        username = await _ws_verify(token)
     except HTTPException:
         await websocket.close(code=4001, reason="鉴权失败")
         return
+
+    # 权限检查：需要 cd.webshell
+    db = get_db()
+    with db.conn() as conn:
+        row = conn.execute(
+            "SELECT role FROM admin_users WHERE username=?", (username,)
+        ).fetchone()
+        if row:
+            perms = _query_permissions(db, row["role"])
+            if row["role"] != "super_admin" and "cd.webshell" not in perms:
+                await websocket.close(code=4003, reason="权限不足")
+                return
 
     await websocket.accept()
 
@@ -188,7 +200,7 @@ async def upload_file(
     server_id: int,
     file: UploadFile = File(...),
     path: str = Form("/tmp/"),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.webshell")),
 ):
     """上传文件到目标服务器"""
     db = Database()

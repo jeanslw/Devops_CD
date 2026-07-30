@@ -127,23 +127,15 @@ def _query_permissions(db: Database, role_name: str) -> list:
 
 def require_perm(perm_key: str):
     """权限依赖工厂：检查当前用户是否拥有指定权限。
-    super_admin 隐含所有 cd.* 权限（无需在 roles 表中重复配置）。
-    用法: Depends(require_perm("cd.deploy"))  → 返回 user dict"""
+    super_admin 角色隐含所有权限。
+    用法: Depends(require_perm("cd.deploy.k8s"))  → 返回 user dict"""
     def checker(user: dict = Depends(get_current_user)):
-        perms = user.get("permissions", [])
-        # super_admin 隐含所有 cd.* 权限
-        if perm_key.startswith("cd.") and "cd.super_admin" in perms:
+        if user.get("role") == "super_admin":
             return user
-        if perm_key not in perms:
+        if perm_key not in user.get("permissions", []):
             raise HTTPException(403, f"Permission denied: {perm_key} required")
         return user
     return checker
-
-
-# ── 以下为旧版兼容别名（已废弃，请直接使用 require_perm("cd.xxx")）──
-require_admin = require_perm("cd.admin")
-require_super_admin = require_perm("cd.super_admin")
-require_deployer = require_perm("cd.deploy")
 
 
 def authenticate(user: str, password: str, db: Database) -> str | None:

@@ -24,7 +24,7 @@ def list_bots(
 def add_bot(
     req: BotRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.admin")),
+    _user: dict = Depends(require_perm("cd.notification-manage")),
 ):
     with db.conn() as conn:
         try:
@@ -42,7 +42,7 @@ def add_bot(
 def delete_bot(
     bid: int,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.admin")),
+    _user: dict = Depends(require_perm("cd.notification-manage")),
 ):
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_bots WHERE id=?", (bid,))

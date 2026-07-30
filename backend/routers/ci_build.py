@@ -18,7 +18,7 @@ def _client():
 
 # ── 项目列表 ──
 @router.get("/projects")
-def list_projects(_user: str = Depends(verify_token)):
+def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
     """获取 CI 项目列表 → CI GET /api/build/jobs/list"""
     try:
         return _client().list_projects()
@@ -28,7 +28,7 @@ def list_projects(_user: str = Depends(verify_token)):
 
 # ── 构建历史 ──
 @router.get("/projects/{project:path}/builds")
-def get_builds(project: str, _user: str = Depends(verify_token)):
+def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
     """获取项目构建历史 → CI GET /api/build/{path}/pipelines"""
     try:
         return _client().get_builds(project)
@@ -55,7 +55,7 @@ def trigger_build(project: str, body: dict, _user: dict = Depends(require_perm("
 
 # ── 构建日志 ──
 @router.get("/projects/{project:path}/builds/{id}/log")
-def get_build_log(project: str, id: str, _user: str = Depends(verify_token)):
+def get_build_log(project: str, id: str, _user: str = Depends(require_perm("cd.build-manage"))):
     """获取构建日志 → CI GET /api/build/{path}/logs/{id}"""
     try:
         log = _client().get_build_log(project, id)
@@ -66,7 +66,7 @@ def get_build_log(project: str, id: str, _user: str = Depends(verify_token)):
 
 # ── 构建变量 ──
 @router.get("/projects/{project:path}/variables")
-def get_variables(project: str, _user: str = Depends(verify_token)):
+def get_variables(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
     """获取项目构建变量 → CI GET /api/build/{path}/variables"""
     try:
         return _client().get_variables(project)
@@ -76,7 +76,7 @@ def get_variables(project: str, _user: str = Depends(verify_token)):
 
 # ── 分支列表 ──
 @router.get("/projects/{project:path}/branches")
-def get_branches(project: str, _user: str = Depends(verify_token)):
+def get_branches(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
     """获取项目分支列表 → CI GET /api/build/{path}/branches（返回纯字符串数组）"""
     try:
         return _client().get_branches(project)
@@ -106,7 +106,7 @@ def cancel_pipeline(project: str, id: str, _user: dict = Depends(require_perm("c
 
 # ── 健康检查 ──
 @router.get("/health")
-def ci_health(_user: str = Depends(verify_token)):
+def ci_health(_user: str = Depends(require_perm("cd.build-manage"))):
     """检查 CI 服务连通性"""
     try:
         _client().list_projects()

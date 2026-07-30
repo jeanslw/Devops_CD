@@ -143,6 +143,46 @@ server: {
 
 ---
 
+## Permissions
+
+### Q: Some sidebar menu items are missing after login?
+
+Permissions are managed by CI's `roles` / `permissions` / `role_permissions` tables. CD only reads, never writes.
+
+**Diagnosis**:
+1. Verify your role has the corresponding `perm_key` in CI's `role_permissions` table
+2. `super_admin` role has implicit access to all `cd.*` permissions — no separate assignment needed
+3. See admin manual for full permission list
+
+**Without CI admin UI**, insert directly in the database:
+```sql
+-- View current role permissions
+SELECT r.name, GROUP_CONCAT(rp.perm_key) AS perms
+FROM roles r
+LEFT JOIN role_permissions rp ON r.id = rp.role_id
+GROUP BY r.id;
+
+-- Grant all CD permissions to admin role
+INSERT INTO role_permissions (role_id, perm_key)
+SELECT r.id, p.perm_key
+FROM roles r, permissions p
+WHERE r.name = 'admin' AND p.perm_key LIKE 'cd.%';
+```
+
+### Q: Error "Permission denied: cd.xxx required"?
+
+Your role lacks that permission key. Ask an admin to assign it in CI, or use a `super_admin` account.
+
+### Q: CI hasn't created `roles`/`permissions` tables yet?
+
+CD degrades gracefully: when tables don't exist, `get_current_user` returns an empty permission list. The `super_admin` role still has implicit full access (via the `role` field), so super admins are unaffected. Normal roles will work after tables are created.
+
+### Q: Added a new permission point but checks don't work?
+
+New `perm_key` entries must be inserted into CI's `permissions` table AND assigned to roles in `role_permissions`. Otherwise `require_perm()` will deny all users. Always synchronize new permission keys with CI.
+
+---
+
 ## Performance
 
 ### Q: High memory usage?

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.auth import verify_token, get_db
+from backend.auth import verify_token, get_db, require_perm
 from backend.database import Database
 from backend.services.registry_service import RegistryService, HarborUnavailableError
 
@@ -23,7 +23,7 @@ class SyncConfigRequest(BaseModel):
 
 @router.get("/repositories")
 def list_repositories(
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """列出所有仓库（从数据库缓存读取）"""
@@ -38,7 +38,7 @@ def list_artifacts(
     repo_id: int,
     page: int = 1,
     page_size: int = 20,
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """列出指定仓库的 artifacts/tags（分页，含扫描摘要）"""
@@ -52,7 +52,7 @@ def list_artifacts(
 def get_scan_report(
     repo_id: int,
     tag: str,
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """从数据库缓存读取扫描报告（秒开）"""
@@ -69,7 +69,7 @@ def get_scan_report(
 def trigger_scan(
     repo_id: int,
     tag: str,
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """触发 Harbor 重新扫描该镜像"""
@@ -89,7 +89,7 @@ def trigger_scan(
 def delete_artifact(
     repo_id: int,
     body: DeleteArtifactRequest,
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """删除指定 artifact/tag（带安全校验）"""
@@ -108,7 +108,7 @@ def delete_artifact(
 @router.post("/sync")
 def trigger_sync(
     project: str = "",
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """触发同步：留空全量同步，指定 project 增量同步"""
@@ -125,7 +125,7 @@ def trigger_sync(
 
 @router.get("/config")
 def get_sync_config(
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """获取定时同步配置"""
@@ -141,7 +141,7 @@ def get_sync_config(
 @router.put("/config")
 def update_sync_config(
     body: SyncConfigRequest,
-    _user: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
     """更新定时同步间隔（分钟，0=关闭）"""

@@ -1,8 +1,13 @@
 """SSH 单机部署器 — 纯透传，不硬编码任何工具命令"""
 
+import re
+
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from backend.config import settings
 from backend.deploy_log import S
+
+# 进度条特征：终端用 \r 刷新，形如 "[==>                ]" 或 "[=====>     ]"
+_PROGRESS_BAR = re.compile(r'\[[=> ]+\]')
 
 
 class SSHDeployer(Deployer):
@@ -52,36 +57,81 @@ class SSHDeployer(Deployer):
         ).strip()
 
     def _ssh_exec_stream(self, ssh, cmd: str, callback) -> str:
-        """实时流式执行命令，边执行边通过 callback 推送输出"""
+        """实时流式执行命令，批量推送输出。
+
+        有数据时全速读，没数据时才 sleep，保证高吞吐。
+        """
+        import time, re
+        ANSI_RE = re.compile(chr(27) + r'\[[0-9;?]*[A-Za-z]')
+        BATCH = 50
         channel = ssh.get_transport().open_session()
         try:
             channel.exec_command(cmd)
             all_output = []
+            buffer = []
+            buf_size = 65536
+
+            def _clean(line: str) -> str:
+                # 去掉 ANSI 转义码，\r 分段智能去重：
+                # - 连续的进度条段（如 "[==>   ]" → "[====> ]"）只保留最后一段
+                # - 其余所有内容全部保留，不写死任何关键词
+                line = ANSI_RE.sub('', line)
+                segments = [p.strip() for p in line.split('\r') if p.strip()]
+                if not segments:
+                    return ""
+                if len(segments) == 1:
+                    return segments[0]
+                kept = []
+                for seg in segments:
+                    if not kept:
+                        kept.append(seg)
+                        continue
+                    prev = kept[-1]
+                    # 相邻两段都是进度条 → 替换（去重）
+                    if _PROGRESS_BAR.search(seg) and _PROGRESS_BAR.search(prev):
+                        kept[-1] = seg
+                    else:
+                        kept.append(seg)
+                return "\n".join(kept) if kept else ""
+
+            def _flush():
+                if buffer:
+                    self._log(callback, "\n".join(buffer))
+                    buffer.clear()
+
             while not channel.exit_status_ready():
+                had_data = False
                 if channel.recv_ready():
-                    data = channel.recv(4096).decode("utf-8", errors="replace")
+                    data = channel.recv(buf_size).decode("utf-8", errors="replace")
                     for line in data.split("\n"):
-                        line = line.strip()
+                        line = _clean(line)
                         if line:
-                            self._log(callback, line)
                             all_output.append(line)
+                            buffer.append(line)
+                            if len(buffer) >= BATCH:
+                                _flush()
+                    had_data = True
                 if channel.recv_stderr_ready():
-                    err_data = channel.recv_stderr(4096).decode("utf-8", errors="replace")
+                    err_data = channel.recv_stderr(buf_size).decode("utf-8", errors="replace")
                     for line in err_data.split("\n"):
-                        line = line.strip()
+                        line = _clean(line)
                         if line:
-                            self._log(callback, line)
                             all_output.append(line)
+                            buffer.append(line)
+                            if len(buffer) >= BATCH:
+                                _flush()
+                    had_data = True
+                if not had_data:
+                    time.sleep(0.005)
 
-            # 收尾残余数据
             while channel.recv_ready():
-                data = channel.recv(4096).decode("utf-8", errors="replace")
+                data = channel.recv(buf_size).decode("utf-8", errors="replace")
                 for line in data.split("\n"):
-                    line = line.strip()
+                    line = _clean(line)
                     if line:
-                        self._log(callback, line)
                         all_output.append(line)
-
+                        buffer.append(line)
+            _flush()
             return "\n".join(all_output)
         finally:
             channel.close()

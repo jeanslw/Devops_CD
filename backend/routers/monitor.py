@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Depends
 from backend.database import Database
-from backend.auth import get_db, verify_token
+from backend.auth import get_db, verify_token, require_perm
 from backend.deployers.base import ssh_connect
 from backend.config import settings
 from backend.services.monitor_utils import (
@@ -23,7 +23,7 @@ def monitor_status():
 @router.get("/servers")
 def list_monitor_servers(
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.resource-monitor")),
 ):
     """返回所有服务器的监控状态（按类型区分）"""
     if not settings.monitoring_enabled:
@@ -125,7 +125,7 @@ def list_monitor_servers(
 def get_nodes(
     server_id: int,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.system")),
 ):
     """获取 K8S 集群 Node 资源占用"""
     if not settings.monitoring_enabled:
@@ -189,7 +189,7 @@ def get_pods(
     server_id: int,
     namespace: str = "",
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.app")),
 ):
     """获取 K8S 集群 Pod 资源占用"""
     if not settings.monitoring_enabled:
@@ -269,7 +269,7 @@ def get_pod_detail(
     namespace: str,
     name: str,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.app")),
 ):
     """获取单个 K8S Pod 详情"""
     if not settings.monitoring_enabled:
@@ -305,7 +305,7 @@ def get_pod_detail(
 def get_docker_containers(
     server_id: int,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.app")),
 ):
     """获取 Docker 服务器容器资源占用（仅容器，系统资源走 /system）"""
     if not settings.monitoring_enabled:
@@ -361,7 +361,7 @@ def get_docker_containers(
 def get_system_info(
     server_id: int,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.system")),
 ):
     """获取服务器系统资源：CPU、内存、磁盘、负载、进程 Top5（所有类型通用）"""
     if not settings.monitoring_enabled:

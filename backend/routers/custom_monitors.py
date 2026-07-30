@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.database import Database
-from backend.auth import get_db, verify_token
+from backend.auth import get_db, verify_token, require_perm
 from backend.services.monitor_utils import _make_target, _ssh_cmd
 from backend.deployers.base import ssh_connect
 from backend.config import settings
@@ -337,7 +337,7 @@ def list_monitors(
 def create_monitor(
     req: CustomMonitorRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.custom")),
 ):
     """创建自定义监控项"""
     with db.conn() as conn:
@@ -358,7 +358,7 @@ def update_monitor(
     monitor_id: int,
     req: CustomMonitorRequest,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.custom")),
 ):
     """更新自定义监控项"""
     with db.conn() as conn:
@@ -381,7 +381,7 @@ def update_monitor(
 def delete_monitor(
     monitor_id: int,
     db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.monitor.custom")),
 ):
     """删除自定义监控项（级联删除指标）"""
     with db.conn() as conn:

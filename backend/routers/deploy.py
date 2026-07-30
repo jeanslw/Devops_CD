@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api", tags=["deploy"])
 def deploy(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy")),
+    _user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     svc = DeployService(db)
     try:
@@ -46,7 +46,7 @@ def deploy(
 def stop(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy")),
+    _user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     """停止服务"""
     if not req.server_ids:
@@ -65,7 +65,7 @@ def stop(
     )
 
     if req.deploy_type == "compose":
-        cmd = f"cd {req.target_path} && docker compose down"
+        cmd = f"cd {req.target_path} && docker-compose down"
     elif req.deploy_type == "k8s":
         ns = req.k8s_ns or "default"
         cmd = f"kubectl delete deployment/{req.project} -n {ns}"
@@ -92,7 +92,7 @@ def stop(
 def stop_k8s(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy")),
+    _user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     """K8S 停止: kubectl delete -f YAML 或 kubectl delete deployment"""
     if not req.server_ids:
@@ -125,7 +125,7 @@ def stop_k8s(
 async def deploy_stream(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy")),
+    _user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     """实时部署（SSE 流式推送）"""
     import asyncio
