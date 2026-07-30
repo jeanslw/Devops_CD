@@ -20,7 +20,7 @@ export default defineConfig({
   },
   build: {
     outDir: '../static',
-    emptyOutDir: false,  // 保护 static/vendor/ 等非构建产物
+    emptyOutDir: true,
     assetsDir: 'assets',
     rollupOptions: {
       output: {
