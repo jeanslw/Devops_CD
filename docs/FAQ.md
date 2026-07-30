@@ -124,6 +124,22 @@ The backend auto-detects GBK/UTF-8. For unusual server encodings, add `export LA
 
 SSH mode is pure passthrough — stop commands are user-defined. Verify the "Stop Command" in server settings (e.g. `docker stop <container>` or `docker compose down`).
 
+### Q: CD reports "Connection refused" when connecting to CI under Docker Compose?
+
+**Cause**: Incorrect `CI_API_URL`. When CD and CI are in the same docker-compose stack, containers communicate via **service name + internal port**, not the host-mapped port.
+
+**Correct configuration**: Uncomment and edit in `docker-compose.yml` under `cd-service` → `environment`:
+```yaml
+environment:
+  # ── CI API integration (enable when pairing with PHP Devops-Glue) ──
+  # Use the service name for container-to-container communication, NOT localhost
+  CI_API_URL: http://devops-glue
+  CI_ADMIN_USER: root
+  CI_ADMIN_PASS: your_root_password
+```
+
+**Reminder**: After changing the config, you must run `docker-compose up -d` to recreate the container. `restart` does not refresh environment variables.
+
 ---
 
 ## Frontend
