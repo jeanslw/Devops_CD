@@ -100,7 +100,7 @@ CALL __add_index('cd_deploy_logs', 'idx_cdl_created', 'created_at');
 -- CI 相关表索引（表可能不存在，存储过程内部会检查并跳过）
 CALL __add_index('ci_pipeline_tags', 'idx_pt_project', 'project');
 CALL __add_index('ci_pipeline_tags', 'idx_pt_created', 'created_at');
-CALL __add_index('ci_job_git_map', 'idx_jgm_path', 'current_path');
+CALL __add_index('ci_job_git_map', 'idx_jgm_path', 'current_path(255)');
 
 -- cd_registry_artifacts 索引（表在本脚本中已创建）
 CALL __add_index('cd_registry_artifacts', 'idx_cdr_repo_id', 'repo_id');
