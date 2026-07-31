@@ -46,6 +46,8 @@ class Settings(BaseSettings):
 
     # ── K8s 部署（可选）──
     flux_namespace: str = "flux-system"
+    k8s_helm_timeout: int = 300         # helm upgrade --install --timeout（秒）
+    k8s_rollout_timeout: int = 120      # kubectl rollout status --timeout（秒）
 
     # ── 通知（可选）──
     dingtalk_secret: str = ""    # 钉钉加签密钥

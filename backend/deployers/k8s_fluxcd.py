@@ -2,7 +2,7 @@
 
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import _ssh_cmd, _kubectl_pods, _log
+from backend.deployers.k8s_utils import _ssh_cmd, _kubectl_pods, _log, _exec_exit
 from backend.config import settings
 from backend.deploy_log import S
 
@@ -52,11 +52,9 @@ class FluxCDDeployer(K8sSubDeployer):
                 ssh.close()
                 return {"success": False, "output": f"Flux resource not found: {project}"}
             cmd = f"flux suspend {flux_kind} {flux_name} -n {settings.flux_namespace}"
-            _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
-            out = stdout.read().decode(errors="replace").strip()
-            err = stderr.read().decode(errors="replace").strip()
+            out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
-            return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+            return {"success": ec == 0, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
             return {"success": False, "output": str(ex)}
 

@@ -1,19 +1,12 @@
 """K8S Helm 部署模式 — SSH helm upgrade --install + exit code 判断"""
 
+import shlex
+
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import _log, _ssh_cmd, _kubectl_pods
+from backend.deployers.k8s_utils import _log, _ssh_cmd, _kubectl_pods, _exec_exit
 from backend.config import settings
 from backend.deploy_log import S
-
-
-def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:
-    """执行 SSH 命令并返回 (stdout, stderr, exit_code)"""
-    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
-    out = stdout.read().decode(errors="replace").strip()
-    err = stderr.read().decode(errors="replace").strip()
-    ec = stdout.channel.recv_exit_status()
-    return out, err, ec
 
 
 class HelmDeployer(K8sSubDeployer):
@@ -24,26 +17,35 @@ class HelmDeployer(K8sSubDeployer):
 
     def stop(self, req, project: str, host: str, port: int = 22,
              user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
-        """停止：helm uninstall"""
+        """停止：helm uninstall（先检查 release 是否存在）"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         ns = req.k8s_ns
         ns_flag = f" -n {ns}" if ns else ""
-        cmd = f"helm uninstall {project}{ns_flag}"
+        release_name = project.split("/")[-1] if "/" in project else project
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
+            # 先查 release 是否存在
+            _, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
+            if list_ec != 0:
+                ssh.close()
+                return {"success": False, "output": f"helm list failed: {list_err or 'unknown error'}"}
+
+            # 执行 uninstall（始终执行，让 helm 告诉我们结果）
+            cmd = f"helm uninstall {shlex.quote(release_name)}{ns_flag}"
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
-            success = ec == 0 or "release: not found" in (err or "")
+            success = ec == 0
             return {"success": success, "output": (out or err)[:settings.log_truncate_chars]}
         except Exception as ex:
             return {"success": False, "output": str(ex)}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
-        tag = req.tag
+        tag = req.tag if req.tag else ""
         if not req.path:
             return {"success": False, "output": "Helm deploy requires a chart path or repo reference"}
         chart = req.path
+        image_repo = image.split(":")[0] if ":" in image else image
         ns = req.k8s_ns
         ns_flag = f" -n {ns}" if ns else ""
 
@@ -53,7 +55,18 @@ class HelmDeployer(K8sSubDeployer):
 
             # ── Release 名：直接用项目短名 ──
             helm_release = project.split("/")[-1]
-            existing = _ssh_cmd(ssh, f"helm list -q{ns_flag} 2>/dev/null") or ""
+
+            # 检查 release 是否已存在（用 _exec_exit 防 helm 挂了静默失败）
+            existing, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
+            if list_ec != 0:
+                _log(callback, S("deploy_log.helm_fail",
+                    error=f"helm list failed (exit {list_ec}): {list_err or 'no output'}"))
+                ssh.close()
+                return {
+                    "success": False,
+                    "output": f"helm list failed (exit {list_ec}):\n{list_err or 'no output'}"
+                }
+
             if helm_release in existing.split("\n"):
                 _log(callback, S("deploy_log.helm_upgrading", name=helm_release))
             else:
@@ -69,26 +82,32 @@ class HelmDeployer(K8sSubDeployer):
                 _log(callback, S("deploy_log.current_version_none"))
 
             # ── 执行 helm upgrade --install ──
+            # 所有用户输入均通过 shlex.quote() 防 shell 注入
             _log(callback, S("deploy_log.helm_start"))
             helm_cmd = (
-                f"helm upgrade --install {helm_release} {chart} "
-                f"--set image.tag={tag} --set image.repository={image.split(':')[0]}"
-                f"{ns_flag} --wait --timeout 120s"
+                f"helm upgrade --install {shlex.quote(helm_release)} {shlex.quote(chart)} "
+                f"--set image.tag={shlex.quote(tag)} "
+                f"--set image.repository={shlex.quote(image_repo)}"
+                f"{ns_flag} --wait --timeout {settings.k8s_helm_timeout}s"
             )
             _log(callback, S("deploy_log.helm_cmd", cmd=helm_cmd))
-            helm_out, helm_err, exit_code = _exec_exit(ssh, helm_cmd)
+            helm_out, helm_err, exit_code = _exec_exit(ssh, helm_cmd, timeout=settings.k8s_helm_timeout + 10)
             if helm_out:
                 _log(callback, helm_out)
-            if helm_err:
-                _log(callback, helm_err)
 
             # ── 部署后状态 ──
             _log(callback, S("deploy_log.helm_getting_after"))
             after = _kubectl_pods(ssh, helm_release)
             if after.strip():
                 _log(callback, after)
-            status_out = _ssh_cmd(ssh, f"helm status {helm_release}{ns_flag} 2>/dev/null") or ""
+
+            # helm status 可能也挂（release 没创建成功），用 _exec_exit 兜底
+            status_out, status_err, status_ec = _exec_exit(
+                ssh, f"helm status {shlex.quote(helm_release)}{ns_flag}", timeout=settings.ssh_timeout
+            )
             ssh.close()
+            if status_ec != 0:
+                status_out = f"(helm status unavailable: {status_err})" if status_err else "(helm status unavailable)"
 
             # ── 成败判断：helm --wait 的 exit code ──
             if exit_code != 0:

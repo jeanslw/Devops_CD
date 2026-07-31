@@ -8,6 +8,23 @@ from backend.deploy_log import S
 from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具（含 errors="replace"）
 
 
+def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:
+    """执行 SSH 命令并返回 (stdout, stderr, exit_code)
+
+    与 _ssh_cmd 的区别：检查命令的退出码，用于需要判断成功/失败的场景。
+    channel.recv_exit_status() 有 try/except 保护，防止 channel 已关闭抛异常。
+    """
+    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
+    out = stdout.read().decode(errors="replace").strip()
+    err = stderr.read().decode(errors="replace").strip()
+    try:
+        ec = stdout.channel.recv_exit_status()
+    except Exception:
+        # channel 异常关闭时 fallback：有 stderr 则视为失败
+        ec = 1
+    return out, err, ec
+
+
 def _kubectl_pods(ssh, deploy_name="", namespace=""):
     """获取 K8S pod 列表，按 Deployment 名前缀匹配，不盲猜子串"""
     ns_flag = f"-n {namespace} " if namespace else ""

@@ -3,7 +3,7 @@
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import (
-    _log, _kubectl_pods, _render_k8s_yaml, _get_deployment_name,
+    _log, _kubectl_pods, _render_k8s_yaml, _get_deployment_name, _exec_exit,
 )
 from backend.config import settings
 from backend.deploy_log import S
@@ -25,11 +25,10 @@ class KubectlDeployer(K8sSubDeployer):
             cmd = f"kubectl delete deployment/{project}"
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
-            _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
-            out = stdout.read().decode(errors="replace").strip()
-            err = stderr.read().decode(errors="replace").strip()
+            out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
-            return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+            success = ec == 0 or "not found" in (err or "").lower() or "not found" in (out or "").lower()
+            return {"success": success, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
             return {"success": False, "output": str(ex)}
 
