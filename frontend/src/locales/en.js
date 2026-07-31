@@ -512,6 +512,8 @@ export default {
     helm_done: 'Deployment complete!',
     helm_available: 'Deployment Available: {val}',
     helm_fail: '❌ Helm deployment failed: {error}',
+    helm_upgrading: 'Upgrading existing release [{name}]...',
+    helm_installing: 'Installing new release [{name}]...',
     // ── Flux CD ──
     flux_connecting: 'Connecting to cluster...',
     flux_detected: '✅ Detected Flux resource: {kind} [{name}]',

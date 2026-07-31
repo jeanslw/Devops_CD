@@ -512,6 +512,8 @@ export default {
     helm_done: '部署完成！',
     helm_available: 'Deployment Available: {val}',
     helm_fail: '❌ Helm 部署失败: {error}',
+    helm_upgrading: '正在升级已有 release [{name}]...',
+    helm_installing: '首次安装 release [{name}]...',
     // ── Flux CD ──
     flux_connecting: '正在连接集群...',
     flux_detected: '✅ 检测到 Flux 资源: {kind} [{name}]',
