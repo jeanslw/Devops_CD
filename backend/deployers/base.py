@@ -1,6 +1,8 @@
 """部署器抽象基类"""
 
 import os
+import re
+import time
 import tempfile
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -23,6 +25,7 @@ def ssh_connect(target: "DeployTarget", timeout: int):
         tmp.write(target.ssh_key)
         tmp.close()
         tmp_file = tmp.name
+        os.chmod(tmp_file, 0o600)  # paramiko 要求私钥文件权限严格
         kwargs["key_filename"] = tmp_file
     elif target.password:
         kwargs["password"] = target.password
@@ -31,7 +34,10 @@ def ssh_connect(target: "DeployTarget", timeout: int):
         ssh.connect(**kwargs)
     finally:
         if tmp_file:
-            os.unlink(tmp_file)
+            try:
+                os.unlink(tmp_file)
+            except FileNotFoundError:
+                pass
     return ssh
 
 
@@ -48,7 +54,122 @@ def ssh_session(target: "DeployTarget", timeout: int):
 def _exec_on(ssh, cmd: str) -> Tuple[str, str]:
     """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr)"""
     _, stdout, stderr = ssh.exec_command(cmd)
-    return stdout.read().decode().strip(), stderr.read().decode().strip()
+    return stdout.read().decode(errors="replace").strip(), stderr.read().decode(errors="replace").strip()
+
+
+def _ssh_cmd(ssh, cmd: str) -> str:
+    """执行 SSH 命令，返回 stdout+stderr 合并字符串（去重 fallback）"""
+    o, e = _exec_on(ssh, cmd)
+    return o or e
+
+
+# 进度条特征：终端用 \r 刷新，形如 "[==>                ]" 或 "[=====>     ]"
+_PROGRESS_BAR = re.compile(r'\[[=> ]+\]')
+
+
+def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
+    """实时流式执行命令，批量推送输出。
+
+    有数据时全速读，没数据时才 sleep，保证高吞吐。
+    log_fn 签名: log_fn(message: str)
+    """
+    ANSI_RE = re.compile(chr(27) + r'\[[0-9;?]*[A-Za-z]')
+    BATCH = 50
+    channel = ssh.get_transport().open_session()
+    try:
+        channel.exec_command(cmd)
+        all_output = []
+        buffer = []
+        buf_size = 65536
+
+        def _clean(line: str) -> str:
+            # 去掉 ANSI 转义码，\r 分段智能去重：
+            # - 连续的进度条段（如 "[==>   ]" → "[====> ]"）只保留最后一段
+            # - 其余所有内容全部保留，不写死任何关键词
+            line = ANSI_RE.sub('', line)
+            # 快速路径：不含 \r 的普通行原样返回，避免误进分段逻辑
+            if '\r' not in line:
+                return line
+            segments = [p.strip() for p in line.split('\r') if p.strip()]
+            if not segments:
+                return ""
+            if len(segments) == 1:
+                return segments[0]
+            kept = []
+            for seg in segments:
+                if not kept:
+                    kept.append(seg)
+                    continue
+                prev = kept[-1]
+                # 相邻两段都是进度条 → 替换（去重）
+                if _PROGRESS_BAR.search(seg) and _PROGRESS_BAR.search(prev):
+                    kept[-1] = seg
+                else:
+                    kept.append(seg)
+            return "\n".join(kept) if kept else ""
+
+        def _flush():
+            if buffer:
+                log_fn("\n".join(buffer))
+                buffer.clear()
+
+        while not channel.exit_status_ready():
+            had_data = False
+            if channel.recv_ready():
+                data = channel.recv(buf_size).decode("utf-8", errors="replace")
+                for line in data.split("\n"):
+                    line = _clean(line)
+                    if line:
+                        all_output.append(line)
+                        buffer.append(line)
+                        if len(buffer) >= BATCH:
+                            _flush()
+                had_data = True
+            if channel.recv_stderr_ready():
+                err_data = channel.recv_stderr(buf_size).decode("utf-8", errors="replace")
+                for line in err_data.split("\n"):
+                    line = _clean(line)
+                    if line:
+                        all_output.append(line)
+                        buffer.append(line)
+                        if len(buffer) >= BATCH:
+                            _flush()
+                had_data = True
+            if not had_data:
+                time.sleep(0.005)
+
+        # 阻塞等待退出状态码接收完毕（确保远端已刷新所有 stdout/stderr）
+        try:
+            channel.recv_exit_status()
+        except Exception:
+            pass
+
+        # 补读残留数据，最多重试 5 次（含短暂延时，应对网络延迟导致的数据滞后到达）
+        for _ in range(5):
+            had = False
+            while channel.recv_ready():
+                data = channel.recv(buf_size).decode("utf-8", errors="replace")
+                for line in data.split("\n"):
+                    line = _clean(line)
+                    if line:
+                        all_output.append(line)
+                        buffer.append(line)
+                had = True
+            while channel.recv_stderr_ready():
+                err_data = channel.recv_stderr(buf_size).decode("utf-8", errors="replace")
+                for line in err_data.split("\n"):
+                    line = _clean(line)
+                    if line:
+                        all_output.append(line)
+                        buffer.append(line)
+                had = True
+            if not had:
+                break
+            time.sleep(0.01)
+        _flush()
+        return "\n".join(all_output)
+    finally:
+        channel.close()
 
 
 @dataclass
@@ -112,6 +233,12 @@ class Deployer(ABC):
     def supports(self, deploy_type: str) -> bool:
         """是否匹配部署类型"""
         return deploy_type == self.name()
+
+    def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
+        """停止服务。返回 {"success": bool, "output": str}。
+        默认抛出 NotImplementedError，子类按需覆盖。
+        """
+        raise NotImplementedError(f"{self.name()} deployer does not support stop")
 
     def _log(self, callback, message):
         """辅助方法：调用回调输出日志，如果 callback 为 None 则忽略"""

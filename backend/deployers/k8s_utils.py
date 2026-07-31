@@ -1,21 +1,18 @@
-"""K8S 部署共享工具函数 — SSH 命令执行 + Pod 轮询 + YAML 渲染"""
+"""K8S 部署共享工具函数 — Pod 轮询 + YAML 渲染"""
+
+import re
+import yaml
 
 from backend.config import settings
 from backend.deploy_log import S
+from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具（含 errors="replace"）
 
 
-def _ssh_cmd(ssh, cmd):
-    """执行 SSH 命令，返回 stdout+stderr 合并字符串"""
-    _, stdout, stderr = ssh.exec_command(cmd)
-    o = stdout.read().decode().strip()
-    e = stderr.read().decode().strip()
-    return o or e
-
-
-def _kubectl_pods(ssh, deploy_name=""):
+def _kubectl_pods(ssh, deploy_name="", namespace=""):
     """获取 K8S pod 列表，按 Deployment 名前缀匹配，不盲猜子串"""
+    ns_flag = f"-n {namespace} " if namespace else ""
     cmd = (
-        "kubectl get pods -o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,"
+        f"kubectl get pods {ns_flag}-o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,"
         "STATUS:.status.phase,REASON:.status.reason,DELETING:.metadata.deletionTimestamp --no-headers 2>/dev/null"
     )
     if deploy_name:
@@ -53,6 +50,74 @@ def _parse_pod_line(line: str) -> dict | None:
     }
 
 
+def _rename_deployment_in_yaml(yaml_content: str, new_name: str) -> tuple[str, str]:
+    """解析 YAML，将 Deployment 名称替换为项目短名。
+
+    返回 (修改后的 yaml_content, 原 deployment 名)。
+    若 YAML 中无 Deployment 定义，则返回原内容 + 空字符串。
+    用行级精确替换，只改 name:/app: 的值位置，不误伤镜像名或其他字段。
+    """
+    try:
+        docs = list(yaml.safe_load_all(yaml_content))
+    except yaml.YAMLError:
+        return yaml_content, ""
+
+    old_name = ""
+    for doc in docs:
+        if isinstance(doc, dict) and doc.get("kind") == "Deployment":
+            old_name = doc.get("metadata", {}).get("name", "")
+            break
+
+    if not old_name or old_name == new_name:
+        return yaml_content, old_name
+
+    # 行级精确替换：只改 YAML key 值位置
+    lines = yaml_content.split("\n")
+    kv_prefixes = (
+        "name:",
+        "app:",
+        "app.kubernetes.io/name:",
+        "app.kubernetes.io/instance:",
+        "app.kubernetes.io/part-of:",
+    )
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        indent = line[:len(line) - len(line.lstrip())]
+        list_prefix = ""
+        if stripped.startswith("- "):
+            list_prefix = "- "
+            stripped = stripped[2:]  # 去掉 "- "
+        # 替换 label/name 值
+        for prefix in kv_prefixes:
+            if stripped.startswith(prefix) and stripped[len(prefix):].strip() == old_name:
+                lines[i] = f"{indent}{list_prefix}{prefix} {new_name}"
+                break
+        # 替换 Service name 中 "{old_name}-svc" 模式
+        if stripped.startswith("name:") and stripped[len("name:"):].strip() == f"{old_name}-svc":
+            lines[i] = f"{indent}{list_prefix}name: {new_name}-svc"
+        # 替换 env value 引用
+        if stripped.startswith("value:") and stripped[len("value:"):].strip() == f'"{old_name}"':
+            lines[i] = f'{indent}{list_prefix}value: "{new_name}"'
+
+    return "\n".join(lines), old_name
+
+
+def _get_deployment_name(yaml_content: str) -> str:
+    """解析 YAML，提取第一个 Deployment 的 name，不修改内容。
+
+    返回 Deployment 名；若无 Deployment 定义或解析失败，返回空字符串。
+    """
+    try:
+        docs = list(yaml.safe_load_all(yaml_content))
+    except yaml.YAMLError:
+        return ""
+    for doc in docs:
+        if isinstance(doc, dict) and doc.get("kind") == "Deployment":
+            return doc.get("metadata", {}).get("name", "")
+    return ""
+
+
 def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     image_parts = image.rsplit(":", 1)
     full_image_name = image_parts[0]
@@ -73,7 +138,8 @@ def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
 
 
 def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas: int,
-                   before_pods: set = None, max_wait: int = 20, interval: int = 3) -> dict:
+                   before_pods: set = None, max_wait: int = 20, interval: int = 3,
+                   namespace: str = "") -> dict:
     """轮询等待 Pod 就绪。
 
     before_pods 不为 None 时：以 Pod 名变更判断部署成功（新 Pod Running = 成功），
@@ -97,7 +163,7 @@ def _poll_k8s_pods(ssh, filter_name: str, desired_image: str, expected_replicas:
 
     for _ in range(max_wait):
         time.sleep(interval)
-        after = _kubectl_pods(ssh, filter_name)
+        after = _kubectl_pods(ssh, filter_name, namespace)
         pods = []
         for line in after.split("\n"):
             if not line.strip():

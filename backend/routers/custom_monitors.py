@@ -10,8 +10,8 @@ from pydantic import BaseModel
 
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
-from backend.services.monitor_utils import _make_target, _ssh_cmd
-from backend.deployers.base import ssh_connect
+from backend.services.monitor_utils import _make_target
+from backend.deployers.base import ssh_connect, _ssh_cmd
 from backend.config import settings
 from backend.exceptions import NotFoundError
 from backend.responses import ok
@@ -365,7 +365,7 @@ def update_monitor(
     with db.conn() as conn:
         existing = conn.execute("SELECT id FROM cd_custom_monitors WHERE id=?", (monitor_id,)).fetchone()
         if not existing:
-            raise NotFoundError("监控项不存在")
+            raise NotFoundError("监控项不存在", error_key="errors.monitor_not_found")
 
         conn.execute(
             "UPDATE cd_custom_monitors SET name=?, command=?, output_format=?, description=?, "

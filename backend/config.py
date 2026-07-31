@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 
     # ── 通知（可选）──
     dingtalk_secret: str = ""    # 钉钉加签密钥
-    log_truncate_chars: int = 2000
+    log_truncate_chars: int = 20000
     notify_truncate_chars: int = 200
 
     # ── 镜像仓库同步（可选）──

@@ -4,6 +4,7 @@ from datetime import datetime
 from backend.database import Database
 from backend.deployers import deployer_registry, DeployTarget
 from backend.config import settings
+from backend.deploy_log import S
 from backend.crypto import decrypt
 from .ci_service import CiService
 from .notification import notify_deploy
@@ -106,14 +107,24 @@ class DeployService:
         deployer = deployer_registry.create(deploy_type)
         results = []
 
-        for sid, target in targets:
+        total = len(targets)
+        is_batch = total > 1
+
+        for i, (sid, target) in enumerate(targets):
             target.path = target_path
             target.mode = deploy_mode
             target.options = options
 
+            # 批量部署时在 SSE 流中显示服务器分隔线
+            if is_batch:
+                host_label = f"#{sid} {target.host}"
+                callback(S("deploy_log.batch_server_start", current=i + 1, total=total, host=host_label))
+
             error = deployer.validate(target)
             if error:
                 results.append({"server_id": sid, "host": target.host, "status": "failed", "output": error})
+                if is_batch:
+                    callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail"))
                 continue
 
             try:
@@ -122,16 +133,46 @@ class DeployService:
             except Exception as e:
                 results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
 
-        # 记录日志（生成递增 deploy_id，同一次部署共享）
+            if is_batch:
+                callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result=results[-1]["status"]))
+
+        # 记录日志（一次部署一条记录，批量时合并输出和状态）
         with self._db.conn() as conn:
             row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
             deploy_id = row["next_id"] if row else 1
-            for r in results:
+
+            if is_batch:
+                # 批量：合并为一条记录
+                target_str = ", ".join(
+                    f"[{i + 1}/{total}] #{r['server_id']} {r['host']}"
+                    for i, r in enumerate(results)
+                )
+                parts = []
+                for i, r in enumerate(results):
+                    parts.append(f"━━━ [{i + 1}/{total}] #{r['server_id']} {r['host']} ({r['status']}) ━━━")
+                    parts.append(r["output"] or "")
+                merged_output = "\n".join(parts)[:settings.log_truncate_chars]
+                # 整体状态
+                oks = sum(1 for r in results if r["status"] == "ok")
+                if oks == len(results):
+                    status = "ok"
+                elif oks == 0:
+                    status = "failed"
+                else:
+                    status = "partial"
                 conn.execute(
                     "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output) "
                     "VALUES (?,?,?,?,?,?,?,?)",
-                    (deploy_id, project_key, tag, image, deploy_type, f"#{r['server_id']} {r['host']}",
-                     r["status"], r["output"][:settings.log_truncate_chars]),
+                    (deploy_id, project_key, tag, image, deploy_type, target_str, status, merged_output),
+                )
+            else:
+                r = results[0]
+                target_label = f"#{r['server_id']} {r['host']}"
+                output = r["output"][:settings.log_truncate_chars] if r["output"] else ""
+                conn.execute(
+                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (deploy_id, project_key, tag, image, deploy_type, target_label, r["status"], output),
                 )
 
         # 通知
@@ -163,7 +204,7 @@ class DeployService:
                     (project,),
                 ).fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY deploy_id DESC LIMIT ? OFFSET ?",
                     (project, page_size, offset),
                 ).fetchall()
             else:
@@ -171,7 +212,7 @@ class DeployService:
                     "SELECT COUNT(*) AS cnt FROM cd_deploy_logs"
                 ).fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT * FROM cd_deploy_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    "SELECT * FROM cd_deploy_logs ORDER BY deploy_id DESC LIMIT ? OFFSET ?",
                     (page_size, offset),
                 ).fetchall()
             return {

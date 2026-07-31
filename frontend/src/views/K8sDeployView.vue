@@ -46,6 +46,10 @@
       </div>
       <div style="margin-bottom:8px;font-size:11px;color:#667">{{ $t('k8sDeploy.namespaceHint') }}</div>
       <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px;font-size:11px;color:#667">Flux CD {{ $t('k8sDeploy.fluxNamespaceHint') }}</div>
+      <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px">
+        <label>{{ $t('k8sDeploy.fluxPath') }}</label>
+        <input v-model="path" placeholder="./">
+      </div>
       <div v-if="cdType === 'kubectl' || cdType === 'helm'" style="margin-bottom:8px">
         <label>{{ $t('k8sDeploy.yamlPath') }}</label>
         <input v-model="path" placeholder="/opt/k8s/deploy.yaml">
@@ -71,11 +75,25 @@
       >{{ $t('k8sDeploy.viewResources') }}</button>
       <pre class="output" v-text="output"></pre>
     </div>
+
+    <!-- 预检弹窗 -->
+    <div v-if="checkModal.show" class="modal-overlay" @click.self="checkModal.show = false">
+      <div class="modal-box">
+        <h4>{{ $t('deploy_check.title') }}</h4>
+        <p style="margin:12px 0;white-space:pre-wrap;font-size:13px;color:#ff9800;line-height:1.6">{{ checkModal.text }}</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-green" :disabled="checkModal.confirming" @click="checkModal.confirm">
+            {{ checkModal.confirming ? '...' : $t('deploy_check.confirm') }}
+          </button>
+          <button class="btn" @click="checkModal.cancel">{{ $t('deploy_check.cancel') }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
@@ -100,6 +118,55 @@ const path = ref('')
 const apiUrl = ref('')
 const showMonitorBtn = ref(false)
 let _lastClusterId = 0
+
+// ── 预检弹窗 ──
+const checkModal = reactive({
+  show: false, text: '', warning: '', confirming: false,
+  resolve: null,
+  confirm() { this.show = false; this.resolve?.(true) },
+  cancel() { this.show = false; this.resolve?.(false) },
+})
+function showCheckModal(text) {
+  return new Promise((resolve) => {
+    checkModal.text = text
+    checkModal.resolve = resolve
+    checkModal.show = true
+  })
+}
+
+async function checkDeploy(body) {
+  // 没有 YAML 路径 → 跳过预检（FluxCD 除外，走 SSH 发现）
+  if (!body.path && body.cd_type !== 'fluxcd') return true
+
+  try {
+    const r = await fetch('/api/deploy-k8s-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.A() },
+      body: JSON.stringify({
+        project: body.project,
+        cd_type: body.cd_type,
+        cluster_id: body.cluster_id,
+        path: body.path,
+        api_url: body.api_url,
+        k8s_ns: body.k8s_ns || '',
+      })
+    })
+
+    if (!r.ok) return true  // 预检失败不阻断，直接放行
+
+    const data = await r.json()
+    // 只有 warning_severe_new（严重不匹配 + K8S 不存在）才弹窗
+    if (data.warning !== 'warning_severe_new') return true
+
+    const text = t(`deploy_check.${data.warning}`, {
+      yaml: data.yaml_deploy_name,
+      project: data.project_name,
+    })
+    return await showCheckModal(text)
+  } catch (e) {
+    return true  // 网络异常不阻断
+  }
+}
 
 async function onProjectChange() {
   await changeProject(selectedProject.value)
@@ -140,6 +207,10 @@ async function doDeploy() {
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }
+
+  // 预检：YAML 名称 vs 项目名
+  const ok = await checkDeploy(body)
+  if (!ok) return
 
   const success = await stream('/api/deploy-k8s-stream', body, {
     initialMsg: '',

@@ -210,7 +210,17 @@ export default {
     apiUrl: 'API 地址',
     namespaceHint: '💡 Namespace 请在 YAML 中声明，留空不传 -n',
     fluxNamespaceHint: '命名空间：flux-system（可在 .env 中修改 FLUX_NAMESPACE）',
+    fluxPath: 'Kustomization 路径 (Git 仓库内)',
     viewResources: '📊 查看资源占用',
+  },
+  deploy_check: {
+    title: '警告',
+    warning_soft: 'YAML 中的 Deployment [{yaml}] 与部署项目 [{project}] 名称不完全一致（但可能存在关联）。是否继续？',
+    warning_severe_existing: 'YAML 中的 Deployment [{yaml}] 与部署项目 [{project}] 严重不匹配，且集群中已存在同名 Deployment。继续可能覆盖错误的线上服务。是否继续？',
+    warning_severe_new: '远程yaml文件声明的名称[{yaml}]与集群中的app名称[{project}]严重不匹配，将视为首次部署,是否继续？',
+    confirm: '继续',
+    cancel: '放弃',
+    clusterUnreachable: '集群不可达：{err}',
   },
   logs: {
     title: '📜 部署记录',
@@ -428,6 +438,9 @@ export default {
     exec_cmd: '执行命令 {n}: {cmd}',
     ssh_exec_start: '开始执行命令...',
     ssh_exec_done: '执行命令完成',
+    // ── 批量部署 ──
+    batch_server_start: '━━━ 服务器 [{current}/{total}]: {host} ━━━',
+    batch_server_end: '──── 服务器 [{current}/{total}]: {host} 结束 ({result}) ────',
     // ── SSH/Compose ──
     uploading_yaml: '正在上传 docker-compose.yml...',
     yaml_upload_fail: '❌ YAML 上传失败: {error}',
@@ -469,6 +482,7 @@ export default {
     yaml_download_ok: '✅ YAML 下载成功',
     reading_yaml: '正在读取远程 YAML...',
     yaml_read_ok: '✅ YAML 读取成功',
+    yaml_name_mismatch: '⚠️ YAML 部署名 [{yaml_name}] 与项目 [{project}] 不一致，已确认继续',
     uploading_yaml_k8s: '正在上传 YAML 到服务器...',
     yaml_upload_k8s_ok: '✅ YAML 上传成功',
     project_yaml_mismatch: '❌ 项目 [{project}] 与 YAML 部署名 [{deploy}] 不匹配！',
@@ -491,6 +505,7 @@ export default {
     argocd_healthy: '部署状态: 🟢 Healthy | 同步状态: {sync}',
     argocd_timeout: '⚠️ 超时未就绪',
     // ── Helm ──
+    helm_connecting: '正在连接集群...',
     helm_start: '开始 Helm 部署...',
     helm_getting_current: '正在获取当前运行版本...',
     helm_getting_after: '正在获取部署后运行版本...',
@@ -503,6 +518,7 @@ export default {
     flux_name_diff: '📦 Flux 资源名 [{name}] ≠ 项目短名 [{project}]，以集群为准',
     flux_start: '开始部署 Flux CD...',
     flux_update: '正在更新镜像配置...',
+    flux_path_update: 'Kustomization 路径: ✅ 已设为 [{path}]',
     flux_update_ok: '镜像配置: ✅ 已更新',
     flux_reconcile: '正在触发 Flux 协调...',
     flux_reconcile_ok: '触发协调: ✅ 已触发',
@@ -665,5 +681,23 @@ export default {
     ssh_connect_failed: 'SSH 连接失败',
     upload_failed: '上传失败',
     alert_not_found: '告警规则不存在',
+    // ── 监控 ──
+    monitoring_disabled: '监控功能未启用',
+    monitor_not_found: '监控项不存在',
+    // ── Bot ──
+    bot_already_exists: 'Bot 已存在',
+    bot_add_failed: '添加 Bot 失败',
+    // ── CI ──
+    ci_service_unavailable: 'CI 服务不可用',
+    ci_trigger_failed: 'CI 触发失败',
+    ci_log_failed: 'CI 日志获取失败',
+    ci_retry_failed: 'CI 重试失败',
+    ci_cancel_failed: 'CI 取消失败',
+    // ── 部署 ──
+    deploy_validation: '部署参数无效',
+    // ── 镜像仓库 ──
+    scan_report_error: '扫描报告错误',
+    scan_trigger_failed: '扫描触发失败',
+    harbor_unavailable: 'Harbor 服务不可用',
   },
 }

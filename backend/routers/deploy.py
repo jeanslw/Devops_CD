@@ -7,7 +7,7 @@ from backend.auth import get_db, verify_token, require_perm
 from backend.models import DeployRequest
 from backend.services.deploy_service import DeployService
 from backend.deployers import DeployTarget
-from backend.deployers.base import ssh_connect
+from backend.deployers.registry import deployer_registry
 from backend.crypto import decrypt
 from backend.config import settings
 from backend.exceptions import ValidationError, NotFoundError
@@ -40,7 +40,7 @@ def deploy(
             lang=req.lang,
         )
     except ValueError as e:
-        raise ValidationError(str(e))
+        raise ValidationError(str(e), error_key="errors.deploy_validation")
 
 
 @router.post("/stop")
@@ -49,7 +49,7 @@ def stop(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
-    """停止服务"""
+    """停止服务 — 按 deploy_type 分发到对应 Deployer"""
     if not req.server_ids:
         raise ValidationError("请选择目标服务器", error_key="errors.select_server")
     with db.conn() as conn:
@@ -61,28 +61,20 @@ def stop(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-    if req.deploy_type == "compose":
-        cmd = f"cd {req.target_path} && docker-compose down"
-    elif req.deploy_type == "k8s":
-        ns = req.k8s_ns or "default"
-        cmd = f"kubectl delete deployment/{req.project} -n {ns}"
-    elif req.commands:
-        # SSH 自定义停止命令
-        image = f"{req.project}:{req.tag}"
-        image_name = req.project.split("/")[-1]
-        cmd = req.commands.replace("{image}", image).replace("{image_name}", image_name).replace("{tag}", req.tag).replace("{project}", req.project)
-    else:
-        raise ValidationError("SSH 模式需要填写停止命令，或改用 compose/k8s 部署类型", error_key="errors.ssh_stop_cmd")
+    target = DeployTarget(
+        host=srv["host"], port=srv["port"], user=srv["user"],
+        password=decrypt(srv["password"] or ""),
+        ssh_key=decrypt(srv["ssh_key"] or ""),
+    )
+    deployer = deployer_registry.create(req.deploy_type)
+    if deployer is None:
+        raise ValidationError(f"不支持的部署类型: {req.deploy_type}", error_key="errors.unsupported_deploy_type")
 
-    try:
-        ssh = ssh_connect(target, settings.ssh_timeout)
-        _, stdout, stderr = ssh.exec_command(cmd)
-        out = stdout.read().decode().strip()
-        err = stderr.read().decode().strip()
-        ssh.close()
-        return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
-    except Exception as e:
-        return {"success": False, "output": str(e)}
+    return deployer.stop(
+        target=target, project=req.project,
+        tag=req.tag, commands=req.commands,
+        target_path=req.target_path, k8s_ns=req.k8s_ns,
+    )
 
 
 @router.post("/stop-k8s")
@@ -91,7 +83,7 @@ def stop_k8s(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
-    """K8S 停止: kubectl delete -f YAML 或 kubectl delete deployment"""
+    """K8S 停止 — 按 cd_type 分发到对应 K8S 子模式 Deployer"""
     if not req.server_ids:
         raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
     try:
@@ -103,19 +95,15 @@ def stop_k8s(
     if not srv:
         raise NotFoundError("集群不存在", error_key="errors.cluster_not_found")
 
-    target = DeployTarget(host=srv["host"], port=srv["port"], user=srv["user"], password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""))
-    project = req.project
+    host, port, user = srv["host"], srv["port"], srv["user"]
+    pwd = decrypt(srv["password"] or "")
+    ssh_key = decrypt(srv["ssh_key"] or "")
 
-    cmd = f"kubectl delete -f {req.target_path}" if req.target_path else f"kubectl delete deployment/{project}"
-    try:
-        ssh = ssh_connect(target, settings.ssh_timeout)
-        _, stdout, stderr = ssh.exec_command(cmd)
-        out = stdout.read().decode().strip()
-        err = stderr.read().decode().strip()
-        ssh.close()
-        return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
-    except Exception as e:
-        return {"success": False, "output": str(e)}
+    deployer = deployer_registry.create(f"k8s/{req.cd_type}")
+    if deployer is None:
+        raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
+
+    return deployer.stop(req=req, project=req.project, host=host, port=port, user=user, pwd=pwd, ssh_key=ssh_key)
 
 
 @router.post("/deploy-stream")
@@ -173,14 +161,17 @@ async def deploy_stream(
                 msg = await asyncio.to_thread(log_queue.get, timeout=30)
                 if msg is None:
                     break
-                yield f"data: {msg}\n\n"
+                # 多行消息需要每行都加 data: 前缀，否则 SSE 只解析第一行
+                safe_msg = msg.replace("\n", "\ndata: ")
+                yield f"data: {safe_msg}\n\n"
             except queue.Empty:
                 yield "data: .\n\n"
                 await asyncio.sleep(1)
 
         if deploy_result.get("success"):
+            # 实时日志已通过 STATUS: 事件流式发出，END 只携带成功标志
             result = deploy_result["data"]
-            yield f"data: END:{result['deploy_id']}:{str(result['success']).lower()}:{result['message']}\n\n"
+            yield f"data: END:{str(result.get('success', False)).lower()}\n\n"
         else:
             yield f"data: ERROR:{deploy_result.get('error', 'Deploy failed')}\n\n"
 

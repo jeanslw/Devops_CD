@@ -29,11 +29,19 @@ export function useSseStream() {
 
         while (buffer.includes('\n\n')) {
           const idx = buffer.indexOf('\n\n')
-          const line = buffer.substring(0, idx)
+          const block = buffer.substring(0, idx)
           buffer = buffer.substring(idx + 2)
 
-          if (!line.startsWith('data: ')) continue
-          const data = line.substring(6)
+          // SSE 事件块可能含多行 data:，收集所有 data: 行拼接
+          const lines = block.split('\n')
+          const dataLines = []
+          for (const ln of lines) {
+            if (ln.startsWith('data: ')) {
+              dataLines.push(ln.substring(6))
+            }
+          }
+          const data = dataLines.join('\n')
+          if (!data) continue
 
           if (data.startsWith('ERROR:')) {
             output.value += '\n❌ ' + data.substring(6)
@@ -41,7 +49,7 @@ export function useSseStream() {
             return false
           } else if (data.startsWith('END:')) {
             const parts = data.substring(4).split(':')
-            const success = parts[1] === 'true'
+            const success = parts[0] === 'true'
             opts.onEnd?.(success)
             return success
           } else if (data === '.') {

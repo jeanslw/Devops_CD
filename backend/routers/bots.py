@@ -37,9 +37,9 @@ def add_bot(
             )
             return ok(message=f"Bot '{req.name}' 已添加")
         except pymysql.err.IntegrityError:
-            raise ConflictError(f"Bot '{req.name}' 已存在")
+            raise ConflictError(f"Bot '{req.name}' 已存在", error_key="errors.bot_already_exists")
         except Exception:
-            raise DatabaseError(f"添加 Bot '{req.name}' 失败")
+            raise DatabaseError(f"添加 Bot '{req.name}' 失败", error_key="errors.bot_add_failed")
 
 
 @router.delete("/{bid}")

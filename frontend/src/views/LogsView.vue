@@ -10,7 +10,7 @@
         </template>
         <template v-else v-for="(l, idx) in logs" :key="l.id">
           <tr style="cursor:pointer" @click="toggleDetail(idx)">
-            <td><span style="color:#81c784;font-weight:bold">#{{ l.deploy_id || l.id }}</span></td>
+            <td><span style="color:#81c784;font-weight:bold">#{{ l.deploy_id }}</span></td>
             <td>{{ l.created_at }}</td>
             <td>{{ l.project }}</td>
             <td>{{ l.tag }}</td>
@@ -18,11 +18,13 @@
             <td>
               <span class="badge" :class="'badge-' + (l.status === 'ok' ? 'ok' : l.status === 'failed' ? 'err' : 'pend')">{{ l.status }}</span>
             </td>
-            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ l.output || '' }}</td>
+            <td class="output-preview">{{ l.output || '' }}</td>
           </tr>
           <tr v-if="expandedIdx === idx" class="log-detail">
             <td colspan="7">
-              <pre style="margin:8px 0;font-size:12px;white-space:pre-wrap;max-height:300px;overflow-y:auto;background:#111;color:#00ff00;padding:10px;border-radius:4px;font-family:monospace">{{ escapeHtml(l.output || $t('logs.noOutput')) }}</pre>
+              <div class="target-block">
+                <pre class="output-code">{{ escapeHtml(l.output || $t('logs.noOutput')) }}</pre>
+              </div>
             </td>
           </tr>
         </template>
@@ -80,7 +82,6 @@ async function loadData(p = 1) {
   try {
     const r = await fetch(`/api/deploy-logs?page=${p}&page_size=${pageSize.value}`, { headers: auth.A() })
     if (auth.handle401(r)) return
-    // 容错：检查 Content-Type 是否是 JSON
     const ct = r.headers.get('content-type') || ''
     if (!ct.includes('application/json')) {
       console.error('API 返回非 JSON:', await r.text().catch(() => ''))
@@ -100,3 +101,28 @@ async function loadData(p = 1) {
 
 onMounted(() => loadData())
 </script>
+
+<style scoped>
+.output-preview {
+  max-width: 280px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.output-code {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #111;
+  color: #00ff00;
+  padding: 10px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+</style>

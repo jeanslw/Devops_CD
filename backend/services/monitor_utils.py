@@ -2,7 +2,7 @@
 
 import time
 from backend.config import settings
-from backend.deployers.base import DeployTarget
+from backend.deployers.base import DeployTarget, _ssh_cmd
 from backend.crypto import decrypt
 
 
@@ -51,13 +51,6 @@ def clear_server_cache():
 
 
 # ── 工具函数 ──
-
-def _ssh_cmd(ssh, cmd):
-    _, stdout, stderr = ssh.exec_command(cmd)
-    o = stdout.read().decode(errors="replace").strip()
-    e = stderr.read().decode(errors="replace").strip()
-    return o or e
-
 
 def _parse_kubectl_top(text: str, has_header: bool = False) -> list[dict]:
     """解析 kubectl top nodes/pods 输出"""

@@ -15,7 +15,7 @@ def _client():
     try:
         return get_ci_client()
     except CiClientError as e:
-        raise ServiceUnavailableError(str(e))
+        raise ServiceUnavailableError(str(e), error_key="errors.ci_service_unavailable")
 
 
 # ── 项目列表 ──
@@ -25,7 +25,7 @@ def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
     try:
         return _client().list_projects()
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
 
 
 # ── 构建历史 ──
@@ -35,11 +35,11 @@ def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"
     try:
         return _client().get_builds(project)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ci_build get_builds] {tb}", flush=True)
-        raise ServiceUnavailableError(f"{type(e).__name__}: {e}")
+        raise ServiceUnavailableError(f"{type(e).__name__}: {e}", error_key="errors.ci_service_unavailable")
 
 
 # ── 触发构建 ──
@@ -52,7 +52,7 @@ def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(
         variables = req.variables or None
         return _client().trigger_build(project, ref, variables)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 触发失败: {e}")
+        raise ServiceUnavailableError(f"CI 触发失败: {e}", error_key="errors.ci_trigger_failed")
 
 
 # ── 构建日志 ──
@@ -63,7 +63,7 @@ def get_build_log(project: str, id: str, _user: str = Depends(require_perm("cd.b
         log = _client().get_build_log(project, id)
         return PlainTextResponse(log)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 日志获取失败: {e}")
+        raise ServiceUnavailableError(f"CI 日志获取失败: {e}", error_key="errors.ci_log_failed")
 
 
 # ── 构建变量 ──
@@ -73,7 +73,7 @@ def get_variables(project: str, _user: str = Depends(require_perm("cd.build-mana
     try:
         return _client().get_variables(project)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
 
 
 # ── 分支列表 ──
@@ -83,7 +83,7 @@ def get_branches(project: str, _user: str = Depends(require_perm("cd.build-manag
     try:
         return _client().get_branches(project)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}")
+        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
 
 
 # ── 重试 Pipeline（仅 GitLab CI）──
@@ -93,7 +93,7 @@ def retry_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci
     try:
         return _client().retry_pipeline(project, id)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 重试失败: {e}")
+        raise ServiceUnavailableError(f"CI 重试失败: {e}", error_key="errors.ci_retry_failed")
 
 
 # ── 取消 Pipeline（仅 GitLab CI）──
@@ -103,7 +103,7 @@ def cancel_pipeline(project: str, id: str, _user: dict = Depends(require_perm("c
     try:
         return _client().cancel_pipeline(project, id)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 取消失败: {e}")
+        raise ServiceUnavailableError(f"CI 取消失败: {e}", error_key="errors.ci_cancel_failed")
 
 
 # ── 健康检查 ──

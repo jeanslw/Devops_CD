@@ -3,10 +3,10 @@
 from fastapi import APIRouter, Depends
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
-from backend.deployers.base import ssh_connect
+from backend.deployers.base import ssh_connect, _ssh_cmd
 from backend.config import settings
 from backend.services.monitor_utils import (
-    _cache_get, _cache_set, _ssh_cmd, _parse_kubectl_top,
+    _cache_get, _cache_set, _parse_kubectl_top,
     _ssh_test, _make_target, clear_server_cache,
 )
 from backend.exceptions import NotFoundError, ValidationError, ServiceUnavailableError
@@ -130,7 +130,7 @@ def get_nodes(
 ):
     """获取 K8S 集群 Node 资源占用"""
     if not settings.monitoring_enabled:
-        raise ValidationError("监控功能未启用")
+        raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 
     cache_key = f"nodes:{server_id}"
     cached = _cache_get(cache_key)
@@ -140,7 +140,7 @@ def get_nodes(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     try:
         target = _make_target(srv)
@@ -182,7 +182,7 @@ def get_nodes(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
 
 
 @router.get("/pods/{server_id}")
@@ -194,7 +194,7 @@ def get_pods(
 ):
     """获取 K8S 集群 Pod 资源占用"""
     if not settings.monitoring_enabled:
-        raise ValidationError("监控功能未启用")
+        raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 
     cache_key = f"pods:{server_id}:{namespace}"
     cached = _cache_get(cache_key)
@@ -204,7 +204,7 @@ def get_pods(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     try:
         target = _make_target(srv)
@@ -261,7 +261,7 @@ def get_pods(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
 
 
 @router.get("/pod-detail/{server_id}")
@@ -274,7 +274,7 @@ def get_pod_detail(
 ):
     """获取单个 K8S Pod 详情"""
     if not settings.monitoring_enabled:
-        raise ValidationError("监控功能未启用")
+        raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 
     cache_key = f"pod_detail:{server_id}:{namespace}:{name}"
     cached = _cache_get(cache_key)
@@ -284,7 +284,7 @@ def get_pod_detail(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     try:
         target = _make_target(srv)
@@ -297,7 +297,7 @@ def get_pod_detail(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
 
 
 # ── Docker ──
@@ -310,7 +310,7 @@ def get_docker_containers(
 ):
     """获取 Docker 服务器容器资源占用（仅容器，系统资源走 /system）"""
     if not settings.monitoring_enabled:
-        raise ValidationError("监控功能未启用")
+        raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 
     cache_key = f"docker:{server_id}"
     cached = _cache_get(cache_key)
@@ -320,7 +320,7 @@ def get_docker_containers(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     try:
         target = _make_target(srv)
@@ -353,7 +353,7 @@ def get_docker_containers(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
 
 
 # ── 系统资源（通用：K8S / Docker / SSH 都可用）──
@@ -366,7 +366,7 @@ def get_system_info(
 ):
     """获取服务器系统资源：CPU、内存、磁盘、负载、进程 Top5（所有类型通用）"""
     if not settings.monitoring_enabled:
-        raise ValidationError("监控功能未启用")
+        raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 
     cache_key = f"system:{server_id}"
     cached = _cache_get(cache_key)
@@ -376,7 +376,7 @@ def get_system_info(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     try:
         target = _make_target(srv)
@@ -406,4 +406,4 @@ def get_system_info(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")

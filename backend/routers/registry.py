@@ -64,7 +64,7 @@ def get_scan_report(
     if result is None:
         raise NotFoundError("扫描报告未找到", error_key="errors.scan_report_not_found")
     if isinstance(result, dict) and "error" in result:
-        raise NotFoundError(result["error"])
+        raise NotFoundError(result["error"], error_key="errors.scan_report_error")
     return result
 
 
@@ -80,10 +80,10 @@ def trigger_scan(
         svc = RegistryService(db)
         result = svc.trigger_scan(repo_id, tag)
         if not result.get("ok"):
-            raise ValidationError(result.get("error", "触发失败"))
+            raise ValidationError(result.get("error", "触发失败"), error_key="errors.scan_trigger_failed")
         return result
     except HarborUnavailableError as e:
-        raise ServiceUnavailableError(str(e))
+        raise ServiceUnavailableError(str(e), error_key="errors.harbor_unavailable")
 
 
 # ── 删除 ──
@@ -100,10 +100,10 @@ def delete_artifact(
         svc = RegistryService(db)
         result = svc.delete_artifact(repo_id, body.tag)
         if not result["ok"]:
-            raise ConflictError(result.get("error", "删除失败"))
+            raise ConflictError(result.get("error", "删除失败"), error_key="errors.delete_artifact_failed")
         return {"ok": True, "detail": f"Tag '{body.tag}' 已删除"}
     except HarborUnavailableError as e:
-        raise ServiceUnavailableError(str(e))
+        raise ServiceUnavailableError(str(e), error_key="errors.harbor_unavailable")
 
 
 # ── 同步 ──
@@ -121,7 +121,7 @@ def trigger_sync(
             return svc.sync_for_project(project)
         return svc.sync_all()
     except HarborUnavailableError as e:
-        raise ServiceUnavailableError(str(e))
+        raise ServiceUnavailableError(str(e), error_key="errors.harbor_unavailable")
 
 
 # ── 同步配置 ──

@@ -3,21 +3,29 @@
 优先级：
 1. kubectl apply -f {path}  — 远程 YAML 文件（生产推荐）
 2. kubectl set image       — 直接改镜像版本（快速迭代）
+
+namespace 从 YAML 中解析，前端不提供 namespace 输入框。
 """
 
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from backend.config import settings
 from backend.deploy_log import S
+from backend.deployers.k8s_utils import _kubectl_pods
 
 
-def _get_deployment_name_from_yaml(ssh, yaml_path):
-    """从 YAML 文件中提取第一个 Deployment 名称"""
+def _get_yaml_metadata(ssh, yaml_path):
+    """从 YAML 文件提取 Deployment 的 name + namespace。
+    namespace 未声明时返回空串，调用方不传 -n，由 kubectl context 决定。"""
     _, stdout, _ = ssh.exec_command(
-        f"kubectl get -f {yaml_path} -o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}}' 2>/dev/null"
+        f"kubectl get -f {yaml_path} "
+        f"-o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}} {{{{.items[?(@.kind==\"Deployment\")].metadata.namespace}}}}' "
+        f"2>/dev/null"
     )
     raw = stdout.read().decode().strip()
-    names = [n for n in raw.split() if n]
-    return names[0] if names else ""
+    if not raw:
+        return "", ""
+    parts = raw.split(None, 1)  # name namespace
+    return parts[0], (parts[1].strip() if len(parts) > 1 else "")
 
 
 class K8sDeployer(Deployer):
@@ -33,70 +41,127 @@ class K8sDeployer(Deployer):
         if not target.host:
             return DeployResult(image=image, status="failed", output="Missing K8s node host")
 
-        namespace = target.options.get("namespace", "default")
         deployment_name = target.options.get("deployment", project)
         container_name = target.options.get("container", project)
-
-        if target.path:
-            cmds = [
-                f"kubectl apply -f {target.path}",
-                "sleep 2",
-                f"kubectl get pods -n {namespace} --no-headers 2>/dev/null | grep -E '^{project}-[a-f0-9]'",
-            ]
-        else:
-            cmds = [
-                f"kubectl set image deployment/{deployment_name} {container_name}={image} -n {namespace}",
-                f"kubectl rollout status deployment/{deployment_name} -n {namespace} --timeout=120s",
-                f"kubectl get pods -n {namespace} --no-headers 2>/dev/null | grep -E '^{deployment_name}-[a-f0-9]'",
-            ]
+        filter_name = project.split("/")[-1]
 
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
-                # ── 从 YAML 提取实际 Deployment 名称 ──
+                # ── 从 YAML 提取 Deployment 名 + namespace ──
                 if target.path:
-                    actual_deploy = _get_deployment_name_from_yaml(ssh, target.path)
-                    # 使用实际部署名
-                    deploy_name = actual_deploy or project
-                    # 校验项目名与 YAML 部署名严格相等
-                    if project != deploy_name:
+                    deploy_name, namespace = _get_yaml_metadata(ssh, target.path)
+                    if not deploy_name:
                         return DeployResult(
                             image=image, status="failed",
-                            output=f"Project [{project}] does not match YAML deployment name [{deploy_name}]. Please check the YAML path.",
+                            output=f"YAML [{target.path}] 中未找到 Deployment 定义",
                         )
-                    cmds = [
-                        f"kubectl apply -f {target.path}",
-                        "sleep 2",
-                        f"kubectl get pods -n {namespace} --no-headers 2>/dev/null | grep -E '^{deploy_name}-[a-f0-9]'",
+                    if filter_name != deploy_name:
+                        # 前端预检弹窗已确认，这里只打警告不拦截
+                        self._log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=deploy_name, project=filter_name))
+                else:
+                    deploy_name = deployment_name
+                    namespace = ""  # 没 YAML，留空不传 -n
+                    # 无 YAML → 必须先有 Deployment 才允许 set image
+                    check_name = deploy_name
+                    _, check_stdout, _ = ssh.exec_command(
+                        f"kubectl get deployment/{check_name} {f'-n {namespace}' if namespace else ''} -o name 2>/dev/null".strip()
+                    )
+                    if not check_stdout.read().decode().strip():
+                        return DeployResult(
+                            image=image, status="failed",
+                            output=f"kubectl set image 需要集群中已存在 Deployment [{deploy_name}]，" +
+                                   f"当前未找到。请先用 YAML 方式首次部署。",
+                        )
+
+                ns_flag = f"-n {namespace}" if namespace else ""
+
+                # ── 部署前：当前运行版本 ──
+                self._log(callback, S("deploy_log.current_version"))
+                before = _kubectl_pods(ssh, deploy_name, namespace)
+                before_text = f"当前运行版本:\n{before}" if before.strip() else "当前运行版本: (无)"
+                before_pods = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
+
+                if before.strip():
+                    self._log(callback, before)
+                else:
+                    self._log(callback, S("deploy_log.current_version_none"))
+
+                self._log(callback, S("deploy_log.starting_deploy"))
+
+                # ── 执行部署 ──
+                if target.path:
+                    deploy_cmds = [f"kubectl apply -f {target.path}"]
+                else:
+                    deploy_cmds = [
+                        f"kubectl set image deployment/{deploy_name} {container_name}={image} {ns_flag}".strip()
                     ]
 
-                self._log(callback, S("deploy_log.k8s_start"))
-                output_lines = []
-                for i, c in enumerate(cmds):
+                deploy_log = []
+                for i, c in enumerate(deploy_cmds):
                     self._log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
                     o, e = _exec_on(ssh, c)
                     if o:
-                        output_lines.append(o)
+                        deploy_log.append(o)
                         self._log(callback, o)
                     elif e:
-                        output_lines.append(e)
+                        deploy_log.append(e)
                         self._log(callback, e)
 
-            output = "\n".join(output_lines)
-            is_ok = "successfully rolled out" in output or "Running" in output or "created" in output
+                # ── rollout status 等待部署完成 ──
+                self._log(callback, S("deploy_log.waiting_pod"))
+                rollout_cmd = f"kubectl rollout status deployment/{deploy_name} {ns_flag} --timeout=120s".strip()
+                rollout_out, rollout_err = _exec_on(ssh, rollout_cmd)
+                rollout_output = (rollout_out or rollout_err or "").strip()
+                if rollout_out:
+                    self._log(callback, rollout_out)
+                elif rollout_err:
+                    self._log(callback, rollout_err)
 
-            if is_ok:
-                self._log(callback, S("deploy_log.k8s_success"))
-            else:
-                self._log(callback, S("deploy_log.k8s_fail"))
+                # ── 部署后：查当前 Pod，排除旧 Pod，只看新的 ──
+                self._log(callback, S("deploy_log.after_version"))
+                all_after = _kubectl_pods(ssh, deploy_name, namespace)
+                if all_after.strip():
+                    after_pods = [l for l in all_after.split("\n") if l.strip() and l.split()[0] not in before_pods]
+                    after = "\n".join(after_pods) if after_pods else all_after
+                else:
+                    after = all_after
+                self._log(callback, after)
 
-            return DeployResult(
-                image=image,
-                status="ok" if is_ok else "failed",
-                output=output[:settings.log_truncate_chars],
-            )
+                # ── 成败判断：rollout status 输出为准 ──
+                is_ok = "successfully rolled out" in rollout_output
+                if is_ok:
+                    running_count = sum(1 for l in after.split("\n") if "Running" in l)
+                    self._log(callback, S("deploy_log.verify_ok"))
+                    output = (
+                        f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                        + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
+                        + f"\n\n已部署: {running_count} 个 Running Pod\n\n验证部署: ✅ 部署成功！"
+                    )
+                    return DeployResult(image=image, status="ok", output=output[:settings.log_truncate_chars])
+                else:
+                    self._log(callback, S("deploy_log.verify_fail_timeout"))
+                    output = (
+                        f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                        + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
+                        + f"\n\n验证部署: ❌ 部署失败！"
+                    )
+                    return DeployResult(image=image, status="failed", output=output[:settings.log_truncate_chars])
         except Exception as e:
             self._log(callback, S("deploy_log.k8s_fail_error", error=str(e)))
             return DeployResult(image=image, status="failed", output=str(e))
+
+    def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
+        """停止服务：kubectl delete deployment"""
+        namespace = kwargs.get("k8s_ns", "default")
+        cmd = f"kubectl delete deployment/{project} -n {namespace}"
+        try:
+            with ssh_session(target, settings.ssh_timeout) as ssh:
+                _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
+                out = stdout.read().decode(errors="replace").strip()
+                err = stderr.read().decode(errors="replace").strip()
+                return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+        except Exception as ex:
+            return {"success": False, "output": str(ex)}
 
     def validate(self, target: DeployTarget) -> str | None:
         if not target.host:

@@ -1,148 +1,181 @@
 """K8S kubectl 部署模式 — SSH 远程 kubectl apply + rollout restart"""
 
 from backend.deployers.base import ssh_connect, DeployTarget
+from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import (
-    _log, _kubectl_pods, _render_k8s_yaml, _poll_k8s_pods, _get_deployment_name_from_yaml,
+    _log, _kubectl_pods, _render_k8s_yaml, _get_deployment_name,
 )
 from backend.config import settings
 from backend.deploy_log import S
 
 
-def deploy_kubectl(req, image, project, host, port, user, pwd, ssh_key="", callback=None):
-    target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+class KubectlDeployer(K8sSubDeployer):
+    """kubectl apply + rollout restart"""
 
-    tag = req.tag
-    filter_name = project.split("/")[-1]
+    def cd_type(self) -> str:
+        return "kubectl"
 
-    yaml_content = ""
-    ssh = None
-    if not req.path:
-        _log(callback, S("deploy_log.path_required"))
-        return {"success": False, "output": "kubectl mode requires YAML path or URL"}
-
-    if req.path.startswith("http"):
-        _log(callback, S("deploy_log.downloading_yaml"))
-        import requests
-        r = requests.get(req.path, timeout=10)
-        if r.status_code != 200:
-            _log(callback, S("deploy_log.yaml_fetch_fail", path=req.path))
-            return {"success": False, "output": f"Failed to fetch remote YAML: {req.path}"}
-        yaml_content = r.text
-        _log(callback, S("deploy_log.yaml_download_ok"))
-
-    # 单次 SSH 连接：读取（本地文件）、上传、部署全部共用
-    ssh = ssh_connect(target, settings.ssh_timeout)
-    try:
-        if not req.path.startswith("http"):
-            _log(callback, S("deploy_log.reading_yaml"))
-            _, stdout, _ = ssh.exec_command(f"cat {req.path}")
-            yaml_content = stdout.read().decode()
-            if not yaml_content.strip():
-                _log(callback, S("deploy_log.yaml_empty", path=req.path))
-                return {"success": False, "output": f"Remote YAML is empty: {req.path}"}
-            _log(callback, S("deploy_log.yaml_read_ok"))
-
-        yaml_content = _render_k8s_yaml(yaml_content, image, tag)
-        tmp = f"/tmp/k8s-{filter_name}.yaml"
-
-        _log(callback, S("deploy_log.uploading_yaml_k8s"))
-        sftp = ssh.open_sftp()
-        with sftp.file(tmp, "w") as f:
-            f.write(yaml_content)
-        sftp.close()
-        _log(callback, S("deploy_log.yaml_upload_k8s_ok"))
-
-        deploy_log = []
-
-        # ── 从 YAML 中提取实际 Deployment 名称 ──
-        actual_deploy = _get_deployment_name_from_yaml(ssh, tmp, filter_name)
-        deploy_name = actual_deploy or filter_name
-
-        before = _kubectl_pods(ssh, deploy_name)
-        before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
-        before_pods = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
-
-        _log(callback, S("deploy_log.verifying_app"))
-
-        # ── 校验项目名与 YAML 部署名一致（不一致仅警告，不阻止部署）──
-        if filter_name != deploy_name:
-            _log(callback, S("deploy_log.project_yaml_mismatch", project=filter_name, deploy=deploy_name))
-
-        is_first_deploy = False
-        if not before.strip():
-            all_pods = _kubectl_pods(ssh, "")
-            running_pods = all_pods.strip()
-            if running_pods:
-                _log(callback, S("deploy_log.app_not_found", name=deploy_name, running=running_pods))
-                return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}"}
-            else:
-                is_first_deploy = True
-                _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
+    def stop(self, req, project: str, host: str, port: int = 22,
+             user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
+        """停止：kubectl delete -f <yaml> 或 kubectl delete deployment"""
+        target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+        if req.target_path:
+            cmd = f"kubectl delete -f {req.target_path}"
         else:
-            _log(callback, S("deploy_log.app_verified", name=deploy_name))
-        _log(callback, before_text)
-
-        _log(callback, S("deploy_log.starting_deploy"))
-        cmds = [f"kubectl apply -f {tmp}"]
-        if not is_first_deploy:
-            cmds.append(f"kubectl rollout restart deployment/{deploy_name}")
-        for i, c in enumerate(cmds):
-            _log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
-            _, stdout, stderr = ssh.exec_command(c)
-            o = stdout.read().decode().strip()
-            e = stderr.read().decode().strip()
-            if o:
-                deploy_log.append(o)
-                _log(callback, o)
-            elif e:
-                deploy_log.append(e)
-                _log(callback, e)
-
-        _log(callback, S("deploy_log.waiting_pod"))
-        _, stdout, _ = ssh.exec_command(f"kubectl get deployment/{deploy_name} -o jsonpath='{{.spec.replicas}}' 2>/dev/null || echo 1")
-        expected_replicas = int(stdout.read().decode().strip() or "1")
-
-        poll_result = _poll_k8s_pods(ssh, deploy_name, image, expected_replicas, before_pods=before_pods)
-        after = poll_result["after"]
-
-        wait_text = f"轮询耗时: {poll_result['elapsed']}s, 最大等待: {poll_result['max_wait_seconds']}s"
-        status_text = f"已部署: {poll_result['correct_ready']}/{expected_replicas} 个正确版本 Pod"
-        pod_summary = "\n".join(poll_result["pod_details"]) if poll_result["pod_details"] else after
-
-        if poll_result["all_ready"]:
-            _log(callback, S("deploy_log.pod_started"))
-            result = (
-                f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
-                + f"\n\n部署后运行版本:\n{after}\n\n{wait_text}\n{status_text}\n\n验证部署: ✅ 部署成功！"
-            )
-            _log(callback, S("deploy_log.after_version"))
-            _log(callback, after)
-            _log(callback, S("deploy_log.verify_ok"))
-        elif poll_result["has_failed"]:
-            _log(callback, S("deploy_log.pod_failed"))
-            result = (
-                f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
-                + f"\n\n部署后运行版本:\n{after}\n\n{wait_text}\n{status_text}\n\n错误 Pod:\n" + "\n".join(poll_result["pod_errors"])
-                + f"\n\n验证部署: ❌ 部署失败！(Pod 状态异常)"
-            )
-            _log(callback, S("deploy_log.after_version"))
-            _log(callback, after)
-            _log(callback, S("deploy_log.verify_fail_pod"))
-        else:
-            _log(callback, S("deploy_log.pod_failed"))
-            result = (
-                f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
-                + f"\n\n部署后运行版本:\n{after}\n\n{wait_text}\n{status_text}\n\nPod 状态:\n{pod_summary}"
-                + f"\n\n验证部署: ❌ 部署失败！(超时未就绪)"
-            )
-            _log(callback, S("deploy_log.after_version"))
-            _log(callback, after)
-            _log(callback, S("deploy_log.verify_fail_timeout"))
-
-        return {"success": poll_result["all_ready"], "output": result[:settings.log_truncate_chars]}
-    except Exception as e:
-        _log(callback, S("deploy_log.deploy_error", error=str(e)))
-        return {"success": False, "output": str(e)}
-    finally:
-        if ssh:
+            cmd = f"kubectl delete deployment/{project}"
+        try:
+            ssh = ssh_connect(target, settings.ssh_timeout)
+            _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
+            out = stdout.read().decode(errors="replace").strip()
+            err = stderr.read().decode(errors="replace").strip()
             ssh.close()
+            return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+        except Exception as ex:
+            return {"success": False, "output": str(ex)}
+
+    def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+
+        tag = req.tag
+        filter_name = project.split("/")[-1]
+
+        yaml_content = ""
+        ssh = None
+        if not req.path:
+            _log(callback, S("deploy_log.path_required"))
+            return {"success": False, "output": "kubectl mode requires YAML path or URL"}
+
+        if req.path.startswith("http"):
+            _log(callback, S("deploy_log.downloading_yaml"))
+            import requests
+            r = requests.get(req.path, timeout=10)
+            if r.status_code != 200:
+                _log(callback, S("deploy_log.yaml_fetch_fail", path=req.path))
+                return {"success": False, "output": f"Failed to fetch remote YAML: {req.path}"}
+            yaml_content = r.text
+            _log(callback, S("deploy_log.yaml_download_ok"))
+
+        # 单次 SSH 连接：读取（本地文件）、上传、部署全部共用
+        ssh = ssh_connect(target, settings.ssh_timeout)
+        try:
+            if not req.path.startswith("http"):
+                _log(callback, S("deploy_log.reading_yaml"))
+                _, stdout, _ = ssh.exec_command(f"cat {req.path}")
+                yaml_content = stdout.read().decode()
+                if not yaml_content.strip():
+                    _log(callback, S("deploy_log.yaml_empty", path=req.path))
+                    return {"success": False, "output": f"Remote YAML is empty: {req.path}"}
+                _log(callback, S("deploy_log.yaml_read_ok"))
+
+            # ── 先渲染再校验：渲染后 {IMAGE}:{TAG} 已替换，YAML 可被 safe_load 解析 ──
+            yaml_content = _render_k8s_yaml(yaml_content, image, tag)
+            yaml_deploy_name = _get_deployment_name(yaml_content)
+            if yaml_deploy_name and yaml_deploy_name != filter_name:
+                # 前端预检弹窗已确认，这里只打警告不拦截
+                _log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=yaml_deploy_name, project=filter_name))
+            tmp = f"/tmp/k8s-{filter_name}.yaml"
+
+            _log(callback, S("deploy_log.uploading_yaml_k8s"))
+            sftp = ssh.open_sftp()
+            with sftp.file(tmp, "w") as f:
+                f.write(yaml_content)
+            sftp.close()
+            _log(callback, S("deploy_log.yaml_upload_k8s_ok"))
+
+            deploy_name = yaml_deploy_name or filter_name  # 以 YAML 声明的 Deployment 名为准
+            name_mismatch = yaml_deploy_name and yaml_deploy_name != filter_name
+
+            deploy_log = []
+
+            _log(callback, S("deploy_log.verifying_app"))
+
+            before = _kubectl_pods(ssh, deploy_name)
+            before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
+            before_pods = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
+
+            is_first_deploy = False
+            if not before.strip():
+                if name_mismatch:
+                    # 名字不匹配时 YAML Deployment 是新的，视为首次部署
+                    is_first_deploy = True
+                    _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
+                else:
+                    all_pods = _kubectl_pods(ssh, "")
+                    running_pods = all_pods.strip()
+                    if running_pods:
+                        _log(callback, S("deploy_log.app_not_found", name=deploy_name, running=running_pods))
+                        return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}"}
+                    else:
+                        is_first_deploy = True
+                        _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
+            else:
+                _log(callback, S("deploy_log.app_verified", name=deploy_name))
+            if before.strip():
+                _log(callback, S("deploy_log.current_version"))
+                _log(callback, before)
+            else:
+                _log(callback, S("deploy_log.current_version_none"))
+
+            _log(callback, S("deploy_log.starting_deploy"))
+            cmds = [f"kubectl apply -f {tmp}"]
+            if not is_first_deploy:
+                cmds.append(f"kubectl rollout restart deployment/{deploy_name}")
+            for i, c in enumerate(cmds):
+                _log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
+                _, stdout, stderr = ssh.exec_command(c)
+                o = stdout.read().decode().strip()
+                e = stderr.read().decode().strip()
+                if o:
+                    deploy_log.append(o)
+                    _log(callback, o)
+                elif e:
+                    deploy_log.append(e)
+                    _log(callback, e)
+
+            # ── rollout status 等待部署完成 ──
+            _log(callback, S("deploy_log.waiting_pod"))
+            rollout_cmd = f"kubectl rollout status deployment/{deploy_name} --timeout=120s"
+            _, rollout_stdout, rollout_stderr = ssh.exec_command(rollout_cmd)
+            rollout_out = rollout_stdout.read().decode(errors="replace").strip()
+            rollout_err = rollout_stderr.read().decode(errors="replace").strip()
+            rollout_output = (rollout_out or rollout_err or "").strip()
+            if rollout_out:
+                _log(callback, rollout_out)
+            elif rollout_err:
+                _log(callback, rollout_err)
+
+            # ── 部署后：查当前 Pod，排除旧 Pod ──
+            _log(callback, S("deploy_log.after_version"))
+            all_after = _kubectl_pods(ssh, deploy_name)
+            if all_after.strip():
+                after_pods = [l for l in all_after.split("\n") if l.strip() and l.split()[0] not in before_pods]
+                after = "\n".join(after_pods) if after_pods else all_after
+            else:
+                after = all_after
+            _log(callback, after)
+
+            # ── 成败判断：rollout status 输出为准 ──
+            is_ok = "successfully rolled out" in rollout_output
+            if is_ok:
+                running_count = sum(1 for l in after.split("\n") if "Running" in l)
+                _log(callback, S("deploy_log.verify_ok"))
+                result = (
+                    f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                    + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
+                    + f"\n\n已部署: {running_count} 个 Running Pod\n\n验证部署: ✅ 部署成功！"
+                )
+            else:
+                _log(callback, S("deploy_log.verify_fail_timeout"))
+                result = (
+                    f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                    + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
+                    + f"\n\n验证部署: ❌ 部署失败！"
+                )
+
+            return {"success": is_ok, "output": result[:settings.log_truncate_chars]}
+        except Exception as e:
+            _log(callback, S("deploy_log.deploy_error", error=str(e)))
+            return {"success": False, "output": str(e)}
+        finally:
+            if ssh:
+                ssh.close()
