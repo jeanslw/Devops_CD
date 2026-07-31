@@ -104,7 +104,7 @@ class KubectlDeployer(K8sSubDeployer):
                     running_pods = all_pods.strip()
                     if running_pods:
                         _log(callback, S("deploy_log.app_not_found", name=deploy_name, running=running_pods))
-                        return {"success": False, "output": f"{before_text}\n\n部署失败：未找到应用 [{deploy_name}]，当前运行的 Pod：\n{running_pods}"}
+                        return {"success": False, "output": f"{before_text}\n\nDeploy failed: app [{deploy_name}] not found.\nRunning Pods:\n{running_pods}"}
                     else:
                         is_first_deploy = True
                         _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))

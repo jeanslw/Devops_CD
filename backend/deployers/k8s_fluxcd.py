@@ -50,7 +50,7 @@ class FluxCDDeployer(K8sSubDeployer):
             flux_name, flux_kind = _discover_flux_resource(ssh, project.split("/")[-1], "")
             if not flux_kind:
                 ssh.close()
-                return {"success": False, "output": f"未找到 Flux 资源: {project}"}
+                return {"success": False, "output": f"Flux resource not found: {project}"}
             cmd = f"flux suspend {flux_kind} {flux_name} -n {settings.flux_namespace}"
             _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
             out = stdout.read().decode(errors="replace").strip()
@@ -97,7 +97,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 ssh.close()
                 return {
                     "success": False,
-                    "output": f"未找到引用镜像 [{img_name}] 的 Flux 资源！请确认 flux-system 下有对应的 HelmRelease 或 Kustomization。",
+                    "output": f"No Flux resource (HelmRelease/Kustomization) referencing image [{img_name}] found in flux-system namespace.",
                 }
             if flux_name != project.split("/")[-1]:
                 _log(callback, S("deploy_log.flux_name_diff", name=flux_name, project=project.split('/')[-1]))
@@ -158,7 +158,7 @@ class FluxCDDeployer(K8sSubDeployer):
                         ssh.close()
                         return {
                             "success": False,
-                            "output": f"{before_text}\n\n开始部署:\n镜像已更新，Flux 协调已触发\n\nFlux 部署失败: {flux_err}",
+                            "output": f"{before_text}\n\nDeploy started:\nImage updated, Flux reconcile triggered\n\nFlux deploy failed: {flux_err}",
                         }
 
                 after = _kubectl_pods(ssh, flux_name)
@@ -180,7 +180,7 @@ class FluxCDDeployer(K8sSubDeployer):
                     ssh.close()
                     return {
                         "success": False,
-                        "output": f"{before_text}\n\n开始部署:\n镜像已更新，Flux 协调已触发\n\nFlux 部署失败: {flux_err}",
+                        "output": f"{before_text}\n\nDeploy started:\nImage updated, Flux reconcile triggered\n\nFlux deploy failed: {flux_err}",
                     }
                 _log(callback, S("deploy_log.flux_no_reaction"))
 
