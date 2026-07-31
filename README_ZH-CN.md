@@ -13,7 +13,8 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 >
 > **不是大厂的遥控器，是小团队的瑞士军刀。**
 
-**[英文版](README.md)**
+>**[英文版](README.md)**
+
 ![系统概览](system_info.png)
 ![运行状态](system_running.png)
 

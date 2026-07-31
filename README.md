@@ -5,8 +5,8 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 >
 > One unified panel for multi-Git-platform CI pipelines, Harbor artifact management, and multi-mode CD deployment — no more switching between Gitee, Jenkins, and Harbor just to align a single image tag.
 
+>**[Chinese](README_ZH-CN.md)**
 
-**[Chinese](README_ZH-CN.md)**
 ![System Overview](system_info.png)
 ![System Status](system_running.png)
 
