@@ -7,6 +7,8 @@
 namespace 从 YAML 中解析，前端不提供 namespace 输入框。
 """
 
+import shlex
+
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from backend.config import settings
 from backend.deploy_log import S
@@ -17,7 +19,7 @@ def _get_yaml_metadata(ssh, yaml_path):
     """从 YAML 文件提取 Deployment 的 name + namespace。
     namespace 未声明时返回空串，调用方不传 -n，由 kubectl context 决定。"""
     _, stdout, _ = ssh.exec_command(
-        f"kubectl get -f {yaml_path} "
+        f"kubectl get -f {shlex.quote(yaml_path)} "
         f"-o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}} {{{{.items[?(@.kind==\"Deployment\")].metadata.namespace}}}}' "
         f"2>/dev/null"
     )
@@ -64,7 +66,7 @@ class K8sDeployer(Deployer):
                     # 无 YAML → 必须先有 Deployment 才允许 set image
                     check_name = deploy_name
                     _, check_stdout, _ = ssh.exec_command(
-                        f"kubectl get deployment/{check_name} {f'-n {namespace}' if namespace else ''} -o name 2>/dev/null".strip()
+                        f"kubectl get deployment/{shlex.quote(check_name)} {f'-n {namespace}' if namespace else ''} -o name 2>/dev/null".strip()
                     )
                     if not check_stdout.read().decode().strip():
                         return DeployResult(
@@ -90,16 +92,16 @@ class K8sDeployer(Deployer):
 
                 # ── 执行部署 ──
                 if target.path:
-                    deploy_cmds = [f"kubectl apply -f {target.path}"]
+                    deploy_cmds = [f"kubectl apply -f {shlex.quote(target.path)}"]
                 else:
                     deploy_cmds = [
-                        f"kubectl set image deployment/{deploy_name} {container_name}={image} {ns_flag}".strip()
+                        f"kubectl set image deployment/{shlex.quote(deploy_name)} {shlex.quote(container_name)}={shlex.quote(image)} {ns_flag}".strip()
                     ]
 
                 deploy_log = []
                 for i, c in enumerate(deploy_cmds):
                     self._log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
-                    o, e = _exec_on(ssh, c)
+                    o, e, exit_code = _exec_on(ssh, c)
                     if o:
                         deploy_log.append(o)
                         self._log(callback, o)
@@ -109,8 +111,8 @@ class K8sDeployer(Deployer):
 
                 # ── rollout status 等待部署完成 ──
                 self._log(callback, S("deploy_log.waiting_pod"))
-                rollout_cmd = f"kubectl rollout status deployment/{deploy_name} {ns_flag} --timeout=120s".strip()
-                rollout_out, rollout_err = _exec_on(ssh, rollout_cmd)
+                rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout=120s".strip()
+                rollout_out, rollout_err, _ = _exec_on(ssh, rollout_cmd)
                 rollout_output = (rollout_out or rollout_err or "").strip()
                 if rollout_out:
                     self._log(callback, rollout_out)
@@ -153,12 +155,15 @@ class K8sDeployer(Deployer):
     def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
         """停止服务：kubectl delete deployment"""
         namespace = kwargs.get("k8s_ns", "default")
-        cmd = f"kubectl delete deployment/{project} -n {namespace}"
+        cmd = f"kubectl delete deployment/{shlex.quote(project)} -n {shlex.quote(namespace)}"
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
                 out = stdout.read().decode(errors="replace").strip()
                 err = stderr.read().decode(errors="replace").strip()
+                exit_code = stdout.channel.recv_exit_status()
+                if exit_code != 0:
+                    return {"success": False, "output": f"kubectl delete failed (exit {exit_code}): {(err or out)[:settings.log_truncate_chars]}"}
                 return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
             return {"success": False, "output": str(ex)}

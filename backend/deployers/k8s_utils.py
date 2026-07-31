@@ -35,7 +35,7 @@ def _kubectl_pods(ssh, deploy_name="", namespace=""):
     if deploy_name:
         # 前缀匹配：K8s Pod 命名规则 = {deploy}-{rs-hash}-{pod-hash}
         # grep "^{name}-" 避免 app 误匹配 app-backend
-        cmd += f" | grep -E '^{deploy_name}-[a-f0-9]'"
+        cmd += f" | grep -E '^{re.escape(deploy_name)}-[a-f0-9]'"
     return _ssh_cmd(ssh, cmd)
 
 
@@ -152,16 +152,6 @@ def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
         yaml_content = yaml_content.replace("{IMAGE}:{TAG}", final_image)
     # 注意：{IMAGE} 顺序必须在 {IMAGE_NAME} 之前，避免误替换
     return yaml_content.replace("{IMAGE}", final_image).replace("{IMAGE_NAME}", final_image_name).replace("{TAG}", tag)
-
-
-def _get_deployment_name_from_yaml(ssh, yaml_path, fallback=""):
-    """从 YAML 文件中提取第一个 Deployment 名称，不盲猜等于项目名"""
-    _, stdout, _ = ssh.exec_command(
-        f"kubectl get -f {yaml_path} -o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}}' 2>/dev/null"
-    )
-    raw = stdout.read().decode().strip()
-    names = [n for n in raw.split() if n]
-    return names[0] if names else fallback
 
 
 def _log(callback, message):

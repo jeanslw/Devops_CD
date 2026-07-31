@@ -85,7 +85,7 @@ class ComposeDeployer(Deployer):
                 self._ssh_run(ssh, env_update, image)
 
                 # 验证 .env 写入成功（直接看 stdout，忽略 stderr）
-                out, _ = _exec_on(ssh, f"cd {target.path} && cat {env_file}")
+                out, _, _ = _exec_on(ssh, f"cd {target.path} && cat {env_file}")
                 if image_name not in out or tag not in out:
                     self._log(callback, S("deploy_log.env_write_fail"))
                     return DeployResult(image=image, status="failed",
@@ -189,10 +189,10 @@ class ComposeDeployer(Deployer):
                 img_status = ""
                 try:
                     inspect_image = dh_image if _image_exists(dh_image) else image_name
-                    dig, _ = _exec_on(ssh, f"docker image inspect --format '{{{{index .RepoDigests 0}}}}' {inspect_image} 2>/dev/null")
+                    dig, _, _ = _exec_on(ssh, f"docker image inspect --format '{{{{index .RepoDigests 0}}}}' {inspect_image} 2>/dev/null")
                     if dig.strip():
                         img_digest = dig.strip()
-                    tag_full, _ = _exec_on(ssh, f"docker image inspect --format '{{{{index .RepoTags 0}}}}' {inspect_image} 2>/dev/null")
+                    tag_full, _, _ = _exec_on(ssh, f"docker image inspect --format '{{{{index .RepoTags 0}}}}' {inspect_image} 2>/dev/null")
                     if tag_full.strip():
                         img_status = tag_full.strip()
                 except Exception:
@@ -281,7 +281,7 @@ class ComposeDeployer(Deployer):
 
     def _ssh_run(self, ssh, cmd: str, image: str) -> DeployResult:
         try:
-            out, err = _exec_on(ssh, cmd)
+            out, err, exit_code = _exec_on(ssh, cmd)
             return DeployResult(
                 image=image,
                 status="ok",

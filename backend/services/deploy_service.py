@@ -138,7 +138,7 @@ class DeployService:
 
         # 记录日志（一次部署一条记录，批量时合并输出和状态）
         with self._db.conn() as conn:
-            row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
+            row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs FOR UPDATE").fetchone()
             deploy_id = row["next_id"] if row else 1
 
             if is_batch:

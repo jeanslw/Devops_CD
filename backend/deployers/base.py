@@ -14,6 +14,7 @@ def ssh_connect(target: "DeployTarget", timeout: int):
     """统一的 SSH 连接。
     优先级: ssh_key > password > 系统默认 key
     """
+    from backend.config import settings
     import paramiko
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -32,6 +33,10 @@ def ssh_connect(target: "DeployTarget", timeout: int):
 
     try:
         ssh.connect(**kwargs)
+        if settings.ssh_keepalive > 0:
+            transport = ssh.get_transport()
+            if transport:
+                transport.set_keepalive(settings.ssh_keepalive)
     finally:
         if tmp_file:
             try:
@@ -51,15 +56,18 @@ def ssh_session(target: "DeployTarget", timeout: int):
         ssh.close()
 
 
-def _exec_on(ssh, cmd: str) -> Tuple[str, str]:
-    """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr)"""
+def _exec_on(ssh, cmd: str) -> Tuple[str, str, int]:
+    """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr, exit_code)"""
     _, stdout, stderr = ssh.exec_command(cmd)
-    return stdout.read().decode(errors="replace").strip(), stderr.read().decode(errors="replace").strip()
+    o = stdout.read().decode(errors="replace").strip()
+    e = stderr.read().decode(errors="replace").strip()
+    exit_code = stdout.channel.recv_exit_status()
+    return o, e, exit_code
 
 
 def _ssh_cmd(ssh, cmd: str) -> str:
     """执行 SSH 命令，返回 stdout+stderr 合并字符串（去重 fallback）"""
-    o, e = _exec_on(ssh, cmd)
+    o, e, _ = _exec_on(ssh, cmd)
     return o or e
 
 

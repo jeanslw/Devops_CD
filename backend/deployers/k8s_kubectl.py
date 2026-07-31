@@ -22,9 +22,9 @@ class KubectlDeployer(K8sSubDeployer):
         """停止：kubectl delete -f <yaml> 或 kubectl delete deployment"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         if req.target_path:
-            cmd = f"kubectl delete -f {req.target_path}"
+            cmd = f"kubectl delete -f {shlex.quote(req.target_path)}"
         else:
-            cmd = f"kubectl delete deployment/{project}"
+            cmd = f"kubectl delete deployment/{shlex.quote(project)}"
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)

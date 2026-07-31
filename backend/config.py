@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # ── SSH（可选）──
     ssh_timeout: int = 30
+    ssh_keepalive: int = 30          # 0 关闭 keepalive
 
     # ── Docker 部署（可选）──
     container_restart_policy: str = "always"

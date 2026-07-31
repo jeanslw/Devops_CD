@@ -87,6 +87,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 return f"[{resource_kind}] {reason}: {message}" if message else f"[{resource_kind}] {reason}"
             return None
 
+        ssh = None
         try:
             _log(callback, S("deploy_log.flux_connecting"))
             ssh = ssh_connect(target, settings.ssh_timeout)
@@ -266,3 +267,6 @@ class FluxCDDeployer(K8sSubDeployer):
         except Exception as e:
             _log(callback, S("deploy_log.flux_fail_error", error=str(e)))
             return {"success": False, "output": str(e)}
+        finally:
+            if ssh:
+                ssh.close()

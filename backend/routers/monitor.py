@@ -1,5 +1,7 @@
 """资源监控路由 — 统一 K8S / Docker / SSH 服务器资源查看"""
 
+import shlex
+
 from fastapi import APIRouter, Depends
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
@@ -48,6 +50,7 @@ def list_monitor_servers(
         entry["has_prometheus"] = False
         entry["has_metrics_server"] = False
 
+        ssh = None
         try:
             target = _make_target(srv)
             ssh = ssh_connect(target, settings.ssh_timeout)
@@ -107,11 +110,12 @@ def list_monitor_servers(
                     entry["status"] = "unavailable"
                     entry["hint"] = "SSH 连接正常但缺少基础命令"
 
-            ssh.close()
-
         except Exception as e:
             entry["status"] = "error"
             entry["error"] = str(e)
+        finally:
+            if ssh:
+                ssh.close()
 
         result.append(entry)
 
@@ -142,6 +146,7 @@ def get_nodes(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
+    ssh = None
     try:
         target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
@@ -171,7 +176,6 @@ def get_nodes(
             node["capacity_memory"] = cap.get("memory", "?")
             node["max_pods"] = cap.get("max_pods", "?")
 
-        ssh.close()
         resp = {
             "success": True,
             "monitor_type": "k8s",
@@ -183,6 +187,9 @@ def get_nodes(
         return resp
     except Exception as e:
         raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+    finally:
+        if ssh:
+            ssh.close()
 
 
 @router.get("/pods/{server_id}")
@@ -206,6 +213,7 @@ def get_pods(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
+    ssh = None
     try:
         target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
@@ -216,7 +224,7 @@ def get_pods(
         )
         namespaces = [ns.strip() for ns in ns_list.split("\n") if ns.strip()] if ns_list else []
 
-        ns_filter = f"-n {namespace}" if namespace else "--all-namespaces"
+        ns_filter = f"-n {shlex.quote(namespace)}" if namespace else "--all-namespaces"
         top_cmd = f"kubectl top pods {ns_filter} --no-headers 2>/dev/null"
         top_out = _ssh_cmd(ssh, top_cmd)
         pods = []
@@ -249,7 +257,6 @@ def get_pods(
             pod["restarts"] = info.get("restarts", "0")
             pod["node"] = info.get("node", "?")
 
-        ssh.close()
         resp = {
             "success": True,
             "monitor_type": "k8s",
@@ -262,6 +269,9 @@ def get_pods(
         return resp
     except Exception as e:
         raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+    finally:
+        if ssh:
+            ssh.close()
 
 
 @router.get("/pod-detail/{server_id}")
@@ -286,18 +296,21 @@ def get_pod_detail(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
+    ssh = None
     try:
         target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
-        describe = _ssh_cmd(ssh, f"kubectl describe pod {name} -n {namespace} 2>/dev/null | tail -30")
-        logs = _ssh_cmd(ssh, f"kubectl logs {name} -n {namespace} --tail=20 2>/dev/null")
-        top = _ssh_cmd(ssh, f"kubectl top pod {name} -n {namespace} --no-headers 2>/dev/null")
-        ssh.close()
+        describe = _ssh_cmd(ssh, f"kubectl describe pod {shlex.quote(name)} -n {shlex.quote(namespace)} 2>/dev/null | tail -30")
+        logs = _ssh_cmd(ssh, f"kubectl logs {shlex.quote(name)} -n {shlex.quote(namespace)} --tail=20 2>/dev/null")
+        top = _ssh_cmd(ssh, f"kubectl top pod {shlex.quote(name)} -n {shlex.quote(namespace)} --no-headers 2>/dev/null")
         resp = {"success": True, "name": name, "namespace": namespace, "top": top, "describe": describe, "logs": logs}
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
         raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+    finally:
+        if ssh:
+            ssh.close()
 
 
 # ── Docker ──
@@ -322,6 +335,7 @@ def get_docker_containers(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
+    ssh = None
     try:
         target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
@@ -344,7 +358,6 @@ def get_docker_containers(
                         "block_io": parts[5] if len(parts) > 5 else "?",
                     })
 
-        ssh.close()
         resp = {
             "success": True,
             "monitor_type": "docker",
@@ -354,6 +367,9 @@ def get_docker_containers(
         return resp
     except Exception as e:
         raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+    finally:
+        if ssh:
+            ssh.close()
 
 
 # ── 系统资源（通用：K8S / Docker / SSH 都可用）──
@@ -378,6 +394,7 @@ def get_system_info(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
+    ssh = None
     try:
         target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
@@ -397,7 +414,6 @@ def get_system_info(
                         "mem": parts[2], "cmd": parts[3],
                     })
 
-        ssh.close()
         resp = {
             "success": True,
             "system": info,
@@ -407,3 +423,6 @@ def get_system_info(
         return resp
     except Exception as e:
         raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+    finally:
+        if ssh:
+            ssh.close()

@@ -159,7 +159,7 @@ async function upload() {
     const r = await fetch(`/api/upload/${sid}`, { method: 'POST', headers: auth.A(), body: form })
     const d = await r.json()
     if (d.success) {
-      toast(t('shell.uploadSuccess', { path: d.path }), true)
+      toast(t('shell.uploadSuccess', { path: d.data?.path || '' }), true)
     } else {
       showError(d)
     }

@@ -670,6 +670,7 @@ export default {
     old_password_wrong: '旧密码错误',
     auth_failed: '鉴权失败',
     permission_denied: '权限不足',
+    load_user_failed: '加载用户信息失败，请检查网络后刷新页面',
     no_harbor_repo: '项目 "{project}" 未配置 harbor_repository',
     scan_report_not_found: '扫描报告未找到',
     trigger_scan_failed: '触发扫描失败',

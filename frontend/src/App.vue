@@ -23,6 +23,7 @@
 
 <script setup>
 import { useAuth } from '@/composables/useAuth'
+import { useToast } from '@/composables/useToast'
 import Topbar from '@/components/Topbar.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import Toast from '@/components/Toast.vue'
@@ -30,9 +31,12 @@ import LoginView from '@/views/LoginView.vue'
 import LandingView from '@/views/LandingView.vue'
 import { provide, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
 const auth = useAuth()
+const { toast } = useToast()
+const { t } = useI18n()
 provide('auth', auth)
 
 // 启动时加载用户信息
@@ -45,5 +49,10 @@ watch(() => auth.state.token, (val, oldVal) => {
   if (val && !oldVal) {
     router.push('/')
   }
+})
+
+// 首次加载用户信息失败时提示
+watch(() => auth.state.loadError, (val) => {
+  if (val) toast(t('errors.load_user_failed'), false)
 })
 </script>

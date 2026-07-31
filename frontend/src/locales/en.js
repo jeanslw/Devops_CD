@@ -670,6 +670,7 @@ export default {
     old_password_wrong: 'Wrong old password',
     auth_failed: 'Authentication failed',
     permission_denied: 'Permission denied',
+    load_user_failed: 'Failed to load user info. Please check your network and refresh the page',
     no_harbor_repo: 'Project "{project}" has no harbor_repository configured',
     scan_report_not_found: 'Scan report not found',
     trigger_scan_failed: 'Failed to trigger scan',

@@ -4,6 +4,7 @@ const state = reactive({
   token: sessionStorage.getItem('cd_token') || '',
   initialized: !!sessionStorage.getItem('cd_token'),
   user: null,          // { username, role, permissions: [...] }
+  loadError: false,    // 首次加载用户信息失败
 })
 
 export function useAuth() {
@@ -26,11 +27,14 @@ export function useAuth() {
       const r = await fetch('/api/me', { headers: A() })
       if (r.ok) {
         state.user = await r.json()
+        state.loadError = false
       } else {
+        if (!state.user) state.loadError = true
         state.user = null
       }
     } catch {
-      state.user = null
+      // 已登录用户的网络闪断：保留旧 user，避免 UI 闪白
+      if (!state.user) state.loadError = true
     }
   }
 

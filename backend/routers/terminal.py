@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import posixpath
 import re
 import shlex
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends, Query
@@ -208,8 +209,12 @@ async def upload_file(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-    # 安全校验：文件名防路径穿越
-    safe_filename = os.path.basename(file.filename)
+    # 安全校验：跨平台文件名防路径穿越
+    # 浏览器可能传入 Windows 完整路径 (D:\tmp\2012.txt)，\ 在 Linux 上不被识别为分隔符
+    # 统一将 \ 转为 /，再取 basename，确保 Windows/Linux 后端行为一致
+    _fn = file.filename.replace("\\", "/")
+    _fn = re.sub(r'^[a-zA-Z]:', '', _fn)  # 去除 Windows 盘符
+    safe_filename = _fn.rsplit("/", 1)[-1]
     if not safe_filename:
         raise ValidationError("无效文件名", error_key="errors.invalid_filename")
 
@@ -217,7 +222,21 @@ async def upload_file(
     if not path.startswith("/"):
         raise ValidationError("路径必须为绝对路径，如 /tmp", error_key="errors.path_absolute")
 
-    target = path.rstrip("/") + "/" + safe_filename
+    # 安全校验：路径遍历防护，解析 ../ 等符号
+    # 用 posixpath 强制按 POSIX 规则归一化，无论 Python 跑在 Windows 还是 Linux 都一致
+    # （os.path.realpath 在 Windows 上会自动加盘符 D:\，导致 SFTP 把目标写到错误位置）
+    combined = (path.rstrip("/") + "/" + safe_filename).replace("\\", "/")
+    combined = re.sub(r'^[a-zA-Z]:', '', combined)  # 去 Windows 盘符
+    target = posixpath.normpath(combined)
+    # 拦截写入系统敏感目录
+    blocked_prefixes = ["/etc", "/boot", "/sys", "/proc", "/dev"]
+    for prefix in blocked_prefixes:
+        if target == prefix or target.startswith(prefix + "/"):
+            raise ValidationError(
+                f"不允许上传到系统目录: {prefix}",
+                error_key="errors.upload_blocked_path",
+                error_params={"path": prefix},
+            )
 
     dt = DeployTarget(
         host=srv["host"], port=srv["port"], user=srv["user"],
@@ -230,7 +249,7 @@ async def upload_file(
 
     try:
         sftp = ssh.open_sftp()
-        ssh.exec_command(f"mkdir -p {shlex.quote(path)}")
+        ssh.exec_command(f"mkdir -p {shlex.quote(os.path.dirname(target))}")
         with sftp.file(target, "w") as f:
             while True:
                 chunk = await file.read(65536)
