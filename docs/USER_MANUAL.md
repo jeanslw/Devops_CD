@@ -138,6 +138,7 @@ cd_service/
 | Method | Path | Auth | Description |
 |--------|------|:----:|-------------|
 | GET | `/health` | — | Health check |
+| GET | `/api/info` | — | Public info (version, DB type/status, uptime) |
 | POST | `/api/login` | — | Login, returns Token |
 | GET | `/api/me` | ✅ | Current user info |
 | GET | `/api/projects` | ✅ | CI project list with latest tag |

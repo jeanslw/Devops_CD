@@ -80,10 +80,12 @@
 import { ref, computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useError } from '@/composables/useError'
 
 const auth = inject('auth')
 const { t } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 
 const users = ref([])
 const showPwd = ref(false)
@@ -141,8 +143,7 @@ async function doChangePwd() {
     showPwd.value = false
     if (isSelf.value) auth.fetchMe()
   } else {
-    const e = await r.json()
-    toast(e.detail || t('common.error'))
+    await showError(r)
   }
 }
 
@@ -162,8 +163,7 @@ async function doDelete() {
     showDelConfirm.value = false
     loadUsers()
   } else {
-    const e = await r.json()
-    toast(e.detail || t('common.error'))
+    await showError(r)
   }
 }
 
@@ -178,8 +178,7 @@ async function changeRole(user, newRole) {
     user.role = newRole
     toast(t('users.roleChanged'))
   } else {
-    const e = await r.json()
-    toast(e.detail || t('common.error'))
+    await showError(r)
   }
 }
 

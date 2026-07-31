@@ -118,9 +118,6 @@ async def terminal(websocket: WebSocket, server_id: int):
         return
 
     # SSH 已连上，主动通知前端（onopen 只是 WebSocket 握手成功，不代表 SSH 通）
-    await websocket.send_text(f"\r\n✅ 已连接 {srv['host']}:{srv['port']}\r\n")
-
-    # 开交互 shell（也放线程池，避免短暂阻塞）
     chan = await asyncio.to_thread(ssh.invoke_shell, term="xterm-256color", width=100, height=28)
     chan.settimeout(0.0)
 
@@ -209,16 +206,16 @@ async def upload_file(
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     # 安全校验：文件名防路径穿越
     safe_filename = os.path.basename(file.filename)
     if not safe_filename:
-        raise ValidationError("无效文件名")
+        raise ValidationError("无效文件名", error_key="errors.invalid_filename")
 
     # 安全校验：路径必须为绝对路径
     if not path.startswith("/"):
-        raise ValidationError("路径必须为绝对路径，如 /tmp")
+        raise ValidationError("路径必须为绝对路径，如 /tmp", error_key="errors.path_absolute")
 
     target = path.rstrip("/") + "/" + safe_filename
 
@@ -229,7 +226,7 @@ async def upload_file(
     try:
         ssh = await asyncio.to_thread(ssh_connect, dt, settings.ssh_timeout)
     except Exception as e:
-        raise ValidationError(f"SSH 连接失败: {e}")
+        raise ValidationError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
 
     try:
         sftp = ssh.open_sftp()
@@ -245,4 +242,4 @@ async def upload_file(
         return ok(data={"path": target}, message="文件上传成功")
     except Exception as e:
         ssh.close()
-        raise ValidationError(f"上传失败: {e}")
+        raise ValidationError(f"上传失败: {e}", error_key="errors.upload_failed")

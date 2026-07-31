@@ -7,21 +7,22 @@
 .idea
 .env
 .editorconfig
-venv/
 .venv/
 Dockerfile
 *.md
 LICENSE
 
-# 前端依赖和构建缓存（不需要打进镜像）
+#cache
 frontend/node_modules
 frontend/dist
 
-# Python 缓存
+#
 __pycache__
 *.pyc
 *.pyo
 
-# 本地测试文件
-test/
-.codebuddy/
+#localhost
+tests/
+docs/
+system_info.png
+system_running.png

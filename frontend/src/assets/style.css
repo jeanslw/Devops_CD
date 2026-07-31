@@ -463,12 +463,13 @@ label {
 }
 .nav-lang button:not(.active):hover { color: var(--text); border-color: var(--text-dim); }
 .nav-btn {
-  background: linear-gradient(135deg,#00c853,#00bfa5); color: #000;
-  padding: 8px 20px; border-radius: 6px; font-weight: 600;
-  font-size: 13px; text-decoration: none;
-  transition: transform .2s,box-shadow .2s;
+  background: rgba(99, 102, 241, 0.15); color: #a5b4fc;
+  padding: 5px 14px; border-radius: 5px; font-weight: 500;
+  font-size: 12px; text-decoration: none;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  transition: transform .2s, background .2s, box-shadow .2s;
 }
-.nav-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,255,136,.3); }
+.nav-btn:hover { background: rgba(99, 102, 241, 0.3); box-shadow: 0 2px 12px rgba(99, 102, 241, 0.2); }
 
 .landing-hero {
   position: relative; z-index: 1;

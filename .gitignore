@@ -2,21 +2,21 @@
 .env
 .env.local
 .env.*.local
+.gitignore
 
 #test
 .claude/
-.gitignore
-
-venv/
+.venv/
 node_modules/
-test/
+tests/
 docs/CHANGELOG.md
 __pycache__/
 .codebuddy/
 .workflow/
+
 # IDE
 .vscode/
-.idea/
+.idea
 .editorconfig
 .laragon
 

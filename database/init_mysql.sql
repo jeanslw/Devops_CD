@@ -93,9 +93,14 @@ BEGIN
 END $$
 DELIMITER ;
 
+-- cd_servers 索引（表在本脚本中已创建）
+CALL __add_index('cd_servers', 'idx_cds_type', 'type');
+
 -- cd_deploy_logs 索引（表在本脚本中已创建）
 CALL __add_index('cd_deploy_logs', 'idx_cdl_project', 'project');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_created', 'created_at');
+CALL __add_index('cd_deploy_logs', 'idx_cdl_deploy_id', 'deploy_id');
+CALL __add_index('cd_deploy_logs', 'idx_cdl_project_tag_status', 'project, tag, status');
 
 -- CI 相关表索引（表可能不存在，存储过程内部会检查并跳过）
 CALL __add_index('ci_pipeline_tags', 'idx_pt_project', 'project');
@@ -104,6 +109,14 @@ CALL __add_index('ci_job_git_map', 'idx_jgm_path', 'current_path(255)');
 
 -- cd_registry_artifacts 索引（表在本脚本中已创建）
 CALL __add_index('cd_registry_artifacts', 'idx_cdr_repo_id', 'repo_id');
+
+-- cd_alert_rules 索引（表在本脚本中已创建）
+CALL __add_index('cd_alert_rules', 'idx_cdr_enabled', 'enabled');
+CALL __add_index('cd_alert_rules', 'idx_cdr_created', 'created_at');
+
+-- cd_custom_monitors 索引（表在本脚本中已创建）
+CALL __add_index('cd_custom_monitors', 'idx_cdm_enabled', 'enabled');
+CALL __add_index('cd_custom_monitors', 'idx_cdm_created', 'created_at');
 
 DROP PROCEDURE IF EXISTS __add_index;
 

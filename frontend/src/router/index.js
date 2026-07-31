@@ -104,6 +104,41 @@ const routes = [
     component: () => import('@/views/CustomMonitorsView.vue'),
     meta: { title: '自定义资源' }
   },
+  {
+    path: '/401',
+    name: 'Unauthorized',
+    component: () => import('@/views/ErrorView.vue'),
+    props: { code: 401 },
+    meta: { title: '401' }
+  },
+  {
+    path: '/403',
+    name: 'Forbidden',
+    component: () => import('@/views/ErrorView.vue'),
+    props: { code: 403 },
+    meta: { title: '403' }
+  },
+  {
+    path: '/500',
+    name: 'ServerError',
+    component: () => import('@/views/ErrorView.vue'),
+    props: { code: 500 },
+    meta: { title: '500' }
+  },
+  {
+    path: '/503',
+    name: 'ServiceUnavailable',
+    component: () => import('@/views/ErrorView.vue'),
+    props: { code: 503 },
+    meta: { title: '503' }
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/views/ErrorView.vue'),
+    props: { code: 404 },
+    meta: { title: '404' }
+  },
 
 ]
 
@@ -112,11 +147,11 @@ const router = createRouter({
   routes
 })
 
-// 导航守卫：检查 admin 路由
+// 导航守卫：检查认证
 router.beforeEach((to) => {
   if (to.meta.admin) {
     const token = sessionStorage.getItem('cd_token')
-    if (!token) return '/'
+    if (!token) return '/401'
   }
 })
 

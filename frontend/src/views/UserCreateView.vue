@@ -39,11 +39,13 @@ import { ref, computed, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useError } from '@/composables/useError'
 
 const auth = inject('auth')
 const router = useRouter()
 const { t } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 
 const isSuperAdmin = computed(() => auth.isSuperAdmin())
 
@@ -64,8 +66,7 @@ async function doCreate() {
     toast(t('users.created'))
     router.push('/users')
   } else {
-    const e = await r.json()
-    toast(e.detail || t('common.error'))
+    await showError(r)
   }
 }
 </script>

@@ -40,11 +40,13 @@ import { reactive, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useError } from '@/composables/useError'
 
 const auth = inject('auth')
 const router = useRouter()
 const { t } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 
 const form = reactive({ name: '', type: 'dingtalk', url: '', template: '' })
 
@@ -62,8 +64,7 @@ async function doAdd() {
     toast(t('bots.added'))
     router.push('/bots')
   } else {
-    const e = await r.json()
-    toast(e.detail || t('common.failed'))
+    await showError(r)
   }
 }
 </script>

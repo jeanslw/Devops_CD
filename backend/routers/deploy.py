@@ -51,19 +51,15 @@ def stop(
 ):
     """停止服务"""
     if not req.server_ids:
-        raise ValidationError("请选择目标服务器")
+        raise ValidationError("请选择目标服务器", error_key="errors.select_server")
     with db.conn() as conn:
         try:
             sid = int(req.server_ids.split(",")[0])
         except (ValueError, IndexError):
-            raise ValidationError("请选择目标服务器")
+            raise ValidationError("请选择目标服务器", error_key="errors.select_server")
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:
-        raise NotFoundError("服务器不存在")
-    target = DeployTarget(
-        host=srv["host"], port=srv["port"], user=srv["user"],
-        password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""), path=req.target_path,
-    )
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     if req.deploy_type == "compose":
         cmd = f"cd {req.target_path} && docker-compose down"
@@ -76,7 +72,7 @@ def stop(
         image_name = req.project.split("/")[-1]
         cmd = req.commands.replace("{image}", image).replace("{image_name}", image_name).replace("{tag}", req.tag).replace("{project}", req.project)
     else:
-        raise ValidationError("SSH 模式需要填写停止命令，或改用 compose/k8s 部署类型")
+        raise ValidationError("SSH 模式需要填写停止命令，或改用 compose/k8s 部署类型", error_key="errors.ssh_stop_cmd")
 
     try:
         ssh = ssh_connect(target, settings.ssh_timeout)
@@ -97,15 +93,15 @@ def stop_k8s(
 ):
     """K8S 停止: kubectl delete -f YAML 或 kubectl delete deployment"""
     if not req.server_ids:
-        raise ValidationError("请选择目标集群")
+        raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
     try:
         sid = int(req.server_ids.split(",")[0])
     except (ValueError, IndexError):
-        raise ValidationError("请选择目标集群")
+        raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:
-        raise NotFoundError("集群不存在")
+        raise NotFoundError("集群不存在", error_key="errors.cluster_not_found")
 
     target = DeployTarget(host=srv["host"], port=srv["port"], user=srv["user"], password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""))
     project = req.project

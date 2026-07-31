@@ -55,12 +55,12 @@ const { t, locale } = useI18n()
 const logoUrl = '/static/logo.png'
 
 const cards = computed(() => [
-  { key: 'ssh',     icon: '🖥️', title: t('landing.cards.ssh.title'),     desc: t('landing.cards.ssh.desc') },
-  { key: 'docker',  icon: '🐳', title: t('landing.cards.docker.title'),  desc: t('landing.cards.docker.desc') },
-  { key: 'k8s',     icon: '☸️', title: t('landing.cards.k8s.title'),     desc: t('landing.cards.k8s.desc') },
-  { key: 'verify',  icon: '🔍', title: t('landing.cards.verify.title'),  desc: t('landing.cards.verify.desc') },
-  { key: 'shell',   icon: '🖥️', title: t('landing.cards.shell.title'),   desc: t('landing.cards.shell.desc') },
-  { key: 'notify',  icon: '🔔', title: t('landing.cards.notify.title'),  desc: t('landing.cards.notify.desc') },
+  { key: 'trigger',  icon: '🚀', title: t('landing.cards.trigger.title'),  desc: t('landing.cards.trigger.desc') },
+  { key: 'registry', icon: '📦', title: t('landing.cards.registry.title'), desc: t('landing.cards.registry.desc') },
+  { key: 'k8s',      icon: '☸️', title: t('landing.cards.k8s.title'),      desc: t('landing.cards.k8s.desc') },
+  { key: 'verify',   icon: '🔍', title: t('landing.cards.verify.title'),   desc: t('landing.cards.verify.desc') },
+  { key: 'shell',    icon: '🖥️', title: t('landing.cards.shell.title'),    desc: t('landing.cards.shell.desc') },
+  { key: 'notify',   icon: '🔔', title: t('landing.cards.notify.title'),   desc: t('landing.cards.notify.desc') },
 ])
 
 // 粒子动画
@@ -114,14 +114,27 @@ onMounted(() => {
   resize()
   initParticles()
   draw()
-  window.addEventListener('resize', () => {
-    resize()
-    initParticles()
-  })
+  window.addEventListener('resize', onResize)
+  document.addEventListener('visibilitychange', onVisibility)
 })
 
 onUnmounted(() => {
   cancelAnimationFrame(animId)
-  window.removeEventListener('resize', resize)
+  window.removeEventListener('resize', onResize)
+  document.removeEventListener('visibilitychange', onVisibility)
 })
+
+function onResize() {
+  resize()
+  initParticles()
+}
+
+function onVisibility() {
+  if (document.hidden) {
+    cancelAnimationFrame(animId)
+    animId = null
+  } else if (!animId) {
+    draw()
+  }
+}
 </script>

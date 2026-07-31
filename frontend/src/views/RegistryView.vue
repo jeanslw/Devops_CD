@@ -111,10 +111,12 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
+import { useError } from '@/composables/useError'
 
 const auth = useAuth()
 const { t } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 
 const repos = ref([])
 const loading = ref(true)
@@ -174,8 +176,8 @@ function severityText(a) {
   }
   const st = (a.scan_status || '').toLowerCase()
   const done = ['success', 'finished', 'complete', 'done'].includes(st)
-  if (done) return '<span class="severity-badge sev-none">⚪ 无漏洞</span>'
-  return '⚪ 未扫描'
+  if (done) return `<span class="severity-badge sev-none">${t('registry.noVuln')}</span>`
+  return t('registry.notScanned')
 }
 
 async function loadRepos() {
@@ -222,7 +224,7 @@ async function syncAll() {
       toast(t('registry.syncComplete', { total: d.total, repos: d.repos }), true)
     } else {
       lastSyncText.value = t('registry.syncFail')
-      toast('❌ ' + (d.detail || t('registry.syncFail')), false)
+      showError(d)
     }
     loadRepos()
   } catch (e) {
@@ -251,7 +253,7 @@ async function onSyncIntervalChange() {
       const intervalStr = interval >= 60 ? t('registry.syncInterval.hours', { n: interval / 60 }) : t('registry.syncInterval.minutes', { n: interval })
       toast(interval <= 0 ? t('registry.syncInterval.disabled') : t('registry.syncInterval.set', { interval: intervalStr }), true)
     } else {
-      toast('⚠️ ' + (d.detail || t('registry.syncInterval.fail')), false)
+      showError(d)
       loadSyncConfig()
     }
   } catch (e) {
@@ -307,7 +309,7 @@ async function syncCurrentRepo() {
       toast('✅ ' + t('registry.syncComplete', { total: 0, repos: 0 }).split('：')[0] + t('common.success'), true)
       if (artifactRepoId.value) loadArtifacts(artifactPage.value)
     } else {
-      toast('❌ ' + (d.detail || t('registry.syncFail')), false)
+      showError(d)
     }
   } catch (e) {
     clearTimeout(timer)
@@ -378,7 +380,7 @@ function renderScanReport(data, tag) {
     }).join('')
     html += `</tbody></table></div>`
   }
-  if (data.harbor_url) html += `<div style="margin-top:16px;text-align:right"><a href="${esc(data.harbor_url)}" target="_blank" class="btn btn-blue btn-sm">查看详情 → Harbor</a></div>`
+  if (data.harbor_url) html += `<div style="margin-top:16px;text-align:right"><a href="${esc(data.harbor_url)}" target="_blank" class="btn btn-blue btn-sm">${t('registry.scanDialog.viewInHarbor')}</a></div>`
   scanDialog.content = html
 }
 
@@ -413,7 +415,7 @@ async function doDelete() {
       deleteDialog.show = false
       if (artifactRepoId.value) loadArtifacts(artifactPage.value)
     } else {
-      toast(`❌ ${d.detail || t('registry.deleteFail')}`, false)
+      showError(d)
     }
   } catch (e) { toast(t('registry.requestFail'), false) }
 }

@@ -62,7 +62,7 @@ def update_alert(
     with db.conn() as conn:
         existing = conn.execute("SELECT id FROM cd_alert_rules WHERE id=?", (rule_id,)).fetchone()
         if not existing:
-            raise NotFoundError("告警规则不存在")
+            raise NotFoundError("告警规则不存在", error_key="errors.alert_not_found")
 
         conn.execute(
             "UPDATE cd_alert_rules SET name=?, target_type=?, resource_type=?, server_ids=?, threshold=?, bot_id=?, template=?, enabled=?, cooldown_minutes=?, duration_minutes=? "

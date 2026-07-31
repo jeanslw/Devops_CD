@@ -25,10 +25,12 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
+import { useError } from '@/composables/useError'
 
 const auth = useAuth()
 const { t } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 
 const servers = ref([])
 const selectedServer = ref(0)
@@ -107,7 +109,11 @@ function connect() {
       shellWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
     }
     shellWs.onmessage = (e) => {
-      if (!firstData) { firstData = true; clearTimeout(connectTimer); term.clear() }
+      if (!firstData) {
+        firstData = true; clearTimeout(connectTimer); term.clear()
+        const srv = servers.value.find(x => x.id === selectedServer.value)
+        if (srv) term.writeln(t('shell.sshConnected', { host: srv.host, port: srv.port || 22 }))
+      }
       if (e.data instanceof Blob) e.data.text().then(d => { if (term) term.write(d) })
       else if (term) term.write(e.data)
     }
@@ -152,7 +158,11 @@ async function upload() {
   try {
     const r = await fetch(`/api/upload/${sid}`, { method: 'POST', headers: auth.A(), body: form })
     const d = await r.json()
-    toast(d.success ? t('shell.uploadSuccess', { path: d.path }) : '❌ ' + (d.detail || t('common.failed')), d.success)
+    if (d.success) {
+      toast(t('shell.uploadSuccess', { path: d.path }), true)
+    } else {
+      showError(d)
+    }
   } catch (e) {
     toast(t('shell.uploadFailed'), false)
   }

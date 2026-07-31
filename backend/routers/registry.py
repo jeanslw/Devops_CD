@@ -62,7 +62,7 @@ def get_scan_report(
     svc = RegistryService(db)
     result = svc.get_scan_report(repo_id, tag)
     if result is None:
-        raise NotFoundError("扫描报告未找到")
+        raise NotFoundError("扫描报告未找到", error_key="errors.scan_report_not_found")
     if isinstance(result, dict) and "error" in result:
         raise NotFoundError(result["error"])
     return result
@@ -138,7 +138,7 @@ def get_sync_config(
         return {"interval": interval}
     except Exception as e:
         logger.error(f"get_sync_config error: {e}")
-        raise ServiceUnavailableError(f"读取配置失败: {e}")
+        raise ServiceUnavailableError(f"读取配置失败: {e}", error_key="errors.sync_config_read_failed")
 
 
 @router.put("/config")
@@ -149,13 +149,13 @@ def update_sync_config(
 ):
     """更新定时同步间隔（分钟，0=关闭）"""
     if body.interval < 0:
-        raise ValidationError("间隔不能为负数")
+        raise ValidationError("间隔不能为负数", error_key="errors.negative_interval")
     try:
         svc = RegistryService(db)
         svc.set_sync_interval(body.interval)
     except Exception as e:
         logger.error(f"update_sync_config error: {e}")
-        raise ServiceUnavailableError(f"保存配置失败: {e}")
+        raise ServiceUnavailableError(f"保存配置失败: {e}", error_key="errors.sync_config_save_failed")
     if body.interval <= 0:
         return {"ok": True, "interval": 0, "detail": "定时同步已关闭"}
     return {"ok": True, "interval": body.interval, "detail": f"定时同步已设为每 {body.interval} 分钟"}

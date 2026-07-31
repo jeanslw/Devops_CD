@@ -154,11 +154,13 @@ import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
+import { useError } from '@/composables/useError'
 import MultiSelect from '@/components/MultiSelect.vue'
 
 const auth = useAuth()
 const { t } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 
 const monitors = ref([])
 const loading = ref(true)
@@ -224,8 +226,7 @@ async function save() {
   })
   if (auth.handle401(r)) return
   if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    return toast(err.detail || t('customMonitor.saveFailed'), false)
+    return showError(r)
   }
   toast(editingId.value ? t('customMonitor.updated') : t('customMonitor.created'), true)
   cancelEdit()

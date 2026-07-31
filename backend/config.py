@@ -1,6 +1,6 @@
 """应用配置 — 所有配置通过 .env 文件设置，不要直接修改此文件"""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -72,9 +72,7 @@ class Settings(BaseSettings):
     monitor_cache_pod_detail: int = 15
     alert_check_interval: int = 60      # 告警检测间隔（秒）
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()

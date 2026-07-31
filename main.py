@@ -5,6 +5,8 @@ FastAPI 部署执行器 — SSH / docker-compose / K8s
 架构: main.py(入口) → routers → services → deployers
 """
 from pathlib import Path
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -17,14 +19,10 @@ from backend.routers import auth, projects, servers, deploy, logs, bots, tags, t
 from backend.services.registry_service import start_background_sync, RegistryService
 from backend.services.alert_service import start_alert_checker
 
-# ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="1.2.1")
-BASE_DIR = Path(__file__).parent
 
-# ── 启动事件 ──
-@app.on_event("startup")
-def on_startup():
-    """启动后台定时同步（DB 已存间隔优先，否则读环境变量）"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时：定时同步 + 告警检查"""
     db = Database()
     try:
         svc = RegistryService(db)
@@ -33,6 +31,13 @@ def on_startup():
         interval = -1
     start_background_sync(lambda: Database(), interval)
     start_alert_checker()
+    yield
+
+
+# ── 创建 app ──
+app = FastAPI(title="Devops-Glue CD", version="1.2.2", lifespan=lifespan)
+BASE_DIR = Path(__file__).parent
+_STARTED_AT = datetime.now(timezone.utc)
 
 # 注册路由
 app.include_router(auth.router)
@@ -54,10 +59,12 @@ app.include_router(users.router)
 # ── 异常处理器 ──
 @app.exception_handler(AppException)
 async def app_exception_handler(request, exc: AppException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"success": False, "error": exc.message, "detail": exc.detail, "code": exc.status_code},
-    )
+    body = {"success": False, "error": exc.message, "detail": exc.detail, "code": exc.status_code}
+    if exc.error_key:
+        body["error_key"] = exc.error_key
+        if exc.error_params:
+            body["error_params"] = exc.error_params
+    return JSONResponse(status_code=exc.status_code, content=body)
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -69,9 +76,32 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 # ── 健康检查 ──
 @app.get("/health")
 def health():
+    """轻量健康检查（用于 Docker / K8s liveness probe）"""
+    return {"status": "ok"}
+
+
+# ── 公开信息接口 ──
+@app.get("/api/info")
+def api_info():
+    """公开信息：版本、数据库状态、运行时间等（无需认证）"""
+    db_ok = False
+    try:
+        db = Database()
+        with db.conn() as conn:
+            conn.execute("SELECT 1")
+        db_ok = True
+    except Exception:
+        pass
+
+    uptime_seconds = int((datetime.now(timezone.utc) - _STARTED_AT).total_seconds())
+
     return {
-        "status": "ok",
+        "app": "Devops-Glue CD",
         "version": app.version,
+        "status": "running",
+        "db_type": settings.db_driver,
+        "db_connected": db_ok,
+        "uptime_seconds": uptime_seconds,
     }
 
 

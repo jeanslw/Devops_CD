@@ -362,12 +362,19 @@ class Database:
 
     def _ensure_indexes(self, conn):
         for name, tbl, col in [
-            ("idx_cdl_project", "cd_deploy_logs", "project"),
-            ("idx_cdl_created", "cd_deploy_logs", "created_at"),
-            ("idx_pt_project", "ci_pipeline_tags", "project"),
-            ("idx_pt_created", "ci_pipeline_tags", "created_at"),
-            ("idx_jgm_path",   "ci_job_git_map",  "current_path"),
-            ("idx_cdr_repo_id","cd_registry_artifacts","repo_id"),
+            ("idx_cdl_project",       "cd_deploy_logs",        "project"),
+            ("idx_cdl_created",       "cd_deploy_logs",        "created_at"),
+            ("idx_cdl_deploy_id",     "cd_deploy_logs",        "deploy_id"),
+            ("idx_cdl_project_tag_status", "cd_deploy_logs",   "project, tag, status"),
+            ("idx_pt_project",        "ci_pipeline_tags",      "project"),
+            ("idx_pt_created",        "ci_pipeline_tags",      "created_at"),
+            ("idx_jgm_path",          "ci_job_git_map",        "current_path"),
+            ("idx_cdr_repo_id",       "cd_registry_artifacts", "repo_id"),
+            ("idx_cds_type",          "cd_servers",            "type"),
+            ("idx_cdr_enabled",       "cd_alert_rules",        "enabled"),
+            ("idx_cdr_created",       "cd_alert_rules",        "created_at"),
+            ("idx_cdm_enabled",       "cd_custom_monitors",    "enabled"),
+            ("idx_cdm_created",       "cd_custom_monitors",    "created_at"),
         ]:
             try: conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")
             except: pass

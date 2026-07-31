@@ -38,11 +38,11 @@ def _resolve_cluster(db, req):
         with db.conn() as conn:
             srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (req.cluster_id,)).fetchone()
         if not srv:
-            raise NotFoundError("集群不存在")
+            raise NotFoundError("集群不存在", error_key="errors.cluster_not_found")
         host, port, user, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
         ssh_key = decrypt(srv["ssh_key"] or "")
         return host, port, user, pwd, ssh_key
-    raise ValidationError("请选择目标集群")
+    raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
 
 
 def _resolve_image(db, req):
@@ -50,7 +50,7 @@ def _resolve_image(db, req):
     svc = CiService(db)
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
-        raise ValidationError(f"项目 '{req.project}' 未配置 harbor_repository")
+        raise ValidationError(f"项目 '{req.project}' 未配置 harbor_repository", error_key="errors.no_harbor_repo", error_params={"project": req.project})
     image = f"{settings.harbor_registry}/{harbor_repo}:{req.tag}"
     project_key = svc.resolve_project_key(req.project) or req.project
     project_short = project_key.split("/")[-1]

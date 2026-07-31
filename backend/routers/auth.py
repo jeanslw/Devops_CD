@@ -14,7 +14,7 @@ def login(req: LoginRequest, db: Database = Depends(get_db)):
     token = authenticate(req.user, req.password, db)
     if token:
         return {"token": token}
-    raise AppException("账号或密码错误", status_code=401)
+    raise AppException("账号或密码错误", status_code=401, error_key="errors.invalid_credentials")
 
 
 @router.get("/api/me")

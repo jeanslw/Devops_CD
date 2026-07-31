@@ -2,7 +2,9 @@ import { createI18n } from 'vue-i18n'
 import en from './en.js'
 import zh from './zh.js'
 
-const saved = localStorage.getItem('cd_lang')
+const urlParams = new URLSearchParams(window.location.search)
+const langParam = urlParams.get('lang')
+const saved = langParam || localStorage.getItem('cd_lang')
 const defaultLocale = saved || (navigator.language?.startsWith('zh') ? 'zh' : 'en')
 
 const i18n = createI18n({
