@@ -146,9 +146,9 @@ def deploy_k8s_check(
 
     from backend.deployers.base import ssh_connect, DeployTarget
 
-    if not req.path:
+    if not req.path or req.cd_type == "helm":
         if req.cd_type != "fluxcd":
-            return result  # 无 YAML 模式，不需要预检
+            return result  # Helm chart 目录/无 YAML，不需要预检
 
         # FluxCD: SSH 发现 Flux 资源名，用于名称对比
         from backend.deployers.k8s_fluxcd import _discover_flux_resource

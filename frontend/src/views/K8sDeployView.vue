@@ -233,7 +233,8 @@ async function doStop() {
     project: selectedProject.value,
     deploy_type: 'k8s',
     server_ids: String(cid),
-    target_path: path.value
+    target_path: path.value,
+    cd_type: cdType.value,
   }
   try {
     const r = await fetch('/api/stop-k8s', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth.A() }, body: JSON.stringify(body) })
