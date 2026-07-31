@@ -1,5 +1,7 @@
 """K8S kubectl 部署模式 — SSH 远程 kubectl apply + rollout restart"""
 
+import shlex
+
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import (
@@ -59,11 +61,11 @@ class KubectlDeployer(K8sSubDeployer):
         try:
             if not req.path.startswith("http"):
                 _log(callback, S("deploy_log.reading_yaml"))
-                _, stdout, _ = ssh.exec_command(f"cat {req.path}")
-                yaml_content = stdout.read().decode()
-                if not yaml_content.strip():
+                out, err, ec = _exec_exit(ssh, f"cat {shlex.quote(req.path)}")
+                yaml_content = out
+                if ec != 0 or not yaml_content.strip():
                     _log(callback, S("deploy_log.yaml_empty", path=req.path))
-                    return {"success": False, "output": f"Remote YAML is empty: {req.path}"}
+                    return {"success": False, "output": f"Remote YAML is empty or unreadable: {req.path}\n{err}"}
                 _log(callback, S("deploy_log.yaml_read_ok"))
 
             # ── 先渲染再校验：渲染后 {IMAGE}:{TAG} 已替换，YAML 可被 safe_load 解析 ──
@@ -116,31 +118,30 @@ class KubectlDeployer(K8sSubDeployer):
                 _log(callback, S("deploy_log.current_version_none"))
 
             _log(callback, S("deploy_log.starting_deploy"))
-            cmds = [f"kubectl apply -f {tmp}"]
+            cmds = [f"kubectl apply -f {shlex.quote(tmp)}"]
             if not is_first_deploy:
-                cmds.append(f"kubectl rollout restart deployment/{deploy_name}")
+                cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)}")
             for i, c in enumerate(cmds):
                 _log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
-                _, stdout, stderr = ssh.exec_command(c)
-                o = stdout.read().decode().strip()
-                e = stderr.read().decode().strip()
+                o, e, ec = _exec_exit(ssh, c)
                 if o:
                     deploy_log.append(o)
                     _log(callback, o)
-                elif e:
+                if e:
                     deploy_log.append(e)
                     _log(callback, e)
+                if ec != 0:
+                    _log(callback, S("deploy_log.deploy_error", error=e or f"exit code {ec}"))
+                    return {"success": False, "output": f"{before_text}\n\nStep {i+1} failed (exit {ec}):\n{o or e}"}
 
             # ── rollout status 等待部署完成 ──
             _log(callback, S("deploy_log.waiting_pod"))
-            rollout_cmd = f"kubectl rollout status deployment/{deploy_name} --timeout=120s"
-            _, rollout_stdout, rollout_stderr = ssh.exec_command(rollout_cmd)
-            rollout_out = rollout_stdout.read().decode(errors="replace").strip()
-            rollout_err = rollout_stderr.read().decode(errors="replace").strip()
+            rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s"
+            rollout_out, rollout_err, rollout_ec = _exec_exit(ssh, rollout_cmd, timeout=settings.k8s_rollout_timeout + 30)
             rollout_output = (rollout_out or rollout_err or "").strip()
             if rollout_out:
                 _log(callback, rollout_out)
-            elif rollout_err:
+            if rollout_err:
                 _log(callback, rollout_err)
 
             # ── 部署后：查当前 Pod，排除旧 Pod ──
@@ -153,8 +154,8 @@ class KubectlDeployer(K8sSubDeployer):
                 after = all_after
             _log(callback, after)
 
-            # ── 成败判断：rollout status 输出为准 ──
-            is_ok = "successfully rolled out" in rollout_output
+            # ── 成败判断：rollout status exit code ──
+            is_ok = rollout_ec == 0
             if is_ok:
                 running_count = sum(1 for l in after.split("\n") if "Running" in l)
                 _log(callback, S("deploy_log.verify_ok"))

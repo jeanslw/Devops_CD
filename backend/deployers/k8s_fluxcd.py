@@ -1,5 +1,8 @@
 """K8S Flux CD 部署模式 — patch HelmRelease/Kustomization + trigger reconcile + verify pods"""
 
+import json
+import shlex
+
 from backend.deployers.base import ssh_connect, DeployTarget
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import _ssh_cmd, _kubectl_pods, _log, _exec_exit
@@ -61,7 +64,7 @@ class FluxCDDeployer(K8sSubDeployer):
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         import time
 
-        target = DeployTarget(host=host, port=22, user="root", password=pwd, ssh_key=ssh_key)
+        target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         tag = req.tag
         img_name = image.split(":")[0]
 
@@ -117,30 +120,44 @@ class FluxCDDeployer(K8sSubDeployer):
             # 如果指定了 path 且资源是 Kustomization，先更新 spec.path
             if req.path and flux_kind == "kustomization":
                 _log(callback, S("deploy_log.flux_path_update", path=req.path))
-                _ssh_cmd(
-                    ssh,
-                    f"kubectl patch {flux_kind} {flux_name} -n {settings.flux_namespace} --type=merge "
-                    f"-p '{{\"spec\":{{\"path\":\"{req.path}\"}}}}' 2>/dev/null",
+                path_patch_data = json.dumps({"spec": {"path": req.path}})
+                path_cmd = (
+                    f"kubectl patch {shlex.quote(flux_kind)} {shlex.quote(flux_name)} "
+                    f"-n {shlex.quote(settings.flux_namespace)} --type=merge "
+                    f"-p {shlex.quote(path_patch_data)}"
                 )
+                _exec_exit(ssh, path_cmd)
+
+            # 安全构造 patch JSON，防止 tag 注入
             _log(callback, S("deploy_log.flux_update"))
+            if flux_kind == "helmrelease":
+                patch_data = json.dumps({"spec": {"values": {"image": {"tag": tag}}}})
+            else:
+                patch_data = json.dumps({"spec": {"images": [{"name": img_name, "newTag": tag}]}})
             patch_cmd = (
-                f"kubectl patch {flux_kind} {flux_name} -n {settings.flux_namespace} --type=merge "
-                f"-p '{{\"spec\":{{\"values\":{{\"image\":{{\"tag\":\"{tag}\"}}}}}}}}' 2>/dev/null "
-                if flux_kind == "helmrelease" else
-                f"kubectl patch {flux_kind} {flux_name} -n {settings.flux_namespace} --type=merge "
-                f"-p '{{\"spec\":{{\"images\":[{{\"name\":\"{img_name}\",\"newTag\":\"{tag}\"}}]}}}}'"
+                f"kubectl patch {shlex.quote(flux_kind)} {shlex.quote(flux_name)} "
+                f"-n {shlex.quote(settings.flux_namespace)} --type=merge "
+                f"-p {shlex.quote(patch_data)}"
             )
-            result = _ssh_cmd(ssh, patch_cmd)
+            patch_out, patch_err, patch_ec = _exec_exit(ssh, patch_cmd)
+            if patch_ec != 0:
+                _log(callback, S("deploy_log.flux_fail_error", error=patch_err or "patch command failed"))
+                ssh.close()
+                return {"success": False, "output": f"Flux patch failed:\n{patch_err or patch_out}"}
             _log(callback, S("deploy_log.flux_update_ok"))
 
             # 3. 触发 Flux 立即协调
             _log(callback, S("deploy_log.flux_reconcile"))
             annotate_cmd = (
-                f"kubectl annotate {flux_kind} {flux_name} -n {settings.flux_namespace} "
-                f"reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite 2>/dev/null"
+                f"kubectl annotate {shlex.quote(flux_kind)} {shlex.quote(flux_name)} "
+                f"-n {shlex.quote(settings.flux_namespace)} "
+                f"reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite"
             )
-            result = _ssh_cmd(ssh, annotate_cmd)
-            _log(callback, S("deploy_log.flux_reconcile_ok"))
+            anno_out, anno_err, anno_ec = _exec_exit(ssh, annotate_cmd)
+            if anno_ec != 0:
+                _log(callback, f"⚠ Reconcile trigger failed (non-fatal): {anno_err or anno_out}")
+            else:
+                _log(callback, S("deploy_log.flux_reconcile_ok"))
 
             # 4. 等待 Flux 开始滚动更新（轮询检测新 Pod + 检查 Flux 资源报错，最长 90s）
             _log(callback, S("deploy_log.flux_wait"))
@@ -191,8 +208,16 @@ class FluxCDDeployer(K8sSubDeployer):
             )
             if deploy_name:
                 _log(callback, S("deploy_log.flux_rollout", deploy=deploy_name))
-                rollout_result = _ssh_cmd(ssh, f"kubectl rollout status deployment/{deploy_name} --timeout=120s 2>&1")
-                _log(callback, rollout_result or S("deploy_log.rollout_done"))
+                rollout_out, rollout_err, rollout_ec = _exec_exit(
+                    ssh,
+                    f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s",
+                    timeout=settings.k8s_rollout_timeout + 30,
+                )
+                rollout_result = (rollout_out or rollout_err or "").strip()
+                if rollout_out:
+                    _log(callback, rollout_out)
+                if rollout_err:
+                    _log(callback, rollout_err)
             else:
                 _log(callback, S("deploy_log.deploy_no_deploy"))
 
@@ -209,7 +234,7 @@ class FluxCDDeployer(K8sSubDeployer):
 
             # 7. 构建结果
             running_count = sum(1 for l in after.split("\n") if "Running" in l)
-            rollout_ok = deploy_name and "successfully rolled out" in (rollout_result or "")
+            rollout_ok = deploy_name and rollout_ec == 0
 
             if deploy_name and rollout_ok:
                 status_text = f"已部署: {running_count} 个 Running Pod"

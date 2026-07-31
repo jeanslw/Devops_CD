@@ -1,5 +1,7 @@
 """K8S 部署路由 — kubectl SSH / Argo CD / Flux CD / Helm"""
 
+import shlex
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -93,8 +95,10 @@ def _read_yaml(path: str, ssh=None) -> str:
             pass
     elif ssh:
         try:
-            _, stdout, _ = ssh.exec_command(f"cat {path} 2>/dev/null")
-            return stdout.read().decode(errors="replace").strip()
+            from backend.deployers.k8s_utils import _exec_exit
+            out, err, ec = _exec_exit(ssh, f"cat {shlex.quote(path)} 2>/dev/null")
+            if ec == 0:
+                return out
         except Exception:
             pass
     return ""
@@ -115,11 +119,13 @@ def _parse_deployment_name(yaml_content: str) -> str:
 def _k8s_deployment_exists(ssh, name: str, namespace: str = "") -> bool:
     """SSH 上 kubectl get deployment/{name} 是否存在"""
     try:
+        from backend.deployers.k8s_utils import _exec_exit
         ns_flag = f"-n {namespace}" if namespace else ""
-        _, stdout, _ = ssh.exec_command(
-            f"kubectl get deployment/{name} {ns_flag} -o name 2>/dev/null".strip()
+        out, err, ec = _exec_exit(
+            ssh,
+            f"kubectl get deployment/{shlex.quote(name)} {ns_flag} -o name 2>/dev/null",
         )
-        return bool(stdout.read().decode(errors="replace").strip())
+        return ec == 0 and bool(out)
     except Exception:
         return False
 
