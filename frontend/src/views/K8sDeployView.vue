@@ -38,10 +38,12 @@
         </div>
         <div>
           <label>{{ $t('k8sDeploy.cluster') }}</label>
-          <select v-model="clusterId">
-            <option :value="0">{{ $t('k8sDeploy.selectCluster') }}</option>
-            <option v-for="s in k8sServers" :key="s.id" :value="s.id">{{ s.name }} ({{ s.type }})</option>
-          </select>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select v-model="clusterId">
+              <option :value="0">{{ $t('k8sDeploy.selectCluster') }}</option>
+              <option v-for="s in k8sServers" :key="s.id" :value="s.id">{{ s.name }} ({{ s.type }})</option>
+            </select>
+          </div>
         </div>
       </div>
       <div style="margin-bottom:8px;font-size:11px;color:#667">{{ $t('k8sDeploy.namespaceHint') }}</div>

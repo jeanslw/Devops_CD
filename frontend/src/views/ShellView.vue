@@ -1,11 +1,12 @@
 <template>
   <div class="card">
     <h3>{{ $t('shell.title') }}</h3>
-    <div style="display:flex;gap:8px;margin-bottom:8px">
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
       <select v-model="selectedServer" style="width:auto">
         <option :value="0">{{ $t('shell.selectServer') }}</option>
         <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.name }} ({{ s.host }})</option>
       </select>
+
       <button class="btn btn-green btn-sm" @click="connect">{{ $t('shell.connect') }}</button>
       <button class="btn btn-red btn-sm" @click="disconnect">{{ $t('shell.disconnect') }}</button>
     </div>

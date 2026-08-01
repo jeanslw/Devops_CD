@@ -19,14 +19,13 @@
         >{{ t }}</span>
       </div>
       <div class="multi-select-list">
-        <div
+        <label
           v-for="s in filteredServers" :key="s.id"
           class="multi-select-item"
-          @click="toggleItem(s.id)"
         >
-          <input type="checkbox" :checked="isChecked(s.id)" @click.stop="toggleItem(s.id)">
-          <label>{{ s.name }} ({{ s.host }})</label>
-        </div>
+          <input type="checkbox" :checked="isChecked(s.id)" @change="toggleItem(s.id)" @click.stop>
+          <span class="multi-select-item-text">{{ s.name }} ({{ s.host }})</span>
+        </label>
       </div>
     </div>
   </div>

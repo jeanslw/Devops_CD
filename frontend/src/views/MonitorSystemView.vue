@@ -16,7 +16,7 @@
               <td>{{ s.host }}:{{ s.port }}</td>
               <td>{{ typeLabel(s) }}</td>
               <td v-html="capHtml(s)"></td>
-              <td><span class="badge" :class="s.status==='available'||s.status==='unavailable'?'badge-ok':'badge-err'">{{ s.status === 'available' || s.status === 'unavailable' ? $t('monitor.available') : $t('monitor.error') }}</span></td>
+              <td><span class="badge" :class="s.status==='available'?'badge-ok':s.status==='unavailable'?'badge-pend':'badge-err'">{{ s.status === 'available' ? $t('monitor.available') : s.status === 'unavailable' ? $t('monitor.unavailable') : $t('monitor.error') }}</span></td>
               <td>
                 <button v-if="s.status==='available'||s.status==='unavailable'" class="btn btn-blue btn-sm" @click="viewDetail(s.id)">{{ $t('monitor.viewSys') }}</button>
                 <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ $t('monitor.unavailable') }}</button>
@@ -149,6 +149,8 @@ async function viewDetail(sid) {
 
 onMounted(async () => {
   const enabled = await checkEnabled()
-  if (enabled) loadServers()
+  if (enabled) {
+    loadServers()
+  }
 })
 </script>

@@ -152,6 +152,11 @@ export default {
     added: '已添加',
     deleted: '已删除',
     confirmDelete: '确定删除?',
+    status: '状态',
+    online: '在线',
+    offline: '离线',
+    checking: '检测中...',
+    refreshStatus: '刷新状态',
     form: {
       name: '名称',
       hostPort: 'IP:端口',

@@ -1,12 +1,14 @@
 """服务器管理路由"""
 
+import socket
+import concurrent.futures
 import pymysql
 from fastapi import APIRouter, Depends
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
 from backend.models import ServerRequest
 from backend.crypto import encrypt
-from backend.services.monitor_utils import clear_server_cache
+from backend.services.monitor_utils import clear_server_cache, _cache_get, _cache_set
 from backend.exceptions import ConflictError, DatabaseError, NotFoundError
 from backend.responses import ok
 
@@ -104,3 +106,45 @@ def delete_server(
         conn.execute("DELETE FROM cd_servers WHERE id=?", (sid,))
         clear_server_cache()
         return ok(message="服务器已删除")
+
+
+STATUS_CACHE_KEY = "servers:status"
+
+
+def _check_single_server(server):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        result = s.connect_ex((server["host"], server["port"]))
+        s.close()
+        return server["id"], result == 0
+    except Exception:
+        return server["id"], False
+
+
+@router.get("/status")
+def check_servers_status(
+    db: Database = Depends(get_db),
+    username: str = Depends(verify_token),
+):
+    cached = _cache_get(STATUS_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    with db.conn() as conn:
+        rows = conn.execute("SELECT id, host, port FROM cd_servers").fetchall()
+    servers_list = [{"id": r["id"], "host": r["host"], "port": r["port"]} for r in rows]
+
+    status_map = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_check_single_server, s): s for s in servers_list}
+        for future in concurrent.futures.as_completed(futures):
+            sid, online = future.result()
+            status_map[sid] = online
+
+    result = {}
+    for s in servers_list:
+        result[str(s["id"])] = status_map.get(s["id"], False)
+
+    _cache_set(STATUS_CACHE_KEY, result)
+    return result

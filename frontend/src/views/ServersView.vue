@@ -2,21 +2,37 @@
   <div class="card">
     <h3>{{ $t('servers.title') }}
       <button class="btn btn-green btn-sm" style="margin-left:12px" @click="showForm">{{ $t('servers.addServer') }}</button>
+      <button class="btn btn-sm" style="margin-left:8px" @click="checkStatus" :disabled="refreshing">
+        <span v-if="refreshing" class="status-spinner"></span>
+        {{ refreshing ? $t('servers.checking') : $t('servers.refreshStatus') }}
+      </button>
     </h3>
     <div style="margin-bottom:8px">
       <label style="display:inline;margin-right:4px">{{ $t('common.filter') }}</label>
       <input v-model="filter" :placeholder="$t('servers.filterPlaceholder')" style="width:auto;display:inline" @input="loadData">
     </div>
-    <table>
-      <thead><tr><th>{{ $t('servers.name') }}</th><th>{{ $t('servers.host') }}</th><th>{{ $t('servers.type') }}</th><th>{{ $t('servers.tags') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
+    <table style="table-layout:fixed">
+      <colgroup>
+        <col style="width:12%">
+        <col style="width:23%">
+        <col style="width:7%">
+        <col style="width:22%">
+        <col style="width:8%">
+        <col style="width:28%">
+      </colgroup>
+      <thead><tr><th>{{ $t('servers.name') }}</th><th>{{ $t('servers.host') }}</th><th>{{ $t('servers.type') }}</th><th>{{ $t('servers.tags') }}</th><th>{{ $t('servers.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
       <tbody>
-        <tr v-if="loading"><td colspan="5" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+        <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
         <tr v-for="s in filteredServers" :key="s.id">
           <td>{{ s.name }}</td>
           <td>{{ s.host }}:{{ s.port }}</td>
           <td>{{ s.type }}</td>
           <td>
             <span v-for="t in (s.tags||'').split(',').filter(Boolean)" :key="t" class="badge badge-gitlab" style="margin:1px">{{ t }}</span>
+          </td>
+          <td>
+            <span class="status-dot" :class="statusClass(s.id)"></span>
+            {{ statusText(s.id) }}
           </td>
           <td>
             <button class="btn btn-edit btn-sm" style="margin-right:4px" @click="edit(s)">{{ $t('common.edit') }}</button>
@@ -82,6 +98,8 @@ const { toast } = useToast()
 
 const servers = ref([])
 const loading = ref(true)
+const serverStatus = ref({})
+const refreshing = ref(false)
 const filter = ref('')
 const showFormCard = ref(false)
 const editId = ref('')
@@ -102,6 +120,28 @@ async function loadData() {
     if (auth.handle401(r)) return
     servers.value = await r.json()
   } catch (e) {} finally { loading.value = false }
+  checkStatus()
+}
+
+function statusClass(id) {
+  const st = serverStatus.value[id]
+  if (st === undefined) return ''
+  return st ? 'online' : 'offline'
+}
+
+function statusText(id) {
+  const st = serverStatus.value[id]
+  if (st === undefined) return t('servers.checking')
+  return st ? t('servers.online') : t('servers.offline')
+}
+
+async function checkStatus() {
+  refreshing.value = true
+  try {
+    const r = await fetch(`/api/servers/status?_=${Date.now()}`, { headers: auth.A() })
+    if (auth.handle401(r)) return
+    serverStatus.value = await r.json()
+  } catch (e) {} finally { refreshing.value = false }
 }
 
 async function loadTags() {

@@ -152,6 +152,11 @@ export default {
     added: 'Added',
     deleted: 'Deleted',
     confirmDelete: 'Confirm delete?',
+    status: 'Status',
+    online: 'Online',
+    offline: 'Offline',
+    checking: 'Checking...',
+    refreshStatus: 'Refresh Status',
     form: {
       name: 'Name',
       hostPort: 'IP:Port',
