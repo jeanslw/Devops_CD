@@ -70,6 +70,7 @@ export default {
     alertRules: '⚠️ 告警规则',
     customMonitor: '⚙️ 自定义资源',
     userMgmt: '👥 用户管理',
+    noPermissions: '⚠ 未分配权限，请联系管理员',
   },
   ci: {
     title: '📋 CI构建结果',

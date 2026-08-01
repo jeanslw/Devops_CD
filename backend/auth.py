@@ -138,6 +138,15 @@ def require_perm(perm_key: str):
     return checker
 
 
+def require_admin_role(user: dict = Depends(get_current_user)):
+    """角色级权限检查：允许 super_admin 和 admin 角色访问。
+    用于用户管理等按角色而非权限 key 控制的功能。
+    cd.admin 不在 CI permissions 表中，无法用 require_perm 检查。"""
+    if user.get("role") not in (settings.super_admin_role, settings.admin_role):
+        raise HTTPException(403, "Permission denied: admin or super_admin role required")
+    return user
+
+
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据，同时检查 systems（如果存在）是否允许 CD 访问。
     成功返回 token，失败返回 None"""

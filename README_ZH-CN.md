@@ -91,5 +91,5 @@ MIT
 
 ## 联系方式
 
-- 问题与 PR：[GitHub Issues](https://github.com/jeanslw/Devops-CD/issues)
+- 问题与 PR：[GitHub Issues](https://github.com/jeanslw/Devops_CD/issues)
 - 邮箱：jeanslw@qq.com

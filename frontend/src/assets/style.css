@@ -171,6 +171,17 @@ body {
   font-weight: 400;
   color: var(--text-dim);
 }
+.sidebar .item-hint {
+  font-size: 11px;
+  padding: 6px 22px;
+  color: #e6a23c;
+  cursor: default;
+  font-weight: 400;
+  border-left-color: transparent;
+}
+.sidebar .item-hint:hover {
+  background: transparent;
+}
 .content {
   flex: 1;
   padding: 22px 26px;

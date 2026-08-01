@@ -78,5 +78,5 @@ docker compose up -d --build
 - **v1.2.2** (2026-07-31) — Friendly error pages on frontend; backend exceptions enhanced with `error_key`; UI i18n display fixes and `lang` parameter fix; public `/api/info` endpoint; CD table index optimization; test warning cleanup; documentation updates.
 
 ## Contact
-PR：[GitHub Issues](https://github.com/jeanslw/Devops-CD/issues)
+PR：[GitHub Issues](https://github.com/jeanslw/Devops_CD/issues)
 For feature requests or bug reports, open an issue on the GitHub repository, or email: jeanslw@qq.com

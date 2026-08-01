@@ -3,7 +3,7 @@
 import bcrypt
 import pymysql
 from fastapi import APIRouter, Depends
-from backend.auth import get_current_user, require_perm, get_db, CD_SYSTEM
+from backend.auth import get_current_user, require_admin_role, get_db, CD_SYSTEM
 from backend.config import settings
 from backend.models import UserCreateRequest, ChangePasswordRequest
 from backend.database import Database
@@ -17,9 +17,9 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 @router.get("")
 def list_users(
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.admin")),
+    _user: dict = Depends(require_admin_role),
 ):
-    """列出所有用户（仅 admin）"""
+    """列出所有用户（仅 admin / super_admin）"""
     with db.conn() as conn:
         rows = conn.execute(
             "SELECT username, role FROM admin_users ORDER BY username"
@@ -31,14 +31,14 @@ def list_users(
 def create_user(
     req: UserCreateRequest,
     db: Database = Depends(get_db),
-    user: dict = Depends(require_perm("cd.admin")),
+    user: dict = Depends(require_admin_role),
 ):
-    """创建新用户（仅 admin）。只有 super_admin 可以创建管理员账号。"""
+    """创建新用户（仅 admin / super_admin）。只有 super_admin 可以创建管理员账号。"""
     if not req.username or not req.password:
         raise ValidationError("用户名和密码不能为空", error_key="errors.user_pass_required")
     if req.role not in (settings.admin_role, settings.viewer_role, settings.deployer_role):
         raise ValidationError("无效的角色", error_key="errors.invalid_role")
-    if req.role == settings.admin_role and "cd.super_admin" not in user.get("permissions", []):
+    if req.role == settings.admin_role and user.get("role") != "super_admin":
         raise AppException("只有 super_admin 可以创建管理员账号", status_code=403, error_key="errors.super_admin_only")
 
     pwd_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
@@ -60,9 +60,9 @@ def create_user(
 def delete_user(
     username: str,
     db: Database = Depends(get_db),
-    user: dict = Depends(require_perm("cd.admin")),
+    user: dict = Depends(require_admin_role),
 ):
-    """删除用户（仅 admin），不能删除自己。只有 super_admin 可以删除管理员。"""
+    """删除用户（仅 admin / super_admin），不能删除自己。只有 super_admin 可以删除管理员。"""
     if username == user["username"]:
         raise ValidationError("不能删除自己的账户", error_key="errors.cannot_delete_self")
 
@@ -72,7 +72,7 @@ def delete_user(
         ).fetchone()
         if target is None:
             raise NotFoundError(f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username})
-        if target["role"] in (settings.admin_role, settings.super_admin_role) and "cd.super_admin" not in user.get("permissions", []):
+        if target["role"] in (settings.admin_role, settings.super_admin_role) and user.get("role") != "super_admin":
             raise AppException("只有 super_admin 可以删除管理员账号", status_code=403, error_key="errors.super_admin_only")
 
         conn.execute("DELETE FROM admin_users WHERE username=?", (username,))
@@ -84,13 +84,13 @@ def change_role(
     username: str,
     req: dict,
     db: Database = Depends(get_db),
-    user: dict = Depends(require_perm("cd.admin")),
+    user: dict = Depends(require_admin_role),
 ):
-    """修改用户角色（仅 admin），不能修改自己的角色。只有 super_admin 可指定/修改管理员角色。"""
+    """修改用户角色（仅 admin / super_admin），不能修改自己的角色。只有 super_admin 可指定/修改管理员角色。"""
     role = req.get("role", "")
     if role not in (settings.admin_role, settings.viewer_role, settings.deployer_role):
         raise ValidationError("无效的角色", error_key="errors.invalid_role")
-    if role == settings.admin_role and "cd.super_admin" not in user.get("permissions", []):
+    if role == settings.admin_role and user.get("role") != "super_admin":
         raise AppException("只有 super_admin 可以设置管理员角色", status_code=403, error_key="errors.super_admin_only")
     if username == user["username"]:
         raise ValidationError("不能修改自己的角色", error_key="errors.cannot_change_own_role")
@@ -101,7 +101,7 @@ def change_role(
         ).fetchone()
         if target is None:
             raise NotFoundError(f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username})
-        if target["role"] in (settings.admin_role, settings.super_admin_role) and "cd.super_admin" not in user.get("permissions", []):
+        if target["role"] in (settings.admin_role, settings.super_admin_role) and user.get("role") != "super_admin":
             raise AppException("只有 super_admin 可以修改管理员角色", status_code=403, error_key="errors.super_admin_only")
 
         conn.execute(
@@ -118,9 +118,8 @@ def change_password(
     user: dict = Depends(get_current_user),
 ):
     """修改密码：super_admin 可改任意用户；admin 只能改 deployer/viewer；普通用户只能改自己"""
-    permissions = user.get("permissions", [])
-    is_cd_admin = "cd.admin" in permissions and "cd.super_admin" not in permissions
-    is_super_admin = "cd.super_admin" in permissions
+    is_super_admin = user.get("role") == "super_admin"
+    is_cd_admin = user.get("role") == "admin"
     if not is_super_admin and not is_cd_admin and user["username"] != username:
         raise AppException("无权修改其他用户的密码", status_code=403, error_key="errors.no_permission_change_pwd")
 

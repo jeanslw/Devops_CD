@@ -5,6 +5,11 @@
       {{ $t('sidebar.ciBuild') }}
     </div>
 
+    <!-- 权限未配置提示（非 super_admin 且 permissions 为空） -->
+    <div v-if="showEmptyPermsHint" class="item item-hint">
+      {{ $t('sidebar.noPermissions') }}
+    </div>
+
     <!-- 构建管理 -->
     <div v-if="auth.canBuildManage()" class="item" :class="{ active: isActive('/ci-build') }" @click="$router.push('/ci-build')">
       {{ $t('sidebar.ciBuildManage') }}
@@ -73,13 +78,19 @@
 </template>
 
 <script setup>
-import { ref, inject } from 'vue'
+import { ref, inject, computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 const auth = inject('auth')
 const route = useRoute()
 const deployOpen = ref(true)
 const monitorOpen = ref(false)
+
+// 用户已登录但未分配任何权限（非 super_admin）时显示提示
+const showEmptyPermsHint = computed(() => {
+  const u = auth.state?.user
+  return u && u.role !== 'super_admin' && Array.isArray(u.permissions) && u.permissions.length === 0
+})
 
 function isActive(path) {
   return route.path === path

@@ -70,6 +70,7 @@ export default {
     alertRules: '⚠️ Alert Rules',
     customMonitor: '⚙️ Custom Resources',
     userMgmt: '👥 User Management',
+    noPermissions: '⚠ No permissions assigned, contact administrator',
   },
   ci: {
     title: 'CI Build Results',
