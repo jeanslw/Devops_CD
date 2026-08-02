@@ -16,15 +16,15 @@ def _parse_server_ids(server_ids: str) -> list[int]:
 
 
 def _parse_command_options(commands: str) -> dict:
-    """解析命令字符串中的 |FILTER| / |INV| 标记。
+    """解析命令字符串中的 |INV| 标记。
 
-    格式: <commands>[|FILTER|<filter>][|INV|<inventory>]
+    格式: <commands>[|INV|<inventory>]
     """
     options: dict = {}
     if not commands:
         return options
     cmds = commands
-    for marker, key in (("|FILTER|", "filter"), ("|INV|", "inventory")):
+    for marker, key in (("|INV|", "inventory"),):
         if marker in cmds:
             cmds, value = cmds.split(marker, 1)
             options[key] = value

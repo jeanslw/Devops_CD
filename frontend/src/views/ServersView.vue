@@ -115,12 +115,12 @@ const filteredServers = computed(() => {
 
 async function loadData() {
   loading.value = true
+  let ok = false
   try {
     const r = await fetch(`/api/servers?_=${Date.now()}`, { headers: auth.A() })
-    if (auth.handle401(r)) return
-    servers.value = await r.json()
+    if (!auth.handle401(r)) { servers.value = await r.json(); ok = true }
   } catch (e) {} finally { loading.value = false }
-  checkStatus()
+  if (ok) checkStatus()
 }
 
 function statusClass(id) {

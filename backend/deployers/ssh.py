@@ -1,5 +1,6 @@
 """SSH 单机部署器 — 纯透传，不硬编码任何工具命令"""
 
+import shlex
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on, ssh_exec_stream
 from backend.config import settings
 from backend.deploy_log import S
@@ -47,8 +48,8 @@ class SSHDeployer(Deployer):
         inv = target.options.get("inventory", "")
         inv_flag = f"-i {inv}" if inv else ""
         return (
-            f"ansible-playbook {inv_flag} {target.path}"
-            f" -e image={image} -e tag={tag} -e project={project}"
+            f"ansible-playbook {inv_flag} {shlex.quote(target.path)}"
+            f" -e image={shlex.quote(image)} -e tag={shlex.quote(tag)} -e project={shlex.quote(project)}"
         ).strip()
 
     def _ssh_exec_stream(self, ssh, cmd: str, callback) -> str:
