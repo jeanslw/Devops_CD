@@ -61,10 +61,6 @@
           <label>{{ $t('deploy.commands') }}</label>
           <textarea v-model="commands" rows="6" :placeholder="$t('sshDeploy.commandsPlaceholder')" style="width:100%;resize:vertical;font-family:monospace"></textarea>
         </div>
-        <div style="margin-bottom:8px">
-          <label>{{ $t('deploy.filterRule') }}</label>
-          <input v-model="filter" :placeholder="$t('deploy.filterPlaceholder')">
-        </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
         <pre class="output" v-text="output"></pre>
@@ -98,7 +94,6 @@ const botId = ref(0)
 const path = ref('')
 const inventory = ref('')
 const commands = ref('')
-const filter = ref('')
 
 async function onProjectChange() {
   await changeProject(selectedProject.value)
@@ -127,7 +122,7 @@ async function doDeploy() {
   if (!sid) return toast(t('deploy.selectServer'), false)
   let cmdStr = commands.value
   if (inventory.value) cmdStr += '|INV|' + inventory.value
-  cmdStr += '|FILTER|' + (filter.value || '')
+
 
   const body = {
     project: selectedProject.value,

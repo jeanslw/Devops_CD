@@ -373,7 +373,7 @@ function renderScanReport(data, tag) {
       const sevClass = { Critical: 'sev-critical', High: 'sev-high', Medium: 'sev-medium', Low: 'sev-low' }
       const sevLabel = { Critical: '危急', High: '严重', Medium: '中等', Low: '其他' }
       return `<tr><td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(v.id)}">${esc(v.id)}</td>
-        <td><span class="severity-badge ${sevClass[sev] || 'sev-none'}">${sevLabel[sev] || sev}</span></td>
+        <td><span class="severity-badge ${sevClass[sev] || 'sev-none'}">${sevLabel[sev] || esc(sev)}</span></td>
         <td style="font-size:11px">${esc(v.package)}</td>
         <td style="font-size:11px"><code>${esc(v.version)}</code></td>
         <td style="font-size:11px;color:var(--accent)"><code>${esc(v.fix_version || v.fixed_version || '-')}</code></td></tr>`
