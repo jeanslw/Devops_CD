@@ -1,9 +1,16 @@
 <template>
   <div class="topbar">
-    <h2>
-      <img :src="'/static/logo.png'" alt="Logo" class="topbar-logo">
-      Devops-Glue CD
-    </h2>
+    <div class="topbar-left">
+      <button class="menu-toggle" @click="$emit('toggle-sidebar')" :aria-label="$t('topbar.menu')">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <h2>
+        <img :src="'/static/logo.png'" alt="Logo" class="topbar-logo">
+        <span class="topbar-title">Devops-Glue CD</span>
+      </h2>
+    </div>
     <div class="topbar-actions">
       <div class="user-tag" v-if="auth.state.user">
         <span class="user-icon">👤</span>
@@ -14,7 +21,7 @@
         <button :class="['lang-btn', locale === 'en' ? 'active' : '']" @click="setLang('en')">EN</button>
         <button :class="['lang-btn', locale === 'zh' ? 'active' : '']" @click="setLang('zh')">中文</button>
       </div>
-      <a href="#" @click.prevent="$emit('logout')">{{ $t('topbar.logout') }}</a>
+      <a class="logout-link" href="#" @click.prevent="$emit('logout')">{{ $t('topbar.logout') }}</a>
     </div>
   </div>
 </template>
@@ -26,7 +33,7 @@ import { setLang } from '@/locales'
 
 const auth = inject('auth')
 
-defineEmits(['logout'])
+defineEmits(['logout', 'toggle-sidebar'])
 
 const { locale } = useI18n()
 </script>

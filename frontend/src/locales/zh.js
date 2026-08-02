@@ -51,6 +51,7 @@ export default {
   },
   topbar: {
     logout: '退出',
+    menu: '菜单',
   },
   sidebar: {
     ciBuild: '📋 CI构建结果',
