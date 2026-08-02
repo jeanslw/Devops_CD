@@ -51,6 +51,7 @@ export default {
   },
   topbar: {
     logout: 'Logout',
+    menu: 'Menu',
   },
   sidebar: {
     ciBuild: 'CI Build Results',
