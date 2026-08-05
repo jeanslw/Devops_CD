@@ -267,6 +267,97 @@ This project interacts with K8s clusters via **SSH + kubectl CLI** (no Kubernete
 
 > K8s 1.24+ removed dockershim. Clusters using containerd/CRI-O: `docker stats` unavailable (does NOT affect `kubectl top pods`).
 
+### K8s Deployment Modes
+
+Devops-Glue CD supports four K8s deployment modes, each with different working principles and CD roles:
+
+#### kubectl Mode (Direct Deployment)
+
+**Principle**: CD connects to K8s nodes/jump hosts via SSH, directly operates the cluster using `kubectl apply` + `rollout restart`.
+
+**What CD does**:
+1. SSH connection to target server (K8s node or bastion with kubectl configured)
+2. Reads remote YAML file (or downloads URL YAML), replaces `{IMAGE}:{TAG}` with actual image
+3. `kubectl apply -f` uploads and applies YAML to cluster
+4. `kubectl rollout restart deployment/<name>` triggers rolling restart
+5. `kubectl rollout status` waits for deployment to complete (default 120s timeout)
+6. Verifies old/new Pod changes, determines deployment success/failure
+
+**Use Cases**: Traditional kubectl operations without GitOps tools. Teams accustomed to directly applying YAML.
+
+**Prerequisites**:
+- kubeconfig configured on target server (~/.kube/config)
+- kubectl version on server compatible with cluster
+- YAML template contains `{IMAGE}:{TAG}` placeholder
+
+#### Argo CD Mode
+
+**Principle**: CD remotely updates Application parameters via Argo CD REST API, then triggers Sync. Argo CD handles the actual GitOps deployment.
+
+**What CD does**:
+1. Calls Argo CD API `GET /api/v1/applications/<name>` to find Application (or searches all Apps by image name if not found)
+2. Selects update strategy based on Application type:
+   - **Helm**: patches `spec.source.helm.parameters` with `image.tag`
+   - **Kustomize**: patches `spec.source.kustomize.images` with `newTag`
+3. Calls API `PUT /api/v1/applications/<name>` to submit update
+4. Calls API `POST /api/v1/applications/<name>/sync` to trigger Argo CD sync
+5. Polls Application status (`/api/v1/applications/<name>`), waits for Health = "Healthy" (max 60s)
+6. Determines deployment success/failure based on Health/Sync status
+
+**Use Cases**: Teams using Argo CD for GitOps. CD acts as a "trigger" for Argo CD, not directly operating the cluster.
+
+**Prerequisites**:
+- Argo CD deployed and accessible via HTTPS
+- CD can obtain Argo CD API Token (passed via server's password field)
+- Application already exists with Helm/Kustomize image parameters configured
+
+**What CD does NOT do**:
+- Does not directly operate kubectl
+- Does not create/modify Argo CD Applications
+- Does not manage Git repositories or Helm Charts
+
+#### Flux CD Mode
+
+**Principle**: CD directly patches Flux CD's HelmRelease/Kustomization resources via SSH + kubectl, triggers Flux reconcile, and Flux handles the actual deployment.
+
+**What CD does**:
+1. SSH connection to K8s node
+2. Auto-discovers Flux resources (first tries exact project name match, then scans all HelmRelease/Kustomization in `flux-system` namespace by image name)
+3. Uses `kubectl patch` to update image tag:
+   - **HelmRelease**: patches `spec.values.image.tag`
+   - **Kustomization**: patches `spec.images[].newTag`
+4. Uses `kubectl annotate` to add `reconcile.fluxcd.io/requestedAt` annotation, forcing Flux to reconcile immediately
+5. Polls for Flux reaction (max 90s):
+   - Detects new Pod appearing or old Pod terminating
+   - Checks if Flux resource's Ready condition shows errors
+6. Finds corresponding Deployment name, executes `kubectl rollout status` to wait for rollout completion
+7. Determines success/failure based on rollout status result
+
+**Use Cases**: Teams using Flux CD for GitOps. CD acts as a "trigger" for Flux, enabling rapid iteration via kubectl patch + annotate.
+
+**Prerequisites**:
+- Flux CD deployed in `flux-system` namespace
+- Cluster accessible via SSH + kubectl
+- HelmRelease/Kustomization resources already exist with correct images referenced
+
+**What CD does NOT do**:
+- Does not directly create Pods/Deployments
+- Does not manage Git repositories
+- Does not install/configure Flux CD
+
+#### Mode Comparison
+
+| Aspect | kubectl | Argo CD | Flux CD |
+|--------|---------|---------|---------|
+| Cluster Interaction | SSH + kubectl CLI | REST API (HTTPS) | SSH + kubectl CLI |
+| Deployment Executor | CD directly executes kubectl | Argo CD executes | Flux CD executes |
+| Image Update | Render YAML → apply | API patch Application params | kubectl patch HelmRelease/Kustomization |
+| Trigger Method | Direct apply | API call sync | annotate triggers reconcile |
+| Deployment Time | Fastest (~30s) | Medium (~60s, includes sync wait) | Longer (~90s, includes Flux reconcile) |
+| Network Required | SSH access to K8s node | HTTPS access to Argo CD | SSH access to K8s node |
+| Additional Components | None | Argo CD + Token | Flux CD + kubectl |
+| Suitable Teams | Traditional kubectl ops | Argo CD GitOps | Flux CD GitOps |
+
 ## 6. Security
 
 ### Password Encryption
