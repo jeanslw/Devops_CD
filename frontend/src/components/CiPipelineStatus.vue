@@ -12,7 +12,7 @@
   </div>
   <div class="card" v-else-if="loading">
     <h3>🔍 {{ $t('ci.buildStatus') }}</h3>
-    <span style="color:#888;font-size:12px">选择项目后自动加载</span>
+    <span style="color:#888;font-size:12px">{{ $t('ci.autoLoadAfterSelect') }}</span>
   </div>
 </template>
 

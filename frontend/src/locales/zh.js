@@ -85,6 +85,7 @@ export default {
     latestTag: '最新Tag',
     pipeline: 'Pipeline',
     buildStatus: '构建状态',
+    autoLoadAfterSelect: '选择项目后自动加载',
     ciCompleted: '✅ CI 已完成',
     noCiData: '暂无 CI 数据',
     deployTo: '部署到…',

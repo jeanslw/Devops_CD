@@ -85,6 +85,7 @@ export default {
     latestTag: 'Latest Tag',
     pipeline: 'Pipeline',
     buildStatus: 'Build Status',
+    autoLoadAfterSelect: 'Automatically loads after selecting a project',
     ciCompleted: 'CI Completed',
     noCiData: 'No CI data',
     deployTo: 'Deploy to...',
