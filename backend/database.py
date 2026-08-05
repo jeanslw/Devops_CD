@@ -76,7 +76,7 @@ class _SqliteWrapper:
 
 
 class Database:
-    """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API（php_api）。
+    """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API。
     SQLite 模式：自动建表。
     MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。使用 DBUtils 连接池。
     启动时校验 ci_pipeline_tags 表是否存在，不存在则报错（数据库指向错误）。
@@ -147,13 +147,13 @@ class Database:
                 conn.close()
         except Exception as e:
             raise RuntimeError(
-                f"数据库连接失败，请确保和 Devops-Glue API（php_api）使用同一数据库实例。"
+                f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。"
                 f"当前驱动: {self._driver}，错误: {e}"
             )
         if not exists:
             raise RuntimeError(
-                f"未找到 ci_pipeline_tags 表。cd_service 无独立数据库，必须和 php_api 共用同一数据库实例。"
-                f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 php_api 一致。"
+                f"未找到 ci_pipeline_tags 表。cd_service 无独立数据库，必须和 Devops-Glue共用同一数据库实例。"
+                f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 Devops-Glue 一致。"
             )
 
     @contextmanager
