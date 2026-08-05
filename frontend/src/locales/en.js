@@ -238,6 +238,7 @@ export default {
     tag: 'Tag',
     method: 'Method',
     status: 'Status',
+    operator: 'Operator',
     detail: 'Detail',
     noRecords: 'No deployment records',
     noOutput: '(No output)',

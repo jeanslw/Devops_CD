@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
+from backend.auth import get_db, verify_token, require_perm, enforce_deploy_perm
 from backend.models import DeployRequest
 from backend.services.deploy_service import DeployService
 from backend.deployers import DeployTarget
@@ -19,8 +19,10 @@ router = APIRouter(prefix="/api", tags=["deploy"])
 def deploy(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy-manage")),
+    user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
+    # 按具体 deploy_type 做二次权限校验（防御深度：service 层也会再查一次）
+    enforce_deploy_perm(user, req.deploy_type)
     svc = DeployService(db)
     try:
         return svc.execute(
@@ -38,6 +40,7 @@ def deploy(
             env_file=req.env_file,
             bot_id=req.bot_id,
             lang=req.lang,
+            user=user,
         )
     except ValueError as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation")
@@ -47,9 +50,10 @@ def deploy(
 def stop(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy-manage")),
+    user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     """停止服务 — 按 deploy_type 分发到对应 Deployer"""
+    enforce_deploy_perm(user, req.deploy_type)
     if not req.server_ids:
         raise ValidationError("请选择目标服务器", error_key="errors.select_server")
     with db.conn() as conn:
@@ -81,9 +85,10 @@ def stop(
 def stop_k8s(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy.k8s")),
+    user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     """K8S 停止 — 按 cd_type 分发到对应 K8S 子模式 Deployer"""
+    enforce_deploy_perm(user, "k8s", req.cd_type)
     if not req.server_ids:
         raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
     try:
@@ -95,24 +100,24 @@ def stop_k8s(
     if not srv:
         raise NotFoundError("集群不存在", error_key="errors.cluster_not_found")
 
-    host, port, user = srv["host"], srv["port"], srv["user"]
-    pwd = decrypt(srv["password"] or "")
+    host, port, user_srv, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
     ssh_key = decrypt(srv["ssh_key"] or "")
 
     deployer = deployer_registry.create(f"k8s/{req.cd_type}")
     if deployer is None:
         raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
 
-    return deployer.stop(req=req, project=req.project, host=host, port=port, user=user, pwd=pwd, ssh_key=ssh_key)
+    return deployer.stop(req=req, project=req.project, host=host, port=port, user=user_srv, pwd=pwd, ssh_key=ssh_key)
 
 
 @router.post("/deploy-stream")
 async def deploy_stream(
     req: DeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy-manage")),
+    user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     """实时部署（SSE 流式推送）"""
+    enforce_deploy_perm(user, req.deploy_type)
     import asyncio
     import queue
     import threading
@@ -144,6 +149,7 @@ async def deploy_stream(
                 bot_id=req.bot_id,
                 callback=log_callback,
                 lang=req.lang,
+                user=user,
             )
             deploy_result = {"success": True, "data": result}
         except ValueError as e:

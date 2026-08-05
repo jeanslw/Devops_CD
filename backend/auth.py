@@ -147,6 +147,48 @@ def require_admin_role(user: dict = Depends(get_current_user)):
     return user
 
 
+# ── 部署权限映射：deploy_type / cd_type → 需要的 permission key ──
+# 顶层 blanket 权限 cd.deploy-manage 隐含所有子权限（super_admin 也隐含所有）
+_DEPLOY_PERM_MAP: dict = {
+    "ssh": "cd.deploy.single",
+    "docker": "cd.deploy.docker",
+    "k8s/kubectl": "cd.deploy.k8s",
+    "k8s/argocd": "cd.deploy.k8s",
+    "k8s/fluxcd": "cd.deploy.k8s",
+    "k8s/helm": "cd.deploy.k8s",
+}
+_MANAGE_PERM = "cd.deploy-manage"
+
+
+def resolve_deploy_perm(deploy_type: str, cd_type: str = "") -> str:
+    """将 deploy_type + 可选 cd_type 映射为对应子权限 key。
+    匹配不上时回退到 cd.deploy.single。"""
+    key = deploy_type or ""
+    if cd_type:
+        combined = f"{key}/{cd_type}" if key != "k8s" else f"k8s/{cd_type}"
+        if combined in _DEPLOY_PERM_MAP:
+            return _DEPLOY_PERM_MAP[combined]
+    # 纯类型匹配（ssh / docker / k8s）
+    if key in _DEPLOY_PERM_MAP:
+        return _DEPLOY_PERM_MAP[key]
+    return _DEPLOY_PERM_MAP["ssh"]
+
+
+def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None:
+    """部署执行前的二次权限校验（防御深度：API 层 + Service 层双保险）。
+    若用户既无 blanket 级 cd.deploy-manage，也无对应 deploy_type 的子权限则抛 403。
+    super_admin 直接放行（由 require_perm 语义保持一致）。"""
+    role = user.get("role") or ""
+    if role == settings.super_admin_role:
+        return
+    perms: list = user.get("permissions") or []
+    if _MANAGE_PERM in perms:
+        return
+    required = resolve_deploy_perm(deploy_type, cd_type)
+    if required not in perms:
+        raise HTTPException(403, f"Permission denied: {_MANAGE_PERM} or {required} required")
+
+
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据，同时检查 systems（如果存在）是否允许 CD 访问。
     成功返回 token，失败返回 None"""

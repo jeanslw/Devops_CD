@@ -238,6 +238,7 @@ export default {
     tag: 'Tag',
     method: '方式',
     status: '状态',
+    operator: '操作者',
     detail: '详情',
     noRecords: '暂无部署记录',
     noOutput: '(无输出)',

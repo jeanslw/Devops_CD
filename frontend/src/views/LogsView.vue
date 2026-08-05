@@ -2,11 +2,11 @@
   <div class="card">
     <h3>{{ $t('logs.title') }}</h3>
     <table>
-      <thead><tr><th>{{ $t('logs.id') }}</th><th>{{ $t('logs.time') }}</th><th>{{ $t('logs.project') }}</th><th>{{ $t('logs.tag') }}</th><th>{{ $t('logs.method') }}</th><th>{{ $t('logs.status') }}</th><th>{{ $t('logs.detail') }}</th></tr></thead>
+      <thead><tr><th>{{ $t('logs.id') }}</th><th>{{ $t('logs.time') }}</th><th>{{ $t('logs.project') }}</th><th>{{ $t('logs.tag') }}</th><th>{{ $t('logs.method') }}</th><th>{{ $t('logs.status') }}</th><th>{{ $t('logs.operator') }}</th><th>{{ $t('logs.detail') }}</th></tr></thead>
       <tbody>
-        <tr v-if="loading"><td colspan="7" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+        <tr v-if="loading"><td colspan="8" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
         <template v-else-if="logs.length === 0">
-          <tr><td colspan="7" style="text-align:center;color:#888">{{ $t('logs.noRecords') }}</td></tr>
+          <tr><td colspan="8" style="text-align:center;color:#888">{{ $t('logs.noRecords') }}</td></tr>
         </template>
         <template v-else v-for="(l, idx) in logs" :key="l.id">
           <tr style="cursor:pointer" @click="toggleDetail(idx)">
@@ -18,10 +18,11 @@
             <td>
               <span class="badge" :class="'badge-' + (l.status === 'ok' ? 'ok' : l.status === 'failed' ? 'err' : 'pend')">{{ l.status }}</span>
             </td>
+            <td>{{ l.triggered_by || '-' }}</td>
             <td class="output-preview">{{ l.output || '' }}</td>
           </tr>
           <tr v-if="expandedIdx === idx" class="log-detail">
-            <td colspan="7">
+            <td colspan="8">
               <div class="target-block">
                 <pre class="output-code">{{ escapeHtml(l.output || $t('logs.noOutput')) }}</pre>
               </div>

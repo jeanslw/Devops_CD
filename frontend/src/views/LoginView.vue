@@ -44,7 +44,7 @@ async function doLogin() {
       auth.setToken(d.token)
       router.push('/')
     } else {
-      err.value = d.detail || t('login.loginFailed')
+      err.value = d.error || t('login.loginFailed')
     }
   } catch (e) {
     err.value = t('login.networkError')

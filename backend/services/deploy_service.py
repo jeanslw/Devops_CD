@@ -6,9 +6,9 @@ from backend.deployers import deployer_registry, DeployTarget
 from backend.config import settings
 from backend.deploy_log import S
 from backend.crypto import decrypt
+from backend.auth import enforce_deploy_perm
 from .ci_service import CiService
 from .notification import notify_deploy
-
 
 def _parse_server_ids(server_ids: str) -> list[int]:
     """安全地解析 server_ids，忽略空值和非法内容。"""
@@ -80,8 +80,17 @@ class DeployService:
         bot_id: int = 0,
         lang: str = "en",
         callback=None,
+        user: dict | None = None,
     ) -> dict:
-        """批量部署到一台或多台服务器"""
+        """批量部署到一台或多台服务器。
+        user 参数：当前登录用户信息 dict（含 role / permissions / username），
+                 用于部署前的二次权限校验与审计日志 triggered_by 字段，
+                 传入 None 时跳过校验（仅限内部可信调用）。"""
+        # ── 部署时二次权限校验（防御深度）──
+        if user is not None:
+            enforce_deploy_perm(user, deploy_type)
+        triggered_by = (user or {}).get("username", "")
+
         harbor_repo = self._ci.resolve_harbor_repo(project)
         if not harbor_repo:
             raise ValueError(f"Project '{project}' has no harbor_repository configured")
@@ -138,7 +147,7 @@ class DeployService:
 
         # 记录日志（一次部署一条记录，批量时合并输出和状态）
         with self._db.conn() as conn:
-            row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs FOR UPDATE").fetchone()
+            row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
             deploy_id = row["next_id"] if row else 1
 
             if is_batch:
@@ -161,18 +170,18 @@ class DeployService:
                 else:
                     status = "partial"
                 conn.execute(
-                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
-                    (deploy_id, project_key, tag, image, deploy_type, target_str, status, merged_output),
+                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output,triggered_by) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (deploy_id, project_key, tag, image, deploy_type, target_str, status, merged_output, triggered_by),
                 )
             else:
                 r = results[0]
                 target_label = f"#{r['server_id']} {r['host']}"
                 output = r["output"][:settings.log_truncate_chars] if r["output"] else ""
                 conn.execute(
-                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
-                    (deploy_id, project_key, tag, image, deploy_type, target_label, r["status"], output),
+                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output,triggered_by) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (deploy_id, project_key, tag, image, deploy_type, target_label, r["status"], output, triggered_by),
                 )
 
         # 通知

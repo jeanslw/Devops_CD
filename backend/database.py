@@ -254,9 +254,12 @@ class Database:
             target VARCHAR(255),
             status VARCHAR(32),
             output TEXT,
+            triggered_by VARCHAR(64) DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         )""")
         try: conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
+        except: pass
+        try: conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN triggered_by VARCHAR(64) DEFAULT ''")
         except: pass
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (

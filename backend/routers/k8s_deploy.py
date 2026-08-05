@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.database import Database
-from backend.auth import get_db, require_perm
+from backend.auth import get_db, require_perm, enforce_deploy_perm
 from backend.services.ci_service import CiService
 from backend.services.notification import notify_deploy
 from backend.crypto import decrypt
@@ -56,14 +56,15 @@ def _resolve_image(db, req):
     return image, project_key, project_short
 
 
-def _record_deploy(db, project_key, tag, image, cd_type, host, ok, output):
+def _record_deploy(db, project_key, tag, image, cd_type, host, ok, output, triggered_by: str = ""):
     """记录部署日志到数据库"""
     with db.conn() as conn:
         conn.execute(
-            "INSERT INTO cd_deploy_logs (project,tag,image,deploy_type,target,status,output) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO cd_deploy_logs (project,tag,image,deploy_type,target,status,output,triggered_by) VALUES (?,?,?,?,?,?,?,?)",
             (project_key, tag, image, f"k8s/{cd_type}", host,
              "ok" if ok else "failed",
-             output[:settings.log_truncate_chars] if output else ""),
+             output[:settings.log_truncate_chars] if output else "",
+             triggered_by or ""),
         )
 
 
@@ -134,9 +135,10 @@ def _k8s_deployment_exists(ssh, name: str, namespace: str = "") -> bool:
 def deploy_k8s_check(
     req: K8sDeployCheckRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy.k8s")),
+    user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     """部署前预检：YAML 名称 vs 项目名 + K8S 存量"""
+    enforce_deploy_perm(user, "k8s", req.cd_type)
     filter_name = req.project.split("/")[-1]
     result = {
         "ok": True, "exists": False,
@@ -277,19 +279,20 @@ def deploy_k8s_check(
 def deploy_k8s(
     req: K8sDeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy.k8s")),
+    user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
+    enforce_deploy_perm(user, "k8s", req.cd_type)
     image, project_key, project_short = _resolve_image(db, req)
-    host, port, user, pwd, ssh_key = _resolve_cluster(db, req)
+    host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
 
     # 路由到对应 deployer（统一通过注册表）
     deployer = deployer_registry.create(f"k8s/{req.cd_type}")
     if deployer is None:
         raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
-    result = deployer.deploy(req, image, project_short, host, port, user, pwd, ssh_key)
+    result = deployer.deploy(req, image, project_short, host, port, user_srv, pwd, ssh_key)
 
     # 记录日志 + 通知
-    _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"])
+    _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"], user.get("username", ""))
     _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"], req.lang)
 
     return result
@@ -299,9 +302,10 @@ def deploy_k8s(
 async def deploy_k8s_stream(
     req: K8sDeployRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.deploy.k8s")),
+    user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     """K8S 实时部署（SSE 流式推送）"""
+    enforce_deploy_perm(user, "k8s", req.cd_type)
     import asyncio
     import queue
     import threading
@@ -317,7 +321,7 @@ async def deploy_k8s_stream(
         return StreamingResponse(err_no_repo(), media_type="text/event-stream")
 
     try:
-        host, port, user, pwd, ssh_key = _resolve_cluster(db, req)
+        host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
     except AppException as e:
         async def err_no_cluster():
             yield f"retry: 3000\ndata: ERROR:{e.message}\n\n"
@@ -332,13 +336,13 @@ async def deploy_k8s_stream(
             deployer = deployer_registry.create(f"k8s/{req.cd_type}")
             if deployer is None:
                 raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
-            result = deployer.deploy(req, image, project_short, host, port, user, pwd, ssh_key, callback=log_callback)
+            result = deployer.deploy(req, image, project_short, host, port, user_srv, pwd, ssh_key, callback=log_callback)
 
             deploy_result = {"success": True, "data": result}
             # 立即通知 SSE 流部署完成，避免 DB/通知操作阻塞 UI
             log_queue.put(None)
 
-            _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"])
+            _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"], user.get("username", ""))
             _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"], req.lang)
         except Exception as e:
             deploy_result = {"success": False, "error": str(e)}

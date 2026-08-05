@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS cd_deploy_logs (
     target      VARCHAR(255),
     status      VARCHAR(32),
     output      TEXT,
+    triggered_by VARCHAR(64) DEFAULT '',
     created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
