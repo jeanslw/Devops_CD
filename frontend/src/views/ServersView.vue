@@ -36,6 +36,7 @@
           </td>
           <td>
             <button class="btn btn-edit btn-sm" style="margin-right:4px" @click="edit(s)">{{ $t('common.edit') }}</button>
+            <button class="btn btn-sm" style="margin-right:4px" @click="trustServer(s.id)">{{ $t('servers.trustHost') }}</button>
             <button class="btn btn-red btn-sm" @click="del(s.id)">{{ $t('common.delete') }}</button>
           </td>
         </tr>
@@ -82,6 +83,9 @@
       </div>
     </div>
     <button class="btn btn-green" @click="save">{{ editId ? '💾 ' + $t('common.save') : '＋ ' + $t('common.add') }}</button>
+    <button class="btn btn-sm" style="margin-left:8px" @click="testConnection(true)" :disabled="testing">
+      {{ testing ? $t('servers.testing') : $t('servers.testAndTrust') }}
+    </button>
     <button class="btn btn-edit" v-if="editId" @click="cancelForm" style="margin-left:8px">{{ $t('common.cancel') }}</button>
   </div>
 </template>
@@ -107,6 +111,7 @@ const form = reactive({ name: '', hostPort: '', user: 'root', type: 'ssh', auth_
 const tagInput = ref('')
 const existingTags = ref([])
 const customTags = reactive([])
+const testing = ref(false)
 
 const filteredServers = computed(() => {
   if (!filter.value) return servers.value
@@ -229,6 +234,64 @@ async function del(id) {
   if (auth.handle401(r)) return
   toast(t('servers.deleted'), true)
   loadData()
+}
+
+async function testConnection(trust = false) {
+  const n = form.name.trim()
+  const h = form.hostPort.trim()
+  if (!n || !h) return toast(t('servers.fillNameAndHost'), false)
+  const hostParts = h.split(':')
+  const host = hostParts[0]
+  const port = parseInt(hostParts[1] || '22')
+  const body = {
+    name: n, host, port, user: form.user.trim() || 'root',
+    auth_type: form.auth_type, password: form.auth_type === 'password' ? form.password : '',
+    ssh_key: form.auth_type === 'key' ? form.ssh_key.trim() : '',
+    tags: form.tags.join(','), type: form.type
+  }
+  testing.value = true
+  try {
+    const url = `/api/servers/test-connection${trust ? '?trust=true' : ''}`
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.A() },
+      body: JSON.stringify(body)
+    })
+    if (auth.handle401(r)) return
+    const d = await r.json()
+    if (d.success) {
+      let msg = d.message
+      if (trust && d.data?.key_fingerprint) {
+        msg += ' | ' + t('servers.keyFingerprint') + ': ' + d.data.key_fingerprint
+      }
+      toast(msg, true)
+    } else {
+      toast(d.message || t('common.failed'), false)
+    }
+  } catch (e) {
+    toast(String(e), false)
+  } finally {
+    testing.value = false
+  }
+}
+
+async function trustServer(id) {
+  if (!confirm(t('servers.confirmTrust'))) return
+  const r = await fetch(`/api/servers/${id}/trust`, {
+    method: 'POST',
+    headers: auth.A()
+  })
+  if (auth.handle401(r)) return
+  const d = await r.json()
+  if (d.success) {
+    let msg = d.message
+    if (d.data?.key_fingerprint) {
+      msg += ' | ' + t('servers.keyFingerprint') + ': ' + d.data.key_fingerprint
+    }
+    toast(msg, true)
+  } else {
+    toast(d.message || t('common.failed'), false)
+  }
 }
 
 onMounted(() => { loadData(); loadTags() })

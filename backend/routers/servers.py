@@ -1,5 +1,6 @@
 """服务器管理路由"""
 
+import logging
 import socket
 import concurrent.futures
 import pymysql
@@ -7,12 +8,14 @@ from fastapi import APIRouter, Depends
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm
 from backend.models import ServerRequest
-from backend.crypto import encrypt
+from backend.crypto import encrypt, decrypt
 from backend.services.monitor_utils import clear_server_cache, _cache_get, _cache_set
 from backend.exceptions import ConflictError, DatabaseError, NotFoundError
 from backend.responses import ok
+from backend.deployers.base import trust_ssh_host
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
+logger = logging.getLogger(__name__)
 
 
 MASK = "***"
@@ -148,3 +151,68 @@ def check_servers_status(
 
     _cache_set(STATUS_CACHE_KEY, result)
     return result
+
+
+@router.post("/test-connection")
+def test_server_connection(
+    req: ServerRequest,
+    trust: bool = False,
+    _user: dict = Depends(require_perm("cd.server-manage")),
+):
+    """测试服务器 SSH 连接。
+    trust=True 时会自动信任主机密钥并保存到 known_hosts。
+    """
+    if trust:
+        result = trust_ssh_host(
+            host=req.host,
+            port=req.port,
+            username=req.user,
+            password=req.password,
+            ssh_key=req.ssh_key,
+        )
+        if result["success"]:
+            return ok(message=result["message"], data={"key_fingerprint": result["key_fingerprint"]})
+        else:
+            return {"success": False, "message": result["message"]}
+    else:
+        # 普通连接测试（使用 RejectPolicy）
+        from backend.deployers.base import ssh_connect, DeployTarget
+        try:
+            target = DeployTarget(
+                host=req.host, port=req.port, user=req.user,
+                password=req.password, ssh_key=req.ssh_key,
+            )
+            ssh = ssh_connect(target, timeout=10)
+            ssh.close()
+            return ok(message="连接成功")
+        except Exception as e:
+            logger.error("SSH connection test failed", exc_info=e)
+            return {"success": False, "message": "连接失败，请检查主机配置"}
+
+
+@router.post("/{sid}/trust")
+def trust_existing_server(
+    sid: int,
+    db: Database = Depends(get_db),
+    _user: dict = Depends(require_perm("cd.server-manage")),
+):
+    """信任已存在的服务器（获取并保存主机密钥）"""
+    with db.conn() as conn:
+        row = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
+        if not row:
+            raise NotFoundError("服务器不存在")
+
+        password = decrypt(row["password"]) if row.get("password") else ""
+        ssh_key = decrypt(row["ssh_key"]) if row.get("ssh_key") else ""
+
+        result = trust_ssh_host(
+            host=row["host"],
+            port=row["port"],
+            username=row["user"],
+            password=password,
+            ssh_key=ssh_key,
+        )
+        if result["success"]:
+            return ok(message=result["message"], data={"key_fingerprint": result["key_fingerprint"]})
+        else:
+            return {"success": False, "message": result["message"]}

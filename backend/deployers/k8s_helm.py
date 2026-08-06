@@ -1,5 +1,6 @@
 """K8S Helm 部署模式 — SSH helm upgrade --install + exit code 判断"""
 
+import logging
 import shlex
 
 from backend.deployers.base import ssh_connect, DeployTarget
@@ -7,6 +8,8 @@ from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import _log, _ssh_cmd, _kubectl_pods, _exec_exit
 from backend.config import settings
 from backend.deploy_log import S
+
+logger = logging.getLogger(__name__)
 
 
 class HelmDeployer(K8sSubDeployer):
@@ -37,7 +40,8 @@ class HelmDeployer(K8sSubDeployer):
             success = ec == 0
             return {"success": success, "output": (out or err)[:settings.log_truncate_chars]}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("Helm stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
@@ -129,5 +133,6 @@ class HelmDeployer(K8sSubDeployer):
                 )[:settings.log_truncate_chars],
             }
         except Exception as e:
+            logger.error("Helm deploy failed", exc_info=e)
             _log(callback, S("deploy_log.helm_fail", error=str(e)))
             return {"success": False, "output": str(e)}

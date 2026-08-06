@@ -1,6 +1,9 @@
 """部署编排服务 — 查映射 → 选策略 → 执行 → 记日志 → 通知"""
 
+import logging
 from datetime import datetime
+from typing import Any, Callable
+
 from backend.database import Database
 from backend.deployers import deployer_registry, DeployTarget
 from backend.config import settings
@@ -9,6 +12,8 @@ from backend.crypto import decrypt
 from backend.auth import enforce_deploy_perm
 from .ci_service import CiService
 from .notification import notify_deploy
+
+logger = logging.getLogger(__name__)
 
 def _parse_server_ids(server_ids: str) -> list[int]:
     """安全地解析 server_ids，忽略空值和非法内容。"""
@@ -79,7 +84,7 @@ class DeployService:
         env_file: str = "",
         bot_id: int = 0,
         lang: str = "en",
-        callback=None,
+        callback: Callable | None = None,
         user: dict | None = None,
     ) -> dict:
         """批量部署到一台或多台服务器。
@@ -127,12 +132,13 @@ class DeployService:
             # 批量部署时在 SSE 流中显示服务器分隔线
             if is_batch:
                 host_label = f"#{sid} {target.host}"
-                callback(S("deploy_log.batch_server_start", current=i + 1, total=total, host=host_label))
+                if callback:
+                    callback(S("deploy_log.batch_server_start", current=i + 1, total=total, host=host_label))
 
             error = deployer.validate(target)
             if error:
                 results.append({"server_id": sid, "host": target.host, "status": "failed", "output": error})
-                if is_batch:
+                if is_batch and callback:
                     callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail"))
                 continue
 
@@ -140,9 +146,10 @@ class DeployService:
                 r = deployer.deploy(target, image, project_key, tag, callback=callback)
                 results.append({"server_id": sid, "host": target.host, "status": r.status, "output": r.output})
             except Exception as e:
+                logger.error("Deploy service failed", exc_info=e)
                 results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
 
-            if is_batch:
+            if is_batch and callback:
                 callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result=results[-1]["status"]))
 
         # 记录日志（一次部署一条记录，批量时合并输出和状态）

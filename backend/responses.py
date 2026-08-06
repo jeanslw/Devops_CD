@@ -5,7 +5,7 @@ from typing import Any
 
 def ok(data: Any = None, message: str = "") -> dict:
     """成功响应"""
-    result = {"success": True}
+    result: dict[str, Any] = {"success": True}
     if data is not None:
         result["data"] = data
     if message:

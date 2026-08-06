@@ -1,4 +1,5 @@
 """CI 构建管理路由 — 代理 CI API，CD 前端统一入口（对照 CI OpenAPI 实现）"""
+import logging
 import traceback
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
@@ -7,6 +8,7 @@ from backend.services.ci_client import get_ci_client, CiClientError
 from backend.models import BuildTriggerRequest
 from backend.exceptions import ServiceUnavailableError
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ci", tags=["ci-build"])
 
 
@@ -15,7 +17,8 @@ def _client():
     try:
         return get_ci_client()
     except CiClientError as e:
-        raise ServiceUnavailableError(str(e), error_key="errors.ci_service_unavailable")
+        logger.error("CI client unavailable", exc_info=e)
+        raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable")
 
 
 # ── 项目列表 ──
@@ -25,7 +28,8 @@ def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
     try:
         return _client().list_projects()
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
+        logger.error("CI service unavailable", exc_info=e)
+        raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable")
 
 
 # ── 构建历史 ──
@@ -35,7 +39,8 @@ def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"
     try:
         return _client().get_builds(project)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
+        logger.error("CI service unavailable", exc_info=e)
+        raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable")
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ci_build get_builds] {tb}", flush=True)
@@ -48,7 +53,7 @@ def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(
     """触发一次构建 → CI POST /api/build/{path}/trigger。
     ref 仅 GitLab CI 模式必填；Jenkins 模式可省略。"""
     try:
-        ref = req.ref or None
+        ref = req.ref or ""
         variables = req.variables or None
         return _client().trigger_build(project, ref, variables)
     except CiClientError as e:
@@ -73,7 +78,8 @@ def get_variables(project: str, _user: str = Depends(require_perm("cd.build-mana
     try:
         return _client().get_variables(project)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
+        logger.error("CI service unavailable", exc_info=e)
+        raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable")
 
 
 # ── 分支列表 ──
@@ -83,7 +89,8 @@ def get_branches(project: str, _user: str = Depends(require_perm("cd.build-manag
     try:
         return _client().get_branches(project)
     except CiClientError as e:
-        raise ServiceUnavailableError(f"CI 服务不可用: {e}", error_key="errors.ci_service_unavailable")
+        logger.error("CI service unavailable", exc_info=e)
+        raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable")
 
 
 # ── 重试 Pipeline（仅 GitLab CI）──
@@ -114,4 +121,5 @@ def ci_health(_user: str = Depends(require_perm("cd.build-manage"))):
         _client().list_projects()
         return {"status": "ok", "message": "CI 服务连接正常"}
     except CiClientError as e:
-        return {"status": "error", "message": str(e)}
+        logger.error("CI health check failed", exc_info=e)
+        return {"status": "error", "message": "CI 服务连接失败，请联系管理员"}

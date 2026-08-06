@@ -68,13 +68,12 @@ class RegistryService:
             try:
                 self._harbor_client = HarborClient()
             except RuntimeError as e:
-                msg = str(e)
+                logger.error("Harbor client initialization failed", exc_info=e)
                 raise HarborUnavailableError(
                     f"Harbor 镜像仓库不可达。请检查：\n"
                     f"1. HARBOR_REGISTRY 地址是否正确\n"
                     f"2. 网络是否连通\n"
                     f"3. Harbor 服务是否正常运行\n"
-                    f"（{msg}）"
                 ) from e
         return self._harbor_client
 
@@ -363,7 +362,7 @@ class RegistryService:
             }
 
             # 实时请求 Harbor 获取最新详情（不依赖数据库数量，解决旧缓存数据为 0 的问题）
-            harbor_error = None
+            harbor_unavailable = False
             try:
                 live = self._harbor.get_scan_report(row["repo_name"], tag)
                 if live:
@@ -377,8 +376,8 @@ class RegistryService:
                         live["severity"] = row["scan_severity"] or live.get("severity", "")
                         return live
             except HarborUnavailableError as e:
-                harbor_error = str(e)
                 logger.warning(f"Harbor 不可达，回退到数据库缓存: {e}")
+                harbor_unavailable = True
             except Exception as e:
                 logger.warning(f"实时获取扫描详情失败，回退到汇总: {e}")
 
@@ -389,7 +388,7 @@ class RegistryService:
                 "harbor_url": harbor_url,
                 "digest": digest,
             }
-            if harbor_error:
+            if harbor_unavailable:
                 result["warning"] = "Harbor 不可达，以下为历史缓存数据，可能不是最新"
             return result
 
@@ -423,8 +422,8 @@ class RegistryService:
                 logger.warning(f"触发扫描失败（Harbor 不可达）: {e}")
                 return {"ok": False, "error": "Harbor 镜像仓库不可达，无法触发扫描"}
             except Exception as e:
-                logger.warning(f"触发扫描失败: {e}")
-                return {"ok": False, "error": str(e)}
+                logger.error(f"触发扫描失败", exc_info=e)
+                return {"ok": False, "error": "触发扫描失败，请联系管理员"}
 
     # ── 删除 ──
 
@@ -508,12 +507,14 @@ def _sync_worker(db_factory, interval_minutes: int):
             logger.error(f"定时同步异常: {e}")
 
 
-def start_background_sync(db_factory, interval: int = None):
+def start_background_sync(db_factory, interval: int | None = None):
     """启动后台定时同步线程"""
     global _sync_thread, _sync_stop, _sync_db_factory
     _sync_db_factory = db_factory
     if interval is None:
-        interval = getattr(settings, "registry_sync_interval", 30)
+        interval = int(getattr(settings, "registry_sync_interval", 30))
+    else:
+        interval = int(interval)
     if interval <= 0:
         logger.info("定时同步已关闭 (interval=0)")
         return

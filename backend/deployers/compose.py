@@ -1,10 +1,13 @@
 """docker-compose 部署器 — IMAGE/TAG 双变量，支持 --env-file"""
 
+import logging
 import shlex
 
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on, ssh_exec_stream
 from backend.config import settings
 from backend.deploy_log import S
+
+logger = logging.getLogger(__name__)
 
 
 class ComposeDeployer(Deployer):
@@ -35,6 +38,7 @@ class ComposeDeployer(Deployer):
                     output = self._ssh_exec_stream(ssh, cmd, callback)
                     return DeployResult(image=image, status="ok", output=output)
             except Exception as e:
+                logger.error("Compose commands deploy failed", exc_info=e)
                 self._log(callback, S("deploy_log.deploy_error", error=str(e)))
                 return DeployResult(image=image, status="failed", output=str(e))
 
@@ -263,6 +267,7 @@ class ComposeDeployer(Deployer):
                     self._log(callback, running.output)
                     self._log(callback, S("deploy_log.verify_fail_version"))
         except Exception as e:
+            logger.error("Compose deploy failed", exc_info=e)
             self._log(callback, S("deploy_log.deploy_error", error=str(e)))
             return DeployResult(image=image, status="failed", output=str(e))
         return result
@@ -277,7 +282,8 @@ class ComposeDeployer(Deployer):
             sftp.close()
             return None
         except Exception as e:
-            return str(e)
+            logger.error("Compose _upload_file failed", exc_info=e)
+            return "文件上传失败"
 
     def _ssh_run(self, ssh, cmd: str, image: str) -> DeployResult:
         try:
@@ -288,7 +294,8 @@ class ComposeDeployer(Deployer):
                 output=(err or out)[:settings.log_truncate_chars],
             )
         except Exception as e:
-            return DeployResult(image=image, status="failed", output=str(e))
+            logger.error("Compose _ssh_run failed", exc_info=e)
+            return DeployResult(image=image, status="failed", output="命令执行失败")
 
     def _ssh_exec_stream(self, ssh, cmd: str, callback) -> str:
         """实时流式执行命令（委托给共享实现）"""
@@ -307,7 +314,8 @@ class ComposeDeployer(Deployer):
                 err = stderr.read().decode(errors="replace").strip()
                 return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("Compose stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def validate(self, target: DeployTarget) -> str | None:
         if not target.host:

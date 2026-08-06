@@ -120,6 +120,7 @@ async def terminal(websocket: WebSocket, server_id: int):
 
     # SSH 已连上，主动通知前端（onopen 只是 WebSocket 握手成功，不代表 SSH 通）
     chan = await asyncio.to_thread(ssh.invoke_shell, term="xterm-256color", width=100, height=28)
+    assert chan is not None, "SSH shell channel 创建失败"
     chan.settimeout(0.0)
 
     async def ssh_to_ws():
@@ -176,7 +177,7 @@ async def terminal(websocket: WebSocket, server_id: int):
                         else:
                             buf = ""
 
-                        chan.send(text)
+                        chan.send(text.encode())  # type: ignore[arg-type]
                     elif "bytes" in data:
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
@@ -212,7 +213,7 @@ async def upload_file(
     # 安全校验：跨平台文件名防路径穿越
     # 浏览器可能传入 Windows 完整路径 (D:\tmp\2012.txt)，\ 在 Linux 上不被识别为分隔符
     # 统一将 \ 转为 /，再取 basename，确保 Windows/Linux 后端行为一致
-    _fn = file.filename.replace("\\", "/")
+    _fn = (file.filename or "").replace("\\", "/")
     _fn = re.sub(r'^[a-zA-Z]:', '', _fn)  # 去除 Windows 盘符
     safe_filename = _fn.rsplit("/", 1)[-1]
     if not safe_filename:

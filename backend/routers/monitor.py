@@ -1,5 +1,6 @@
 """资源监控路由 — 统一 K8S / Docker / SSH 服务器资源查看"""
 
+import logging
 import shlex
 
 from fastapi import APIRouter, Depends
@@ -14,6 +15,7 @@ from backend.services.monitor_utils import (
 from backend.exceptions import NotFoundError, ValidationError, ServiceUnavailableError
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
+logger = logging.getLogger(__name__)
 
 # ── API ──
 
@@ -111,8 +113,9 @@ def list_monitor_servers(
                     entry["hint"] = "SSH 连接正常但缺少基础命令"
 
         except Exception as e:
+            logger.error("Server monitor failed", exc_info=e)
             entry["status"] = "error"
-            entry["error"] = str(e)
+            entry["error"] = "服务器连接失败，请联系管理员"
         finally:
             if ssh:
                 ssh.close()

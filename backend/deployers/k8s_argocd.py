@@ -1,7 +1,11 @@
 """K8S Argo CD 部署模式 — API patch image + sync + health polling"""
 
+import logging
+
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deploy_log import S
+
+logger = logging.getLogger(__name__)
 
 
 class ArgoCDDeployer(K8sSubDeployer):
@@ -27,7 +31,8 @@ class ArgoCDDeployer(K8sSubDeployer):
             else:
                 return {"success": False, "output": f"Delete failed: {r.status_code} {r.text[:200]}"}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("ArgoCD stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         """Argo CD: patch image + sync"""
@@ -138,6 +143,7 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             return {"success": success, "output": "\n".join(output)}
         except Exception as e:
+            logger.error("ArgoCD deploy failed", exc_info=e)
             msg = str(e)
             log(msg)
             return {"success": False, "output": msg}

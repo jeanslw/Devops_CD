@@ -1,20 +1,19 @@
 """DeployerRegistry —— 对齐 PHP BuildProviderRegistry"""
 
-from typing import Dict, Callable
-from .base import Deployer
+from typing import Dict, Callable, Any
 
 
 class DeployerRegistry:
     """部署器注册表：按名称注册懒加载工厂，按需创建实例"""
 
     def __init__(self):
-        self._factories: Dict[str, Callable[[], Deployer]] = {}
+        self._factories: Dict[str, Callable[[], Any]] = {}
 
-    def register(self, name: str, factory: Callable[[], Deployer]):
+    def register(self, name: str, factory: Callable[[], Any]):
         """注册部署器工厂"""
         self._factories[name] = factory
 
-    def create(self, name: str) -> Deployer:
+    def create(self, name: str) -> Any:
         """创建部署器实例（懒加载）"""
         if name not in self._factories:
             raise ValueError(

@@ -1,5 +1,6 @@
 """部署器抽象基类"""
 
+import logging
 import os
 import re
 import time
@@ -9,15 +10,87 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
+logger = logging.getLogger(__name__)
 
-def ssh_connect(target: "DeployTarget", timeout: int):
+
+def _known_hosts_file() -> str:
+    """返回 known_hosts 文件路径（固定在 ~/.cd_service/known_hosts）。"""
+    cd_dir = os.path.join(os.path.expanduser("~"), ".cd_service")
+    os.makedirs(cd_dir, exist_ok=True)
+    return os.path.join(cd_dir, "known_hosts")
+
+
+def trust_ssh_host(host: str, port: int, username: str = "", password: str = "", ssh_key: str = "", timeout: int = 30) -> dict:
+    """信任 SSH 主机，获取并保存主机密钥。返回 {success, key_fingerprint, message}"""
+    import paramiko
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    tmp_file = None
+    try:
+        kwargs = dict(hostname=host, port=port, timeout=timeout)
+        if ssh_key:
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            tmp.write(ssh_key)
+            tmp.close()
+            tmp_file = tmp.name
+            os.chmod(tmp_file, 0o600)
+            kwargs["key_filename"] = tmp_file
+            kwargs["username"] = username or "root"
+        elif password:
+            kwargs["username"] = username or "root"
+            kwargs["password"] = password
+        else:
+            kwargs["username"] = username or "root"
+
+        ssh.connect(**kwargs)  # type: ignore[arg-type]
+
+        # 获取主机指纹
+        transport = ssh.get_transport()
+        if not transport:
+            raise RuntimeError("无法获取 SSH 传输层")
+        key = transport.get_remote_server_key()
+        from hashlib import sha256
+        import base64
+        fp = sha256(key.asbytes()).digest()
+        fingerprint = base64.b64encode(fp).decode().rstrip("=")
+
+        # 保存到 known_hosts
+        kh_file = _known_hosts_file()
+        ssh.save_host_keys(kh_file)
+
+        return {
+            "success": True,
+            "key_fingerprint": f"SHA256:{fingerprint}",
+            "message": f"已信任主机 {host}:{port}，指纹: SHA256:{fingerprint}"
+        }
+    except Exception as e:
+        logger.error("SSH host trust failed", exc_info=e)
+        return {"success": False, "message": "连接失败，请检查主机配置或凭据"}
+    finally:
+        if tmp_file:
+            try: os.unlink(tmp_file)
+            except FileNotFoundError: pass
+        ssh.close()
+
+
+def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     """统一的 SSH 连接。
     优先级: ssh_key > password > 系统默认 key
+    trust=True: 自动信任未知主机（用于首次添加服务器时验证）
     """
     from backend.config import settings
     import paramiko
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    if trust or settings.ssh_auto_trust:
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    else:
+        ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+        # 加载已信任的主机密钥
+        kh_file = _known_hosts_file()
+        if os.path.exists(kh_file):
+            ssh.load_host_keys(kh_file)
+
     kwargs = dict(hostname=target.host, port=target.port, username=target.user, timeout=timeout)
     tmp_file = None
 
@@ -26,13 +99,18 @@ def ssh_connect(target: "DeployTarget", timeout: int):
         tmp.write(target.ssh_key)
         tmp.close()
         tmp_file = tmp.name
-        os.chmod(tmp_file, 0o600)  # paramiko 要求私钥文件权限严格
+        os.chmod(tmp_file, 0o600)
         kwargs["key_filename"] = tmp_file
     elif target.password:
         kwargs["password"] = target.password
 
     try:
-        ssh.connect(**kwargs)
+        ssh.connect(**kwargs)  # type: ignore[arg-type]
+        # 连接成功后，将新主机密钥保存到 known_hosts（如果用了 AutoAddPolicy）
+        if trust or settings.ssh_auto_trust:
+            kh_file = _known_hosts_file()
+            ssh.save_host_keys(kh_file)
+
         if settings.ssh_keepalive > 0:
             transport = ssh.get_transport()
             if transport:

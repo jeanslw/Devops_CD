@@ -1,5 +1,6 @@
 """K8S kubectl 部署模式 — SSH 远程 kubectl apply + rollout restart"""
 
+import logging
 import shlex
 
 from backend.deployers.base import ssh_connect, DeployTarget
@@ -9,6 +10,8 @@ from backend.deployers.k8s_utils import (
 )
 from backend.config import settings
 from backend.deploy_log import S
+
+logger = logging.getLogger(__name__)
 
 
 class KubectlDeployer(K8sSubDeployer):
@@ -32,7 +35,8 @@ class KubectlDeployer(K8sSubDeployer):
             success = ec == 0 or "not found" in (err or "").lower() or "not found" in (out or "").lower()
             return {"success": success, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("Kubectl stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
@@ -174,6 +178,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             return {"success": is_ok, "output": result[:settings.log_truncate_chars]}
         except Exception as e:
+            logger.error("Kubectl deploy failed", exc_info=e)
             _log(callback, S("deploy_log.deploy_error", error=str(e)))
             return {"success": False, "output": str(e)}
         finally:

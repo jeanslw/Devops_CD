@@ -136,7 +136,7 @@ class CiClient:
 
     # ── 业务方法（一一对应 CI OpenAPI）──
 
-    def list_projects(self) -> list[dict]:
+    def list_projects(self) -> Any:
         """GET /api/build/jobs/list?format=json → [{job_name, ci_provider, project_id, current_path}]"""
         result = self._get(self._url(API["projects"]), params={"format": "json"})
         # CI 实际返回 {"data": [...]}
@@ -144,7 +144,7 @@ class CiClient:
             return result["data"]
         return result
 
-    def get_builds(self, project: str) -> dict:
+    def get_builds(self, project: str) -> Any:
         """GET /api/build/{path}/pipelines?format=json → {build_provider, project_id, pipelines: [...]}"""
         result = self._get(self._url(API["builds"], path=project), params={"format": "json"})
         # CI 可能返回 {"data": {...}} 包装
@@ -152,9 +152,9 @@ class CiClient:
             return result["data"]
         return result
 
-    def trigger_build(self, project: str, ref: str, variables: dict | None = None) -> dict:
+    def trigger_build(self, project: str, ref: str, variables: dict | None = None) -> Any:
         """POST /api/build/{path}/trigger — body: {ref, variables}"""
-        body = {"ref": ref}
+        body: dict[str, Any] = {"ref": ref}
         if variables:
             body["variables"] = variables
         return self._post(self._url(API["trigger"], path=project), body)
@@ -163,25 +163,25 @@ class CiClient:
         """GET /api/build/{path}/logs/{id} → text/plain"""
         return self._get_text(self._url(API["log"], path=project, id=build_id))
 
-    def get_variables(self, project: str) -> dict:
+    def get_variables(self, project: str) -> Any:
         """GET /api/build/{path}/variables?format=json → 完整含 build_provider"""
         result = self._get(self._url(API["variables"], path=project), params={"format": "json"})
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result
 
-    def get_branches(self, project: str) -> list[str]:
+    def get_branches(self, project: str) -> Any:
         """GET /api/build/{path}/branches → ["main", "master", ...]"""
         result = self._get(self._url(API["branches"], path=project))
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result
 
-    def retry_pipeline(self, project: str, build_id: int | str) -> dict:
+    def retry_pipeline(self, project: str, build_id: int | str) -> Any:
         """POST /api/build/{path}/pipelines/{id}/retry — 重试 Pipeline（仅 GitLab CI）"""
         return self._post(self._url(API["retry"], path=project, id=build_id), {})
 
-    def cancel_pipeline(self, project: str, build_id: int | str) -> dict:
+    def cancel_pipeline(self, project: str, build_id: int | str) -> Any:
         """POST /api/build/{path}/pipelines/{id}/cancel — 取消 Pipeline（仅 GitLab CI）"""
         return self._post(self._url(API["cancel"], path=project, id=build_id), {})
 

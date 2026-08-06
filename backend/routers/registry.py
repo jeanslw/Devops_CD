@@ -83,7 +83,8 @@ def trigger_scan(
             raise ValidationError(result.get("error", "触发失败"), error_key="errors.scan_trigger_failed")
         return result
     except HarborUnavailableError as e:
-        raise ServiceUnavailableError(str(e), error_key="errors.harbor_unavailable")
+        logger.error("Harbor unavailable", exc_info=e)
+        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable")
 
 
 # ── 删除 ──
@@ -103,7 +104,8 @@ def delete_artifact(
             raise ConflictError(result.get("error", "删除失败"), error_key="errors.delete_artifact_failed")
         return {"ok": True, "detail": f"Tag '{body.tag}' 已删除"}
     except HarborUnavailableError as e:
-        raise ServiceUnavailableError(str(e), error_key="errors.harbor_unavailable")
+        logger.error("Harbor unavailable", exc_info=e)
+        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable")
 
 
 # ── 同步 ──
@@ -121,7 +123,8 @@ def trigger_sync(
             return svc.sync_for_project(project)
         return svc.sync_all()
     except HarborUnavailableError as e:
-        raise ServiceUnavailableError(str(e), error_key="errors.harbor_unavailable")
+        logger.error("Harbor unavailable", exc_info=e)
+        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable")
 
 
 # ── 同步配置 ──
@@ -137,8 +140,8 @@ def get_sync_config(
         interval = svc.get_sync_interval()
         return {"interval": interval}
     except Exception as e:
-        logger.error(f"get_sync_config error: {e}")
-        raise ServiceUnavailableError(f"读取配置失败: {e}", error_key="errors.sync_config_read_failed")
+        logger.error("get_sync_config error", exc_info=e)
+        raise ServiceUnavailableError("读取配置失败，请联系管理员", error_key="errors.sync_config_read_failed")
 
 
 @router.put("/config")
@@ -154,8 +157,8 @@ def update_sync_config(
         svc = RegistryService(db)
         svc.set_sync_interval(body.interval)
     except Exception as e:
-        logger.error(f"update_sync_config error: {e}")
-        raise ServiceUnavailableError(f"保存配置失败: {e}", error_key="errors.sync_config_save_failed")
+        logger.error("update_sync_config error", exc_info=e)
+        raise ServiceUnavailableError("保存配置失败，请联系管理员", error_key="errors.sync_config_save_failed")
     if body.interval <= 0:
         return {"ok": True, "interval": 0, "detail": "定时同步已关闭"}
     return {"ok": True, "interval": body.interval, "detail": f"定时同步已设为每 {body.interval} 分钟"}

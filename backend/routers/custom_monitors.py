@@ -3,6 +3,7 @@
 import csv
 import io
 import json as _json
+import logging
 import re
 
 from fastapi import APIRouter, Depends
@@ -13,9 +14,10 @@ from backend.auth import get_db, verify_token, require_perm
 from backend.services.monitor_utils import _make_target
 from backend.deployers.base import ssh_connect, _ssh_cmd
 from backend.config import settings
-from backend.exceptions import NotFoundError
+from backend.exceptions import NotFoundError, ValidationError
 from backend.responses import ok
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/custom-monitors", tags=["custom-monitors"])
 
 
@@ -448,13 +450,14 @@ def test_monitor(
                     result_item["diagnostic"] = diag
             results.append(result_item)
         except Exception as e:
+            logger.error(f"Custom monitor test failed for server {server.get('id')}", exc_info=e)
             results.append({
                 "server_id": server["id"],
                 "server_name": server.get("name", "?"),
                 "host": server.get("host", "?"),
                 "output": "",
                 "parsed": [],
-                "error": str(e),
+                "error": "命令执行失败，请联系管理员",
             })
 
     return {"success": True, "results": results}

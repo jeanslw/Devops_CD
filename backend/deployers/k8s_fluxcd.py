@@ -1,6 +1,7 @@
 """K8S Flux CD 部署模式 — patch HelmRelease/Kustomization + trigger reconcile + verify pods"""
 
 import json
+import logging
 import shlex
 
 from backend.deployers.base import ssh_connect, DeployTarget
@@ -8,6 +9,8 @@ from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import _ssh_cmd, _kubectl_pods, _log, _exec_exit
 from backend.config import settings
 from backend.deploy_log import S
+
+logger = logging.getLogger(__name__)
 
 
 def _discover_flux_resource(ssh, project_fallback, image_name):
@@ -59,7 +62,8 @@ class FluxCDDeployer(K8sSubDeployer):
             ssh.close()
             return {"success": ec == 0, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("FluxCD stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         import time
@@ -265,6 +269,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 )
                 return {"success": True, "output": result[:settings.log_truncate_chars]}
         except Exception as e:
+            logger.error("FluxCD deploy failed", exc_info=e)
             _log(callback, S("deploy_log.flux_fail_error", error=str(e)))
             return {"success": False, "output": str(e)}
         finally:

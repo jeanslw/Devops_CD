@@ -1,9 +1,12 @@
 """SSH 单机部署器 — 纯透传，不硬编码任何工具命令"""
 
+import logging
 import shlex
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on, ssh_exec_stream
 from backend.config import settings
 from backend.deploy_log import S
+
+logger = logging.getLogger(__name__)
 
 
 class SSHDeployer(Deployer):
@@ -32,6 +35,7 @@ class SSHDeployer(Deployer):
 
             return DeployResult(image=image, status="ok", output=output)
         except Exception as e:
+            logger.error("SSH deploy failed", exc_info=e)
             self._log(callback, S("deploy_log.deploy_error", error=str(e)))
             return DeployResult(image=image, status="failed", output=str(e))
 
@@ -73,7 +77,8 @@ class SSHDeployer(Deployer):
                 err = stderr.read().decode(errors="replace").strip()
                 return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("SSH stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def validate(self, target: DeployTarget) -> str | None:
         if not target.host:

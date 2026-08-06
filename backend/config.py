@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # ── SSH（可选）──
     ssh_timeout: int = 30
     ssh_keepalive: int = 30          # 0 关闭 keepalive
+    ssh_auto_trust: bool = True       # True: 自动信任未知主机（生产环境可设为 False 并配合 known_hosts）
 
     # ── Docker 部署（可选）──
     container_restart_policy: str = "always"

@@ -7,12 +7,15 @@
 namespace 从 YAML 中解析，前端不提供 namespace 输入框。
 """
 
+import logging
 import shlex
 
 from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.k8s_utils import _kubectl_pods
+
+logger = logging.getLogger(__name__)
 
 
 def _get_yaml_metadata(ssh, yaml_path):
@@ -149,6 +152,7 @@ class K8sDeployer(Deployer):
                     )
                     return DeployResult(image=image, status="failed", output=output[:settings.log_truncate_chars])
         except Exception as e:
+            logger.error("K8s deploy failed", exc_info=e)
             self._log(callback, S("deploy_log.k8s_fail_error", error=str(e)))
             return DeployResult(image=image, status="failed", output=str(e))
 
@@ -166,7 +170,8 @@ class K8sDeployer(Deployer):
                     return {"success": False, "output": f"kubectl delete failed (exit {exit_code}): {(err or out)[:settings.log_truncate_chars]}"}
                 return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
         except Exception as ex:
-            return {"success": False, "output": str(ex)}
+            logger.error("K8s stop failed", exc_info=ex)
+            return {"success": False, "output": "停止服务失败，请联系管理员"}
 
     def validate(self, target: DeployTarget) -> str | None:
         if not target.host:

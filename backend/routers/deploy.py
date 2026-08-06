@@ -1,7 +1,9 @@
 """部署路由"""
 
+import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+
 from backend.database import Database
 from backend.auth import get_db, verify_token, require_perm, enforce_deploy_perm
 from backend.models import DeployRequest
@@ -12,6 +14,7 @@ from backend.crypto import decrypt
 from backend.config import settings
 from backend.exceptions import ValidationError, NotFoundError
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["deploy"])
 
 
@@ -43,7 +46,8 @@ def deploy(
             user=user,
         )
     except ValueError as e:
-        raise ValidationError(str(e), error_key="errors.deploy_validation")
+        logger.error("Deploy validation failed", exc_info=e)
+        raise ValidationError("部署参数错误，请检查后重试", error_key="errors.deploy_validation")
 
 
 @router.post("/stop")
@@ -153,8 +157,10 @@ async def deploy_stream(
             )
             deploy_result = {"success": True, "data": result}
         except ValueError as e:
-            deploy_result = {"success": False, "error": str(e)}
+            logger.error("Deploy stream validation failed", exc_info=e)
+            deploy_result = {"success": False, "error": f"Deploy parameter error: {e}"}
         except Exception as e:
+            logger.error("Deploy stream failed", exc_info=e)
             deploy_result = {"success": False, "error": str(e)}
         finally:
             log_queue.put(None)

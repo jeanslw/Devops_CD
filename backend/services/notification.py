@@ -6,13 +6,27 @@ import hashlib
 import base64
 import urllib.parse
 from datetime import datetime
+from urllib.parse import urlparse
 
 from backend.config import settings
+
+_ALLOWED_WEBHOOK_DOMAINS = ["oapi.dingtalk.com", "qyapi.weixin.qq.com", "open.feishu.cn", "api.feishu.cn"]
+
+
+def _is_allowed_webhook(url: str) -> bool:
+    """检查 webhook URL 是否在允许的域名白名单内。"""
+    try:
+        domain = urlparse(url).hostname or ""
+        return any(domain == d or domain.endswith("." + d) for d in _ALLOWED_WEBHOOK_DOMAINS)
+    except Exception:
+        return False
 
 
 def send_webhook(url: str, message: str) -> bool:
     """发送钉钉/企微 text 消息，失败不抛异常。"""
     if not url or not message:
+        return False
+    if not _is_allowed_webhook(url):
         return False
     try:
         # 钉钉加签

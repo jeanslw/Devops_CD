@@ -1,6 +1,9 @@
 """K8S 部署路由 — kubectl SSH / Argo CD / Flux CD / Helm"""
 
+import logging
+import ipaddress
 import shlex
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -17,6 +20,7 @@ from backend.exceptions import ValidationError, NotFoundError, AppException
 from backend.deployers.registry import deployer_registry
 
 router = APIRouter(prefix="/api", tags=["k8s_deploy"])
+logger = logging.getLogger(__name__)
 
 
 class K8sDeployRequest(BaseModel):
@@ -31,14 +35,17 @@ class K8sDeployRequest(BaseModel):
     lang: str = "en"           # 前端当前语言 en/zh
 
 
-def _resolve_cluster(db, req):
+def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
     """解析集群信息，返回 (host, port, user, pwd, ssh_key) 或抛异常"""
     if req.cluster_id:
         with db.conn() as conn:
             srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (req.cluster_id,)).fetchone()
         if not srv:
             raise NotFoundError("集群不存在", error_key="errors.cluster_not_found")
-        host, port, user, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
+        host = str(srv["host"])
+        port = int(srv["port"])
+        user = str(srv["user"])
+        pwd = decrypt(srv["password"] or "")
         ssh_key = decrypt(srv["ssh_key"] or "")
         return host, port, user, pwd, ssh_key
     raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
@@ -84,14 +91,32 @@ class K8sDeployCheckRequest(BaseModel):
     k8s_ns: str = ""
 
 
+def _validate_url(url: str) -> None:
+    """验证 URL 安全性，防止 SSRF 攻击。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValidationError(f"Invalid URL scheme: {parsed.scheme}", error_key="errors.invalid_url")
+    hostname = parsed.hostname or ""
+    try:
+        ip = ipaddress.ip_address(hostname)
+        # 仅禁止回环地址和链路本地地址，其他私网地址放行
+        if ip.is_loopback or ip.is_link_local:
+            raise ValidationError("Loopback and link-local addresses are not allowed", error_key="errors.invalid_url")
+    except ValueError:
+        pass
+
+
 def _read_yaml(path: str, ssh=None) -> str:
     """读取 YAML 内容：HTTP URL 直接拉，文件路径走 SSH cat"""
     if path.startswith("http://") or path.startswith("https://"):
         try:
+            _validate_url(path)
             import requests
             r = requests.get(path, timeout=10)
             if r.ok:
                 return r.text
+        except ValidationError:
+            raise
         except Exception:
             pass
     elif ssh:
@@ -135,10 +160,10 @@ def _k8s_deployment_exists(ssh, name: str, namespace: str = "") -> bool:
 def deploy_k8s_check(
     req: K8sDeployCheckRequest,
     db: Database = Depends(get_db),
-    user: dict = Depends(require_perm("cd.deploy.k8s")),
+    _user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     """部署前预检：YAML 名称 vs 项目名 + K8S 存量"""
-    enforce_deploy_perm(user, "k8s", req.cd_type)
+    enforce_deploy_perm(_user, "k8s", req.cd_type)
     filter_name = req.project.split("/")[-1]
     result = {
         "ok": True, "exists": False,
@@ -345,6 +370,7 @@ async def deploy_k8s_stream(
             _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"], user.get("username", ""))
             _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"], req.lang)
         except Exception as e:
+            logger.error("K8s deploy failed", exc_info=e)
             deploy_result = {"success": False, "error": str(e)}
             try:
                 log_queue.put(None)

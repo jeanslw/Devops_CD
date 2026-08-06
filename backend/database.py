@@ -5,7 +5,6 @@
 
 import re
 import sqlite3
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from backend.config import settings
@@ -32,7 +31,7 @@ class _MysqlWrapper:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, *_):
         try:
             if exc_type is None:
                 self._conn.commit()
@@ -60,19 +59,33 @@ class _MysqlWrapper:
 
 
 class _SqliteWrapper:
-    """sqlite3 包装——提供 context manager。退出时自动 commit（成功）或 close（异常）"""
+    """sqlite3 包装——提供与 _MysqlWrapper 一致的 execute/commit/rollback/close 接口。
+    __enter__ 返回 self（与 _MysqlWrapper 一致），由 conn() 的 except/else/finally 统一管理生命周期。
+    """
 
     def __init__(self, conn):
         self._conn = conn
 
     def __enter__(self):
-        return self._conn
+        return self
 
     def __exit__(self, exc_type, *_):
         if exc_type is None:
             self._conn.commit()
         self._conn.close()
         return False
+
+    def execute(self, sql, params=None):
+        return self._conn.execute(sql, params or ())
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
 
 
 class Database:
@@ -158,10 +171,14 @@ class Database:
 
     @contextmanager
     def conn(self):
-        """获取数据库连接（context manager，退出时自动 commit/rollback + close/归还池）"""
+        """获取数据库连接（context manager，退出时自动 commit/rollback + close/归还池）
+        始终返回 wrapper 对象（统一 .execute/.commit/.rollback/.close 接口）。"""
         if self._driver == "mysql":
             self._init_pool()
-            raw = Database._pool.connection()
+            pool = Database._pool
+            if pool is None:
+                raise RuntimeError("MySQL 连接池初始化失败")
+            raw = pool.connection()
             wrapper = _MysqlWrapper(raw)
         else:
             raw = self._connect_sqlite()
@@ -177,20 +194,14 @@ class Database:
             Database._tables_ensured = True
 
         try:
-            # MySQL: yield wrapper (has .execute/.commit/.rollback)
-            # SQLite: yield raw conn (has .execute/.commit native methods)
-            yield wrapper if self._driver == "mysql" else raw
+            yield wrapper
         except Exception:
-            if self._driver == "mysql":
-                wrapper.rollback()
+            wrapper.rollback()
             raise
         else:
-            if self._driver == "mysql":
-                wrapper.commit()
-            else:
-                raw.commit()
+            wrapper.commit()
         finally:
-            wrapper.close() if self._driver == "mysql" else raw.close()
+            wrapper.close()
 
     # ── SQLite ──
 

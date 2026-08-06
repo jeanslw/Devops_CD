@@ -4,7 +4,7 @@
     from backend.deploy_log import S
     _log(callback, S("deploy_log.verifying_path"))
     _log(callback, S("deploy_log.path_ok", path="/opt/app"))
-    _log(callback, S("deploy_log.deploy_error", error=str(e)))
+    _log(callback, S("deploy_log.deploy_error", error="部署执行失败"))
 
 设计约定:
   - 只用于 SSE 流式输出（callback），不用于写入数据库的 result.output。
