@@ -47,7 +47,7 @@ def deploy(
         )
     except ValueError as e:
         logger.error("Deploy validation failed", exc_info=e)
-        raise ValidationError("部署参数错误，请检查后重试", error_key="errors.deploy_validation")
+        raise ValidationError(str(e), error_key="errors.deploy_validation")
 
 
 @router.post("/stop")
