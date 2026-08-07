@@ -87,6 +87,12 @@ const routes = [
     meta: { title: '通知管理' }
   },
   {
+    path: '/webhooks',
+    name: 'Webhooks',
+    component: () => import('@/views/WebhookView.vue'),
+    meta: { title: 'Webhook接收' }
+  },
+  {
     path: '/bots/create',
     name: 'BotCreate',
     component: () => import('@/views/BotCreateView.vue'),

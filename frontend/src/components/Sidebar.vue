@@ -70,10 +70,18 @@
       </div>
     </template>
 
-    <!-- 通知管理 -->
-    <div v-if="auth.canNotificationManage()" class="item" :class="{ active: isActive('/bots') }" @click="go('/bots')">
-      {{ $t('sidebar.notifications') }}
-    </div>
+    <!-- 通知管理（折叠组：Bot 管理 + WebHook） -->
+    <template v-if="auth.canNotificationManage()">
+      <div class="item item-parent" @click="toggleNotify()">
+        {{ $t('sidebar.notifications') }} {{ notifyOpen ? '▾' : '▸' }}
+      </div>
+      <div v-show="notifyOpen" class="item item-sub" :class="{ active: isActive('/bots') }" @click="go('/bots')">
+        {{ $t('sidebar.botManage') }}
+      </div>
+      <div v-show="notifyOpen" class="item item-sub" :class="{ active: isActive('/webhooks') }" @click="go('/webhooks')">
+        {{ $t('sidebar.webhookReceiver') }}
+      </div>
+    </template>
   </div>
 </template>
 
@@ -91,6 +99,7 @@ const route = useRoute()
 const router = useRouter()
 const deployOpen = ref(true)
 const monitorOpen = ref(false)
+const notifyOpen = ref(true)
 
 // 用户已登录但未分配任何权限（非 super_admin）时显示提示
 const showEmptyPermsHint = computed(() => {
@@ -113,5 +122,9 @@ function toggleDeploy() {
 
 function toggleMonitor() {
   monitorOpen.value = !monitorOpen.value
+}
+
+function toggleNotify() {
+  notifyOpen.value = !notifyOpen.value
 }
 </script>

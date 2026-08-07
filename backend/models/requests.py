@@ -63,3 +63,12 @@ class DeployRequest(BaseModel):
 class BuildTriggerRequest(BaseModel):
     ref: str = ""                  # GitLab CI 必填（分支/tag），Jenkins 可省略
     variables: dict = {}           # 自定义构建变量
+
+
+class WebhookRequest(BaseModel):
+    name: str
+    bot_id: int = 0                # 关联 Bot，0 = 不自动转发
+
+
+class WebhookForwardRequest(BaseModel):
+    bot_id: int                    # 手动转发到的目标 Bot

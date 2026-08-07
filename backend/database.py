@@ -359,6 +359,26 @@ class Database:
         try: conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_monitor ON cd_custom_monitor_metrics(monitor_id)")
         except: pass
 
+        # Webhook 接收配置表
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_webhooks (
+            id {PK},
+            name VARCHAR(255) UNIQUE,
+            token VARCHAR(64) UNIQUE NOT NULL,
+            bot_id INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT ({NOW})
+        )""")
+
+        # Webhook 事件记录表
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_webhook_events (
+            id {PK},
+            webhook_id INTEGER NOT NULL,
+            payload TEXT,
+            received_at TEXT DEFAULT ({NOW}),
+            forwarded INTEGER DEFAULT 0,
+            forwarded_at TEXT DEFAULT ''
+        )""")
+
         # ── 自动迁移：补充已有表缺失的列 ──
         migrations = [
             ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
@@ -389,6 +409,9 @@ class Database:
             ("idx_cdr_created",       "cd_alert_rules",        "created_at"),
             ("idx_cdm_enabled",       "cd_custom_monitors",    "enabled"),
             ("idx_cdm_created",       "cd_custom_monitors",    "created_at"),
+            ("idx_cwh_enabled",       "cd_webhooks",           "enabled"),
+            ("idx_we_webhook",        "cd_webhook_events",     "webhook_id"),
+            ("idx_we_received",       "cd_webhook_events",     "received_at"),
         ]:
             try: conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")
             except: pass

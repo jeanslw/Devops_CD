@@ -119,6 +119,8 @@ CALL __add_index('cd_alert_rules', 'idx_cdr_created', 'created_at');
 CALL __add_index('cd_custom_monitors', 'idx_cdm_enabled', 'enabled');
 CALL __add_index('cd_custom_monitors', 'idx_cdm_created', 'created_at');
 
+CALL __add_index('cd_webhooks', 'idx_cwh_enabled', 'enabled');
+
 DROP PROCEDURE IF EXISTS __add_index;
 
 -- 系统配置表（键值对）
@@ -166,4 +168,26 @@ CREATE TABLE IF NOT EXISTS cd_custom_monitor_metrics (
     sort_order  INT          DEFAULT 0,
     FOREIGN KEY (monitor_id) REFERENCES cd_custom_monitors(id) ON DELETE CASCADE,
     INDEX idx_metrics_monitor (monitor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Webhook 接收配置表（CI 构建完成等外部事件推送到 CD）
+CREATE TABLE IF NOT EXISTS cd_webhooks (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(255) UNIQUE,
+    token       VARCHAR(64)  UNIQUE NOT NULL,       -- 随机生成的 URL token
+    bot_id      INT          DEFAULT 0,             -- 关联 Bot，0 = 不自动转发
+    enabled     TINYINT(1)   DEFAULT 1,
+    created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Webhook 收到的事件记录
+CREATE TABLE IF NOT EXISTS cd_webhook_events (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    webhook_id    INT          NOT NULL,
+    payload       TEXT,                               -- 原始 JSON
+    received_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    forwarded     TINYINT(1)   DEFAULT 0,             -- 是否已转发到 Bot
+    forwarded_at  DATETIME     DEFAULT NULL,
+    INDEX idx_we_webhook (webhook_id),
+    INDEX idx_we_received (received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
