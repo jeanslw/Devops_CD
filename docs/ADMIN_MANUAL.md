@@ -59,6 +59,14 @@ HARBOR_REGISTRY=hub.example.com
 HARBOR_USER=admin
 HARBOR_PASSWORD=
 
+# ── CI API Integration (optional, for Build Management) ──
+CI_API_URL=http://127.0.0.1:8080   # Devops-Glue API base URL (with port)
+CI_API_USER=admin                  # CI system admin account
+CI_API_PASS=                       # CI system admin password
+
+# ── SSH Auto-Trust (dev fallback, keep false in prod) ──
+SSH_AUTO_TRUST=false
+
 # ── Encryption Key (auto-generated on first run, DO NOT modify) ──
 ENCRYPTION_KEY=
 
@@ -112,6 +120,9 @@ On first startup, the following CD tables are created automatically:
 | `cd_custom_monitor_metrics` | Monitor metric definitions |
 | `cd_alert_rules` | Alert rules |
 | `cd_alert_logs` | Alert history |
+| `cd_config` | System configuration key-value pairs |
+| `cd_webhooks` | Webhook receiver config (token + linked Bot) |
+| `cd_webhook_events` | Incoming webhook event log (raw payload) |
 
 ## 4. Deployment
 
@@ -379,3 +390,87 @@ Server passwords and SSH private keys are encrypted with Fernet symmetric encryp
 - Login: POST `/api/login` with username + password → returns Bearer Token
 - Token format: Base64 encoded, contains username
 - Protected endpoints require `Authorization: Bearer <token>` header
+
+## 7. CI Build Management Integration (optional)
+
+The CD system adds a **Build Management** panel that calls the Devops-Glue (CI) API over HTTP, enabling Jenkins/GitLab CI build triggering, build history, and build logs directly from the CD dashboard.
+
+### Setup
+
+1. Configure the following three variables in `.env` (must be the CI admin account):
+   ```
+   CI_API_URL=http://ci-host:8080
+   CI_API_USER=admin
+   CI_API_PASS=your_ci_password
+   ```
+2. Restart the CD service. The JWT token from CI will be fetched and cached automatically.
+3. Open CD → **Build Management**, pick a CI project, and trigger a build.
+
+### How it works
+
+- `backend/services/ci_client.py` maintains a JWT token cache, auto-refreshing before expiry; requests are retried with exponential backoff on failure.
+- Data ownership: CD reads **only** and never writes to CI database tables (`ci_pipeline_tags` / `ci_job_git_map`); the "Build Management" tab uses HTTP API while "Tag List/Deploy Flow" continues via direct DB reads — two layers do not interfere with each other.
+- Build history and build logs are fetched in real time via the CI API and are not persisted locally in CD.
+
+## 8. Webhook Receiver Endpoint & Security Policy
+
+v1.2.2 introduces the **Webhook Receiver Endpoint**, used to receive external events such as "CI build complete" or "deploy success", with optional auto-forwarding to notification bots.
+
+### Receiver Endpoint (public, no login required)
+
+```
+POST /api/webhooks/receive/{token}
+Content-Type: application/json
+```
+
+**Jenkins example (Pipeline post block):**
+```bash
+curl -s -S -X POST "http://cd-host:8081/api/webhooks/receive/42kYUmGU0yZHMiXdusSNb0lckWx43cna" \
+  -H "Content-Type: application/json" \
+  -d "{\"project\":\"$JOB_NAME\",\"tag\":\"$TAG\",\"image\":\"$IMAGE:$TAG\",\"built_at\":\"$(date +'%Y%m%d%H%M%S')\"}"
+```
+
+> **⚠️ Important**: The `-d` JSON string must be wrapped in **double quotes** so shell variables are expanded. Single quotes will cause `$JOB_NAME`, `$TAG`, `$(date)` to be sent as literals. Prefer `jq` to safely build JSON and avoid quoting hell.
+
+### Recommended Payload Fields (no strict validation; unknown fields are stored as-is)
+
+| Field | Description | Template Placeholder |
+|-------|-------------|:--------------------:|
+| `project` | Project / Job name | `{project}` |
+| `tag` | Build tag | `{tag}` |
+| `image` | Full image with tag | `{image}` |
+| `built_at` / `time` | Build timestamp | `{time}` / `{built_at}` |
+| `status` | Build status success/failure | `{status}` |
+| `target` | Deploy target | `{target}` |
+| `mode` | Deploy mode | `{mode}` |
+
+### Creating a Webhook
+
+1. Navigate to CD → **Webhooks** page (requires `cd.notification-manage` permission)
+2. Click **Create**, fill in the name, optionally link a Bot (linked bots auto-forward events)
+3. After creation, a 32-char random token is generated. Compose the receiver URL:
+   ```
+   http://<cd-host>:8081/api/webhooks/receive/<token>
+   ```
+4. Configure this URL in Jenkins Pipeline post steps or GitLab CI post-build scripts.
+
+### Security Policy
+
+| Item | Description |
+|------|-------------|
+| **Token length** | 32 chars (`secrets.token_urlsafe(24)`), long enough to prevent brute-force enumeration |
+| **Token uniqueness** | Database UNIQUE index — duplicates cause conflicts |
+| **POST-only** | GET requests to the endpoint return 404, preventing accidental triggering |
+| **Enable / Disable** | Disabled webhooks return 404 directly, allowing temporary off-lining without deletion |
+| **Event size** | No hard-coded limit; keep payloads < 1 MB. Large logs should be queried via the Build Logs API |
+| **Auto-forward failure degradation** | Bot forward failure **never blocks event persistence** — administrators can retry manually from the UI |
+| **Bot template placeholder mismatch** | Gracefully falls back to default key-value format, then to raw JSON dump — never crashes |
+| **Link-bot permission** | Create/Edit requires `cd.notification-manage` permission; receiver endpoint is unauthenticated (token-based only) |
+| **SSRF protection** | Bot webhook URL validation: exact or suffix domain matching, preventing subdomain bypass (e.g. `eviloapi.dingtalk.com`) |
+
+### Event Management
+
+- Browse paginated historical events from the Webhook detail page (default 20/page, max 100)
+- Delete single events, or manually forward to any Bot
+- Auto-forwarded events are marked `forwarded=1` with `forwarded_at` timestamp
+- Recommend periodically purging large old events via `DELETE /api/webhooks/events/{id}` to avoid `cd_webhook_events` table bloat

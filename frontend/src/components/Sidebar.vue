@@ -71,14 +71,14 @@
     </template>
 
     <!-- 通知管理（折叠组：Bot 管理 + WebHook） -->
-    <template v-if="auth.canNotificationManage()">
+    <template v-if="auth.canNotificationManage() && (auth.canBot() || auth.canWebhook())">
       <div class="item item-parent" @click="toggleNotify()">
         {{ $t('sidebar.notifications') }} {{ notifyOpen ? '▾' : '▸' }}
       </div>
-      <div v-show="notifyOpen" class="item item-sub" :class="{ active: isActive('/bots') }" @click="go('/bots')">
+      <div v-if="auth.canBot()" v-show="notifyOpen" class="item item-sub" :class="{ active: isActive('/bots') }" @click="go('/bots')">
         {{ $t('sidebar.botManage') }}
       </div>
-      <div v-show="notifyOpen" class="item item-sub" :class="{ active: isActive('/webhooks') }" @click="go('/webhooks')">
+      <div v-if="auth.canWebhook()" v-show="notifyOpen" class="item item-sub" :class="{ active: isActive('/webhooks') }" @click="go('/webhooks')">
         {{ $t('sidebar.webhookReceiver') }}
       </div>
     </template>
@@ -99,7 +99,7 @@ const route = useRoute()
 const router = useRouter()
 const deployOpen = ref(true)
 const monitorOpen = ref(false)
-const notifyOpen = ref(true)
+const notifyOpen = ref(false)
 
 // 用户已登录但未分配任何权限（非 super_admin）时显示提示
 const showEmptyPermsHint = computed(() => {

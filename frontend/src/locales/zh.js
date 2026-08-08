@@ -28,6 +28,7 @@ export default {
   },
   landing: {
     nav: { home: '首页', support: '技术支持', login: '登录' },
+    running: '运行中',
     hero: { text1: 'Build Tag', text2: 'Deploy Anywhere' },
     cards: {
       trigger:  { title: '构建触发',        desc: '对接 CI 流水线 / 一键触发构建<br>历史与产物全链路追溯' },

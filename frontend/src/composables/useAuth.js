@@ -72,6 +72,8 @@ export function useAuth() {
   function canImageRegistry()     { return hasPerm('cd.image-registry') || isSuperAdmin() }
   function canResourceMonitor()   { return hasPerm('cd.resource-monitor') || isSuperAdmin() }
   function canNotificationManage(){ return hasPerm('cd.notification-manage') || isSuperAdmin() }
+  function canBot()              { return hasPerm('cd.bot') || isSuperAdmin() }
+  function canWebhook()          { return hasPerm('cd.webhook') || isSuperAdmin() }
 
   // ── 二级操作权限 ──
   function canDeploySingle()  { return hasPerm('cd.deploy.single') || isSuperAdmin() }
@@ -95,6 +97,7 @@ export function useAuth() {
     // 一级
     canBuildManage, canDeployManage, canServerManage, canWebshell,
     canDeployRecord, canImageRegistry, canResourceMonitor, canNotificationManage,
+    canBot, canWebhook,
     // 二级
     canDeploySingle, canDeployDocker, canDeployK8s,
     canMonitorApp, canMonitorSystem, canMonitorCustom, canMonitorAlert,

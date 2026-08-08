@@ -26,6 +26,8 @@ CD Panel (this project)
 |--------|-------------|
 | Deployment | Select CI project → choose tag → pick deployment mode → one-click deploy |
 | Deploy Modes | SSH command, Ansible, Docker Compose, K8s kubectl/Helm/ArgoCD/FluxCD |
+| CI Build Management | Trigger Jenkins/GitLab CI builds, view build history and build logs (HTTP proxy to CI API) |
+| Webhook Receiver | Receive CI build/deploy events, auto-forward to DingTalk/WeCom/custom bots, browse event history |
 | Monitoring | CPU, memory, disk, Docker containers, K8s nodes/pods (real-time) |
 | Custom Monitors | Execute custom SSH commands, parse CSV/KV/JSON output, monitor anything |
 | Alerts | Threshold-based resource alerts, push via DingTalk/WeCom/custom webhooks |
@@ -108,13 +110,82 @@ Set threshold alerts for system resources, Docker containers, K8s pods, and cust
 
 The system checks periodically (default: 300s) and sends notifications via configured bots when thresholds are exceeded.
 
-## 6. Project Structure
+## 6. CI Build Management
+
+The **Build Management** menu proxies requests to Devops-Glue (CI) HTTP API, enabling Jenkins/GitLab CI build triggering, build history, and console logs directly from the CD dashboard.
+
+### 6.1 Prerequisites
+
+- Admin has configured `.env` with `CI_API_URL`, `CI_API_USER`, `CI_API_PASS` and restarted the service (see Admin Manual §7).
+- Your user has CD login access (`systems` contains `"cd"`).
+
+### 6.2 Daily Usage
+
+1. Open **Build Management** from the sidebar.
+2. Pick a project from the list — latest build status is shown at a glance.
+3. Click **Trigger Build**: select branch/tag, optionally pass custom build variables, and submit.
+4. Builds appear in the history list. Click the log icon to view real-time console output (streaming from CI API).
+
+### 6.3 Notes
+
+- Build history and logs are fetched on-demand from CI; CD stores no build artifact locally.
+- Write operations are performed on CI system via API — they are governed by CI permissions.
+
+## 7. Webhook Receiver & Event Forwarding
+
+The **Webhooks** menu lets you create secure public endpoints for CI/Jenkins/GitLab to push build-completion events into CD, with optional auto-forwarding to notification bots.
+
+### 7.1 Concepts
+
+| Term | Meaning |
+|------|---------|
+| Webhook Config | An endpoint definition with a unique 32-char random token URL |
+| Linked Bot | Optional `cd_bots` entry — every incoming event is automatically forwarded to this bot |
+| Event | A received POST payload stored in `cd_webhook_events`, with timestamp and forward status |
+
+### 7.2 Creating a Webhook
+
+1. Open **Webhooks** → **Create** (requires `cd.notification-manage` permission).
+2. Enter a **name** (e.g. `Jenkins Build OK`), and optionally select a **notification bot** for auto-forwarding.
+3. After save, the system shows the public endpoint:
+   ```
+   https://<cd-host>:8081/api/webhooks/receive/<32-char-token>
+   ```
+4. Copy-paste the endpoint into Jenkins Pipeline / GitLab CI post-build step:
+   ```bash
+   curl -s -S -X POST "<endpoint>" \
+     -H "Content-Type: application/json" \
+     -d "{\\"project\\":\\"$JOB_NAME\\",\\"tag\\":\\"$TAG\\",\\"image\\":\\"$IMAGE:$TAG\\",\\"built_at\\":\\"$(date +'%Y%m%d%H%M%S')\\"}"
+   ```
+   > Use **double quotes** around `-d` payload so `$VAR`/`$(cmd)` shell expansions work; prefer `jq` to avoid escaping errors.
+
+### 7.3 Payload Recommended Fields
+
+No strict schema — any JSON is accepted. The following fields are detected and used when formatting bot messages:
+
+`project`, `tag`, `image`, `built_at` (or `time`), `status`, `target`, `mode`.
+
+Custom Bot templates support `{project}` `{tag}` `{image}` `{status}` `{time}` `{target}` `{mode}` placeholders.
+
+### 7.4 Event Browsing & Actions
+
+- Click the **Events** button on a Webhook row to browse paginated history (default 20/page, max 100).
+- Events show `payload` (raw JSON), `received_at`, `forwarded` status, `forwarded_at`.
+- **Manual forward**: choose a Bot and retry forwarding any event — useful when Bot was temporarily unreachable.
+- **Delete event**: clean up old or oversized payloads.
+
+### 7.5 Disable / Enable / Delete
+
+- Use the toggle switch on the list to quickly disable a Webhook without deleting it — disabled endpoints return 404.
+- Delete a Webhook permanently removes all its events.
+
+## 8. Project Structure
 
 ```
 cd_service/
 ├── main.py              # Entry point
 ├── backend/
-│   ├── routers/         # API routes (14 modules)
+│   ├── routers/         # API routes (16 modules: + webhooks, + ci_build)
 │   ├── services/        # Business logic layer
 │   └── deployers/       # Deployers (SSH/Compose/kubectl/ArgoCD/FluxCD/Helm)
 ├── frontend/            # Vue 3 source
@@ -123,7 +194,7 @@ cd_service/
 └── docs/                # Documentation
 ```
 
-## 7. API Reference
+## 9. API Reference
 
 ### Auth Legend
 
@@ -144,6 +215,14 @@ cd_service/
 | GET | `/api/projects` | ✅ | CI project list with latest tag |
 | GET | `/api/projects/{p}/pipeline` | ✅ | Project pipeline status |
 | GET | `/api/projects/{p}/tags` | ✅ | All tags for a project |
+| **CI Build (HTTP proxy to CI API)** | | | |
+| GET | `/api/ci/projects` | ✅ | CI project list |
+| GET | `/api/ci/{pid}/builds` | ✅ | Build history for a CI project |
+| POST | `/api/ci/{pid}/build` | ✅ | Trigger build (branch/tag + custom variables) |
+| GET | `/api/ci/{pid}/build/{bid}/log` | ✅ | Build console log (streaming) |
+| GET | `/api/ci/{pid}/variables` | ✅ | CI project build variables |
+| GET | `/api/ci/{pid}/branches` | ✅ | Git branch/tag list |
+| GET | `/api/ci/health` | ✅ | CI API connectivity health check |
 | GET | `/api/servers` | ✅ | Server list |
 | POST | `/api/servers` | ✅ | Add server |
 | PUT | `/api/servers/{id}` | ✅ | Update server |
@@ -182,4 +261,15 @@ cd_service/
 | DELETE | `/api/users/{name}` | 🔑 | Delete user |
 | PUT | `/api/users/{name}/role` | 🔑 | Change role |
 | PUT | `/api/users/{name}/password` | ✅ | Change password (self or admin) |
+| **Webhooks (notification management)** | | | |
+| GET | `/api/webhooks` | ✅ | Webhook config list |
+| POST | `/api/webhooks` | 🔑 | Create webhook (requires `cd.notification-manage`) |
+| PATCH | `/api/webhooks/{wid}` | 🔑 | Update webhook (name, linked Bot) |
+| DELETE | `/api/webhooks/{wid}` | 🔑 | Delete webhook + all its events |
+| POST | `/api/webhooks/{wid}/toggle` | 🔑 | Enable/disable webhook |
+| GET | `/api/webhooks/{wid}/events` | ✅ | Paginated event list for a webhook |
+| DELETE | `/api/webhooks/events/{eid}` | 🔑 | Delete single event |
+| POST | `/api/webhooks/events/{eid}/forward` | ✅ | Manually forward event to a Bot |
+| **Webhook receiver (public)** | | | |
+| POST | `/api/webhooks/receive/{token}` | — | Public endpoint for CI/Jenkins/GitLab to push events (token in URL) |
 | GET | `/` | — | Frontend SPA |

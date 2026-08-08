@@ -28,6 +28,7 @@ export default {
   },
   landing: {
     nav: { home: 'Home', support: 'Support', login: 'Login' },
+    running: 'Running',
     hero: { text1: 'Build Tag', text2: 'Deploy Anywhere' },
     cards: {
       trigger:  { title: 'Build Trigger',       desc: 'CI pipeline integration / One-click trigger<br>Full audit trail & artifact tracking' },

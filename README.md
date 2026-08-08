@@ -18,7 +18,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Frontend**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
 - **Database**：No standalone database — shares the same database instance as Devops-Glue API (SQLite / MySQL 8.0+ / MariaDB 10.4+)
 - **Port**：8081
-- **Version**：v1.2.2
+- **Version**：v1.2.2 (Changelog v1.2 updated 2026-08-08)
 - **Authentication**：Shared database with Devops-Glue API; bcrypt + Bearer token. Cannot be used independently.
 
 ## Quick Start
@@ -74,8 +74,8 @@ docker compose up -d --build
 - **v1.0.0** (2026-07-15) — Initial release: end-to-end CI/CD workflow, SSH single-host / Docker / K8s cluster deployment, host resource monitoring, optimized notification templates.
 - **v1.1.0** (2026-07-24) — Harbor artifact registry: local persistence, Harbor API v1/v2 auto-detection, four-layer interaction (repository grid → tag list → vulnerability report → safe deletion), scheduled background sync and manual trigger.
 - **v1.2.0** (2026-07-28) — Vue 3 + Vite SPA frontend overhaul; asynchronous Web Shell with accurate connection feedback; project restructured (`app/` → `backend/`); bilingual support (Chinese/English); alert rules module; user role management (admin/deployer/viewer); custom monitor enhancement (unit suffix parsing, diagnostic panel); documentation restructured (user manual, admin manual, FAQ); LICENSE standardization.
-- **v1.2.1** (2026-07-29) — RBAC permission system adapted from Devops-Glue API; deploy log optimization; configuration variables migrated to `docker-compose.yml`; documentation updates.
-- **v1.2.2** (2026-07-31) — Friendly error pages on frontend; backend exceptions enhanced with `error_key`; UI i18n display fixes and `lang` parameter fix; public `/api/info` endpoint; CD table index optimization; test warning cleanup; documentation updates.
+- **v1.2.1** (2026-07-29) — RBAC permission system adapted from Devops-Glue API; deploy log optimization; configuration variables migrated to `docker-compose.yml`; CI Build Management (Jenkins/GitLab HTTP proxy); documentation updates.
+- **v1.2.2** (2026-08-08) — **Webhook receiver endpoint** (`POST /api/webhooks/receive/{token}`) with auto-forward to DingTalk/WeCom/custom bots and event history; CI Build Management UI and `/api/ci/*` proxy endpoints; deploy ValueError pass-through via SSE (real-time error propagation to frontend); Pyright type safety across project + unified DB interface (SQLite `?` → MySQL `%s` auto conversion); frontend ErrorView with `error_key` i18n; public `/api/info` endpoint; CD & webhook tables index optimization; test warning cleanup; bilingual docs fully updated.
 
 ## Contact
 PR：[GitHub Issues](https://github.com/jeanslw/Devops_CD/issues)
