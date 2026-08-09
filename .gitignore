@@ -9,7 +9,6 @@
 .venv/
 node_modules/
 tests/
-docs/CHANGELOG.md
 __pycache__/
 .codebuddy/
 .workflow/

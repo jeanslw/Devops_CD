@@ -1,10 +1,12 @@
 # Devops-Glue CD
 FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
-> ❌ GitLab + K8s 全套？太重，养不起  
-> ❌ Jenkins 裸奔？8 年前的 UI，配到崩溃  
-> ❌ Gitee + Jenkins + Harbor 三头对不上？多窗口来回切，Tag 全靠人肉对齐  
->
+<p align="center">
+  <a href="https://github.com/jeanslw/Devops_CD"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/stargazers"><img src="https://img.shields.io/github/stars/jeanslw/Devops_CD?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
+</p>
 > ✅ 现在只需一套 API，多 Git 平台 + 双 CI 通道 + Harbor → 一个面板全搞定  
 > ✅ SQLite 零配置启动，MySQL（推荐）也可切换  
 > ✅ 10 年运维老兵的实战结晶  
@@ -13,7 +15,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 >
 > **不是大厂的遥控器，是小团队的瑞士军刀。**
 
->**[英文版](README.md)**
+**[英文版](README.md)**
 
 ![系统概览](system_info_zh.png)
 ![运行状态](system_running_zh.png)
@@ -29,8 +31,8 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/De
 - **端口**：8081
 - **版本**：v1.2.2（Changelog / v1.2 tag 2026-08-08 更新）
 - **认证**：与 Devops-Glue API 共享数据库，bcrypt + Bearer token，不可单独使用
-
-## 快速开始
+<details>
+## <summary>快速开始</summary>
 
 ```bash
 git clone https://github.com/jeanslw/devops_cd.git
@@ -61,22 +63,22 @@ cp .env.example .env
 docker compose up -d --build
 # 访问 http://localhost:8081
 ```
-
+</details>
 > **SQLite 模式注意**：CD Service 和 Devops-Glue API 共用同一个 SQLite 数据库文件。容器部署时必须将数据库目录挂载为共享卷。推荐生产环境使用 MySQL 或 MariaDB 10.4+，避免 SQLite 并发写入问题。
 
 ## 文档
 
-| 文档 | 说明 |
-|------|------|
-| [用户使用手册](docs/用户使用手册.md) | 功能说明、部署模式、自定义监控、API 参考 |
-| [管理员配置手册](docs/管理员配置手册.md) | 环境要求、配置说明、K8s 兼容性、安全配置 |
-| [常见问题](docs/常见问题.md) | 常见问题与排查指南 |
-| [更新日志](docs/CHANGELOG.md) | 版本发布记录 |
-| [架构全景图](docs/用户说明.md) | 系统整体架构图解 |
+| 文档 | 中文 | English |
+|------|------|---------|
+| 用户手册 | [USER_MANUAL_ZH.md](docs/USER_MANUAL_ZH.md) | [USER_MANUAL.md](docs/USER_MANUAL.md) |
+| 管理员手册 | [ADMIN_MANUAL_ZH.md](docs/ADMIN_MANUAL_ZH.md) | [ADMIN_MANUAL.md](docs/ADMIN_MANUAL.md) |
+| 常见问题 | [FAQ_ZH.md](docs/FAQ_ZH.md) | [FAQ.md](docs/FAQ.md) |
+| 更新日志 | [CHANGELOG_ZH.md](docs/CHANGELOG_ZH.md) | [CHANGELOG.md](docs/CHANGELOG.md) |
+| 架构图 | [ARCHITECTURE_ZH.md](docs/ARCHITECTURE_ZH.md) | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 
 ## 相关项目
 
-- **Devops-Glue** — 持续集成服务，本系统依赖的系统。([https://gitee.com/jeanslw/devops_glue](https://gitee.com/jeanslw/devops_glue))
+- **Devops-Glue** — CI 服务 ([GitHub](https://github.com/jeanslw/Devops-Glue) | [Gitee](https://gitee.com/jeanslw/devops_glue))
 
 ## 更新日志
 

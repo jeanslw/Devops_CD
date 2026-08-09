@@ -5,7 +5,14 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 >
 > One unified panel for multi-Git-platform CI pipelines, Harbor artifact management, and multi-mode CD deployment — no more switching between Gitee, Jenkins, and Harbor just to align a single image tag.
 
->**[Chinese](README_ZH-CN.md)**
+<p align="center">
+  <a href="https://github.com/jeanslw/Devops_CD"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/stargazers"><img src="https://img.shields.io/github/stars/jeanslw/Devops_CD?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
+</p>
+
+**[Chinese](README_ZH-CN.md)**
 
 ![System Overview](system_info.png)
 ![System Status](system_running.png)
@@ -20,8 +27,8 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Port**：8081
 - **Version**：v1.2.2 (Changelog v1.2 updated 2026-08-08)
 - **Authentication**：Shared database with Devops-Glue API; bcrypt + Bearer token. Cannot be used independently.
-
-## Quick Start
+<details>
+## <summary> Quick Start (click to expand)</summary>
 
 ```bash
 git clone https://github.com/jeanslw/devops_cd.git
@@ -52,22 +59,22 @@ cp .env.example .env
 docker compose up -d --build
 # Open http://localhost:8081
 ```
-
+</details>
 > **SQLite caveat**：The CD Service shares the same SQLite database file with the PHP API. When deploying in containers, mount the database directory as a shared volume. For production, MySQL or MariaDB 10.4+ is strongly recommended to avoid SQLite write contention.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [User Manual](docs/USER_MANUAL.md) | Features, deployment modes, custom monitoring, API reference |
-| [Admin Manual](docs/ADMIN_MANUAL.md) | Requirements, configuration, K8s compatibility, security |
-| [FAQ](docs/FAQ.md) | Common issues and troubleshooting |
-| [Changelog](docs/CHANGELOG.md) | Release history |
-| [System Overview](docs/用户说明.md) | Architecture diagram |
+| Document | English | 中文 |
+|----------|---------|------|
+| User Manual | [USER_MANUAL.md](docs/USER_MANUAL.md) | [USER_MANUAL_ZH.md](docs/USER_MANUAL_ZH.md) |
+| Admin Manual | [ADMIN_MANUAL.md](docs/ADMIN_MANUAL.md) | [ADMIN_MANUAL_ZH.md](docs/ADMIN_MANUAL_ZH.md) |
+| FAQ | [FAQ.md](docs/FAQ.md) | [FAQ_ZH.md](docs/FAQ_ZH.md) |
+| Changelog | [CHANGELOG.md](docs/CHANGELOG.md) | [CHANGELOG_ZH.md](docs/CHANGELOG_ZH.md) |
+| Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | [ARCHITECTURE_ZH.md](docs/ARCHITECTURE_ZH.md) |
 
 ## Related Projects
 
-- **Devops-Glue** — The CI service that this system depends on ([https://github.com/jeanslw/Devops-Glue](https://github.com/jeanslw/Devops-Glue))
+- **Devops-Glue** — CI service ([GitHub](https://github.com/jeanslw/Devops-Glue) | [Gitee](https://gitee.com/jeanslw/devops_glue))
 
 ## Changelog
 

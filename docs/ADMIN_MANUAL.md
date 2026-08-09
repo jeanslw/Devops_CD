@@ -26,6 +26,8 @@
 | Vue 3 + Vite | Main dashboard SPA |
 | Vue Router 4 | Client-side routing (Web History mode) |
 | xterm.js 5.3 | Web terminal (lazy-loaded) |
+| Component | Description |
+| --- | --- |
 
 ### Server-side (Optional)
 

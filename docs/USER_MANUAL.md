@@ -1,4 +1,4 @@
-# Devops-Glue CD — User Manual
+# Devops-CD — User Manual
 
 > For daily users: developers, ops, testers. Covers system overview, deployment operations, custom monitoring, and API reference.
 

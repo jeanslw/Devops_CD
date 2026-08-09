@@ -1,0 +1,86 @@
+# 更新日志
+
+## v1.2.2 (2026-08-08) — Webhook 接收端点 & CI 构建管理 & 类型安全加固 & 部署错误透传
+
+### 新增功能
+- **Webhook 接收端点**：新增 `/api/webhooks/receive/{token}` 公开接口，用于接收外部事件（如 CI 构建完成通知）。
+  - 支持 Jenkins / GitLab CI / 自定义 CI 的任意 POST 推送
+  - 自动持久化至 `cd_webhook_events` 表，支持分页浏览事件历史
+  - 可选通过关联 Bot 自动转发至钉钉/企微/自定义机器人，支持模板占位符
+  - 支持手动转发事件、启用/禁用 Webhook、删除事件
+  - 采用 32 位随机 Token 认证（URL 路径方式），无需登录
+- **CI 构建管理**：新增“构建管理”菜单，通过 HTTP API 代理 CI 服务。
+  - 支持触发构建、查看构建历史、查看构建日志（兼容 Jenkins/GitLab CI 双引擎）
+  - `backend/services/ci_client.py`：JWT Token 缓存 + 自动刷新 + 重试机制
+  - 后端路由：`/api/ci/*`（项目列表、构建历史、触发构建、构建日志、构建变量、分支列表、健康检查）
+- **公开信息接口**：`/api/info` 无需鉴权，返回应用名称、版本、数据库类型及连接状态、运行时长
+- **健康检查简化**：`/health` 改为纯 `{"status":"ok"}` 响应，适配 Docker/K8s 存活探针
+
+### 变更与优化
+- **部署错误透传**：`deploy` 路由层捕获 `ValueError`（无效 Docker Compose 路径、缺失 SSH 服务器等），通过 SSE 流实时向前端推送具体错误信息，不再吞掉异常
+- **类型安全加固**：全项目通过 Pyright 类型检查，统一数据库接口（SQLite/MySQL 占位符自动转换），修复一批 `Optional` 未检查、`None` 比较类型不匹配问题
+- **数据库接口统一**：新增 `conn.execute()` 内部封装，SQLite 的 `?` 占位符在 MySQL 驱动下自动转换为 `%s`，业务代码无需关心驱动差异
+- **CD 表索引补全**：为 `cd_servers.type`、`cd_deploy_logs.deploy_id`（复合索引）、`cd_alert_rules.enabled/created_at`、`cd_custom_monitors.enabled/created_at`、`cd_webhooks.enabled`、`cd_webhook_events.webhook_id/received_at` 添加索引
+- **错误处理增强**：后端异常体系统一使用 `error_key`，前端错误页据此展示对应文案；`cd_webhook_*` 异常系列全覆盖（未找到/已存在/创建失败/转发失败）
+- **前端国际化修复**：修复 `lang` 参数传递问题，Shell “Connected” 硬编码文本移入翻译文件，修复多处 UI 翻译遗漏
+- **Webhook 管理界面**：前端新增“通知接入”菜单（WebhookView），支持创建/编辑/删除/启停、查看事件、分页浏览、手动转发
+- **侧边栏导航**：新增 `ciBuild`、`webhook` 菜单项，统一归入 `cd.notification-manage` 权限控制
+- **测试环境优化**：消除 pytest 弃用警告（Pydantic `class Config`→`model_config`、FastAPI `on_event`→`lifespan`、安装 `httpx2`）
+- **部署文档完善**：管理员手册（中/英）新增 CI API 配置、Webhook 安全策略、三种部署策略详解
+- **版权信息修正**：前端页脚及 LICENSE 版权均由 `Blues.Inc` 统一为 `jeanslw`
+- **README 更新**：中/英 README 新增“相关项目”章节，GitHub 链接由 `Devops_Glue` 修正为 `Devops-Glue`
+- **部署配置简化**：`docker-compose.yml` 移除独立 `networks` 块，默认与 CI 同机合并部署，新增 `image: devops-cd:latest`
+
+### 新增数据库表
+
+| 表名 | 说明 |
+| :--- | :--- |
+| cd_webhooks | Webhook 接收配置（id/name/token/bot_id/enabled/created_at） |
+| cd_webhook_events | Webhook 事件日志（id/webhook_id/payload/received_at/forwarded/forwarded_at） |
+
+### 设计说明
+- **Webhook Token 认证**：采用 URL 路径 `{token}` 方式（非 Header），方便 Jenkins 等工具直接 POST 无需复杂签名。Token 为 32 位随机字符串（`secrets.token_urlsafe(24)`），数据库唯一索引约束
+- **自动转发机制**：接收事件 → 持久化至 DB → 若 `bot_id>0` 则自动调用 Bot Webhook → 标记 `forwarded=1`。失败不阻塞事件持久化，管理员可从 UI 手动重试
+- **消息占位符**：Bot 模板支持 `{project}{tag}{image}{status}{built_at}{target}{mode}`，无模板时默认按字段名格式化，无法解析时回退到原始 JSON 输出
+- **数据归属**：CD 仅读取 CI 数据库表（`ci_pipeline_tags`、`ci_job_git_map`），绝不写入；“构建管理”走 HTTP API，“Tag 列表/部署流程”仍走直连 DB 读取——两层互不干扰
+- **`/api/info`**：完全公开，无鉴权依赖，方便监控系统和外部工具查询 CD 运行状态
+- **`error_key`**：异常携带国际化键，前端可根据 key 映射对应语言的错误提示
+
+## v1.2.1 (2026-07-29) — RBAC 权限适配 & 部署日志优化
+
+### 变更
+- 适配 Devops-Glue API RBAC 权限体系（`enforce_deploy_perm` 部署二次鉴权）
+- 部署日志优化（部署成功/失败信息去重、运行版本对比展示）
+- 部分变量配置迁移至 `docker-compose.yml`
+- 文档同步更新
+
+### 新增/修改文件
+
+| 文件 | 变更 |
+| :--- | :--- |
+| backend/auth.py | 修改 — `enforce_deploy_perm` 服务层二次权限校验 |
+| backend/deployers/*.py | 修改 — 部署日志格式统一、运行版本对比 |
+| docker-compose.yml | 修改 — 配置变量迁移 |
+| docs/* | 修改 — 文档同步更新 |
+
+## v1.2.0 (2026-07-28) — Landing Page & 登录国际化 & CD/CI 权限隔离
+
+### 新增功能
+- **Landing Page**：粒子背景 + Hero 标题 + 6 个功能卡片 + 页脚，未登录时展示
+- **多语言支持**：中英文切换，Landing 页和登录页均有独立语言切换按钮
+- **CD/CI 登录隔离**：`admin_users` 表新增 `systems` 字段（逗号分隔），CD 侧校验 `systems` 包含 `"cd"` 才允许登录
+- **CD 权限收窄**：不可创建/删除/修改 admin 角色用户，admin 不在用户列表中展示；新建用户表单移除“Admin”选项
+- **前端 Vue3 重构**：完整替换旧 jQuery 前端，Vue 3.5 + Vite 6 + Vue Router 4
+
+### 修复
+- `locales/index.js` 运算符优先级 bug（`||` vs `&&`）
+- `vite.config.js` 补充 `/static` 代理路径
+- `.gitignore` 新增 `node_modules` 清理规则
+- `main.py` 移除废弃的 `ensure_role_column` 调用
+
+## v1.1.0 (2026-07-24) — Harbor 镜像仓库集成 & 配置增强
+
+### 新增功能
+- **Harbor 镜像仓库集成**：支持对接 Harbor 仓库，浏览项目/镜像/Tag、查看漏洞扫描报告、一键选择 Tag 用于部署
+- **可配置同步间隔**：前端下拉框 + API + DB 持久化 + 后台线程动态重启，无需重启服务
+- **Harbor 不可达友好提示**：新增 `HarborUnavailableError` 异常，路由层返回明确错误信息
