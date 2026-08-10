@@ -255,7 +255,7 @@ def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang
         metric=metric_name,
     )
     logger.info(f"Alert: {server['name']} {resource_type} {result['value']}% (threshold={rule['threshold']}%)")
-    send_webhook(bot["webhook_url"], msg)
+    send_webhook(bot["webhook_url"], msg, bot.get("type", ""))
 
 
 def _run_loop():

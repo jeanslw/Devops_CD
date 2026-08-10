@@ -1,5 +1,4 @@
 fastapi==0.115.6
-httpx2>=2.0
 uvicorn[standard]==0.34.0
 paramiko==3.5.1
 kubernetes==32.0.1

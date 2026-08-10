@@ -22,11 +22,17 @@ def _is_allowed_webhook(url: str) -> bool:
         return False
 
 
-def send_webhook(url: str, message: str) -> bool:
-    """发送钉钉/企微 text 消息，失败不抛异常。"""
+def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
+    """发送钉钉/企微/custom text 消息，失败不抛异常。
+
+    bot_type: 机器人类型（dingtalk/wecom/feishu/custom 等）。
+    仅当 bot_type 为 "custom" 时跳过域名白名单校验（自定义 webhook 可以是任意 URL）。
+    其他类型（含默认）仍受 _ALLOWED_WEBHOOK_DOMAINS 白名单保护，防止 SSRF。
+    """
     if not url or not message:
         return False
-    if not _is_allowed_webhook(url):
+    # custom 类型跳过白名单（用户在 Bot 管理中显式配置的自定义 webhook）
+    if (bot_type or "").lower() != "custom" and not _is_allowed_webhook(url):
         return False
     try:
         # 钉钉加签
@@ -130,4 +136,4 @@ def notify_deploy(db, bot_id: int, tag: str, project_key: str, image: str,
             time=now, project=project_key, tag=tag,
             status=display_status, image=image, target=target_str, mode=display_mode,
         )
-        send_webhook(bot["webhook_url"], msg)
+        send_webhook(bot["webhook_url"], msg, bot.get("type", ""))

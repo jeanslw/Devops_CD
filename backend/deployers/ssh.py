@@ -44,7 +44,13 @@ class SSHDeployer(Deployer):
         if not template:
             return "echo 'ERROR: Custom commands not configured' && exit 1"
         image_name = image.split(":")[0]
-        return template.replace("{image}", image).replace("{image_name}", image_name).replace("{tag}", tag).replace("{project}", project)
+        return (
+            template
+            .replace("{image}", shlex.quote(image))
+            .replace("{image_name}", shlex.quote(image_name))
+            .replace("{tag}", shlex.quote(tag))
+            .replace("{project}", shlex.quote(project))
+        )
 
     def _build_ansible(self, target: DeployTarget, image: str, project: str, tag: str) -> str:
         if not target.path:
@@ -68,8 +74,13 @@ class SSHDeployer(Deployer):
             return {"success": False, "output": "SSH stop: no stop commands configured"}
         image = f"{project}:{tag}"
         image_name = project.split("/")[-1] if "/" in project else project
-        cmd = commands.replace("{image}", image).replace("{image_name}", image_name)\
-                     .replace("{tag}", tag).replace("{project}", project)
+        cmd = (
+            commands
+            .replace("{image}", shlex.quote(image))
+            .replace("{image_name}", shlex.quote(image_name))
+            .replace("{tag}", shlex.quote(tag))
+            .replace("{project}", shlex.quote(project))
+        )
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)

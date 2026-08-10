@@ -155,9 +155,9 @@ const router = createRouter({
 
 // 导航守卫：检查认证
 router.beforeEach((to) => {
-  if (to.meta.admin) {
-    const token = sessionStorage.getItem('cd_token')
-    if (!token) return '/401'
+  const token = sessionStorage.getItem('cd_token')
+  if (!token && to.path !== '/login' && to.path !== '/401') {
+    return '/401'
   }
 })
 
