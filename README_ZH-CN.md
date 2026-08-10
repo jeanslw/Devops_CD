@@ -1,19 +1,19 @@
 # Devops-Glue CD
-FastAPI 持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
+FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/devops_glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 <p align="center">
-  <a href="https://github.com/jeanslw/Devops_CD"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/stargazers"><img src="https://img.shields.io/github/stars/jeanslw/Devops_CD?style=flat-square&logo=github" alt="Stars"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd/stargazers"><img src="https://img.shields.io/github/stars/jeanslw/Devops_CD?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
 </p>
-> ✅ 现在只需一套 API，多 Git 平台 + 双 CI 通道 + Harbor → 一个面板全搞定  
-> ✅ SQLite 零配置启动，MySQL（推荐）也可切换  
-> ✅ 10 年运维老兵的实战结晶  
-> ✅ 从 CI 构建到 CD 部署，全流程覆盖  
-> ✅ 开源免费，GitHub / Gitee 双更新  
->
-> **不是大厂的遥控器，是小团队的瑞士军刀。**
+
+✅ 一套 API, 多 Git 平台 + 双 CI 通道 + Harbor → 全搞定
+✅ SQLite 零配置启动, MySQL (推荐) 也可切换
+✅ 10 年运维老兵的实战结晶
+✅ 从 CI 构建到 CD 部署, 全流程覆盖
+
+**不是大厂的遥控器，是小团队的瑞士军刀。**
 
 **[英文版](README.md)**
 
@@ -93,5 +93,5 @@ MIT
 
 ## 联系方式
 
-- 问题与 PR：[GitHub Issues](https://github.com/jeanslw/Devops_CD/issues)
+- 问题与 PR：[GitHub Issues](https://gitee.com/jeanslw/devops_cd/issues)
 - 邮箱：jeanslw@qq.com
