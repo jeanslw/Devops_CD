@@ -30,14 +30,29 @@ class CiClientError(Exception):
 
 
 class CiClient:
-    """CI HTTP 客户端，线程安全，自动管理 JWT token（24h 过期）"""
+    """CI HTTP 客户端，线程安全。
 
-    def __init__(self, base_url: str, username: str, password: str, timeout: int = 30):
+    两种认证模式：
+      - API token 模式（推荐）：构造时传入 `token`（dg_ 前缀），直接作为 Bearer token 使用，
+        不登录、不刷新，token 由 CI 管理界面的「API 管理」创建，适合服务账号 / 第三方。
+      - 账号模式（回退）：未传 token 时用 username/password 登录，自动管理 24h 登录 token。
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        username: str = "",
+        password: str = "",
+        token: str | None = None,
+        timeout: int = 30,
+    ):
         self._base = base_url.rstrip("/")
         self._username = username
         self._password = password
         self._timeout = timeout
-        self._token: str | None = None
+        # API token 模式：token 已在构造时确定，无需登录/刷新
+        self._token: str | None = token or None
+        self._static_token: bool = bool(token)
         self._token_expiry: float = 0
         self._lock = threading.Lock()
 
@@ -71,7 +86,13 @@ class CiClient:
         return token
 
     def _ensure_token(self):
-        """确保有有效 token（过期前 60 秒自动刷新）"""
+        """确保有有效 token。
+
+        API token 模式：token 固定，直接返回。
+        账号模式：过期前 60 秒自动刷新。
+        """
+        if self._static_token:
+            return
         with self._lock:
             if self._token and time.time() < self._token_expiry - 60:
                 return
@@ -130,6 +151,9 @@ class CiClient:
         return {"Authorization": f"Bearer {self._token}"}
 
     def _force_relogin(self):
+        # API token 模式无账号可重登：401 即 token 失效（撤销/过期），直接报错
+        if self._static_token:
+            raise CiClientError("CI API token 无效（已撤销或过期），请在 CI「API 管理」重新生成")
         with self._lock:
             self._token = None
         self._ensure_token()
@@ -202,10 +226,12 @@ def get_ci_client() -> CiClient:
         from backend.config import settings
         if not settings.ci_api_url:
             raise CiClientError("CI_API_URL 未配置，请在 .env 中设置")
+        # 优先 API token；未配置时回退账号密码登录
         _client_instance = CiClient(
             base_url=settings.ci_api_url,
             username=settings.ci_admin_user,
             password=settings.ci_admin_pass,
+            token=settings.ci_api_token or None,
             timeout=settings.ci_timeout,
         )
         return _client_instance

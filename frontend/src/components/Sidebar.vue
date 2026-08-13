@@ -97,7 +97,7 @@ const emit = defineEmits(['close'])
 const auth = inject('auth')
 const route = useRoute()
 const router = useRouter()
-const deployOpen = ref(true)
+const deployOpen = ref(false)
 const monitorOpen = ref(false)
 const notifyOpen = ref(false)
 

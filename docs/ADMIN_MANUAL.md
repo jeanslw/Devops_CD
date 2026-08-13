@@ -62,9 +62,10 @@ HARBOR_USER=admin
 HARBOR_PASSWORD=
 
 # ── CI API Integration (optional, for Build Management) ──
-CI_API_URL=http://127.0.0.1:8080   # Devops-Glue API base URL (with port)
-CI_API_USER=admin                  # CI system admin account
-CI_API_PASS=                       # CI system admin password
+CI_API_URL=http://127.0.0.1:8080      # Devops-Glue API base URL (with port)
+CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account / third-party) — preferred
+# CI_ADMIN_USER=admin                 # fallback admin account login (only when token empty)
+# CI_ADMIN_PASS=                      # fallback admin account password (only when token empty)
 
 # ── SSH Auto-Trust (dev fallback, keep false in prod) ──
 SSH_AUTO_TRUST=false
@@ -399,18 +400,23 @@ The CD system adds a **Build Management** panel that calls the Devops-Glue (CI) 
 
 ### Setup
 
-1. Configure the following three variables in `.env` (must be the CI admin account):
+1. Create an API token in the CI system's **API Management** (grant the required scopes, e.g. `build.read`, `build.write`), then configure it in `.env`:
    ```
    CI_API_URL=http://ci-host:8080
-   CI_API_USER=admin
-   CI_API_PASS=your_ci_password
+   CI_API_TOKEN=dg_xxx
    ```
-2. Restart the CD service. The JWT token from CI will be fetched and cached automatically.
+   Without an API token, you can fall back to admin account login (not recommended):
+   ```
+   CI_API_URL=http://ci-host:8080
+   CI_ADMIN_USER=admin
+   CI_ADMIN_PASS=your_ci_password
+   ```
+2. Restart the CD service. In account mode the JWT token from CI is fetched and cached automatically; API token mode needs no login/caching.
 3. Open CD → **Build Management**, pick a CI project, and trigger a build.
 
 ### How it works
 
-- `backend/services/ci_client.py` maintains a JWT token cache, auto-refreshing before expiry; requests are retried with exponential backoff on failure.
+- `backend/services/ci_client.py` supports two auth modes: API token (fixed Bearer token, no login) and account (JWT token cache, auto-refreshing before expiry). Requests are retried with exponential backoff on failure.
 - Data ownership: CD reads **only** and never writes to CI database tables (`ci_pipeline_tags` / `ci_job_git_map`); the "Build Management" tab uses HTTP API while "Tag List/Deploy Flow" continues via direct DB reads — two layers do not interfere with each other.
 - Build history and build logs are fetched in real time via the CI API and are not persisted locally in CD.
 

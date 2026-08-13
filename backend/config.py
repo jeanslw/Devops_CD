@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     ci_api_url: str = ""
     ci_admin_user: str = ""
     ci_admin_pass: str = ""
+    # API token（dg_ 前缀，服务账号 / 第三方调用），配置后优先于账号密码登录
+    ci_api_token: str = ""
     ci_timeout: int = 30
 
     # ── 监控（可选）──

@@ -136,8 +136,10 @@ environment:
   # ── CI API 集成（和 PHP Devops-Glue 搭配时启用）──
   # 容器间通信用服务名，不要写 localhost
   CI_API_URL: http://devops-glue
-  CI_ADMIN_USER: root
-  CI_ADMIN_PASS: your_root_password
+  CI_API_TOKEN: dg_xxx      # API token（dg_ 前缀，服务账号/第三方）
+  # 未配置 token 时回退账号登录：
+  # CI_ADMIN_USER: root
+  # CI_ADMIN_PASS: your_root_password
 ```
 
 **提醒**：改完配置后必须 `docker-compose up -d` 重建容器，`restart` 不会刷新环境变量。

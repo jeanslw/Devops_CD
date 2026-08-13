@@ -16,7 +16,8 @@ services:
       PORT: 8081
       # ── CI API 集成（和 PHP Devops-Glue 搭配时启用）──
       #CI_API_URL: http://devops-glue
-      #CI_ADMIN_USER: root
+      #CI_API_TOKEN: dg_xxx   # API token（dg_ 前缀，服务账号 / 第三方）推荐
+      #CI_ADMIN_USER: root    # 未配置 token 时回退账号登录
       #CI_ADMIN_PASS: admin123
     ports:
       - "8081:8081"

@@ -61,9 +61,10 @@ HARBOR_USER=admin
 HARBOR_PASSWORD=
 
 # ── CI API 集成（可选，构建管理功能）──
-CI_API_URL=http://127.0.0.1:8080   # Devops-Glue API 地址（含端口）
-CI_API_USER=admin                  # CI 系统管理员账号
-CI_API_PASS=                       # CI 系统管理员密码
+CI_API_URL=http://127.0.0.1:8080      # Devops-Glue API 地址（含端口）
+CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/第三方）推荐
+# CI_ADMIN_USER=admin                 # 未配置 token 时回退：CI 系统管理员账号
+# CI_ADMIN_PASS=                      # 未配置 token 时回退：CI 系统管理员密码
 
 # ── SSH 自动信任（开发环境 fallback，生产保持 false）──
 SSH_AUTO_TRUST=false
@@ -398,18 +399,23 @@ CD 系统新增"构建管理"面板，通过 HTTP API 调用 Devops-Glue（CI）
 
 ### 配置步骤
 
-1. 确保 `.env` 中配置了以下三项（必须是 CI 系统的管理员账号）：
+1. 在 CI 系统「API 管理」中创建一个 API Token（按需勾选 `build.read`、`build.write` 等 scope），然后在 `.env` 中配置：
    ```
    CI_API_URL=http://ci-host:8080
-   CI_API_USER=admin
-   CI_API_PASS=your_ci_password
+   CI_API_TOKEN=dg_xxx
    ```
-2. 重启 CD 服务。启动时会自动拉取 CI JWT Token 并缓存。
+   未配置 API Token 时，可回退到管理员账号登录（不推荐）：
+   ```
+   CI_API_URL=http://ci-host:8080
+   CI_ADMIN_USER=admin
+   CI_ADMIN_PASS=your_ci_password
+   ```
+2. 重启 CD 服务。账号模式下启动时会自动拉取 CI JWT Token 并缓存；API Token 模式免登录、无需缓存/续期。
 3. 打开 CD → 「构建管理」页面，选择 CI 项目即可触发构建。
 
 ### 工作原理
 
-- `backend/services/ci_client.py` 维护 JWT Token 缓存，过期前自动续期；请求失败自动重试（指数退避）。
+- `backend/services/ci_client.py` 支持两种认证：API Token 模式（固定 Bearer token，免登录）与账号模式（JWT Token 缓存，过期前自动续期）。请求失败自动重试（指数退避）。
 - 数据归属：CD 只读不写 CI 数据库表（`ci_pipeline_tags` / `ci_job_git_map`）；"构建管理"走 HTTP API，"Tag 清单/部署流程"继续走 DB 直读，两层互不干扰。
 - 构建历史、构建日志通过 CI API 实时获取，不在 CD 本地落地。
 

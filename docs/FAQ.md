@@ -134,8 +134,10 @@ environment:
   # ── CI API integration (enable when pairing with PHP Devops-Glue) ──
   # Use the service name for container-to-container communication, NOT localhost
   CI_API_URL: http://devops-glue
-  CI_ADMIN_USER: root
-  CI_ADMIN_PASS: your_root_password
+  CI_API_TOKEN: dg_xxx      # API token (dg_ prefix, service account / third-party)
+  # Fallback account login when token not set:
+  # CI_ADMIN_USER: root
+  # CI_ADMIN_PASS: your_root_password
 ```
 
 **Reminder**: After changing the config, you must run `docker-compose up -d` to recreate the container. `restart` does not refresh environment variables.

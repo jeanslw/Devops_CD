@@ -116,7 +116,7 @@ ps aux | wc -l
 
 ### 6.1 前置条件
 
-- 管理员已在 `.env` 配置 `CI_API_URL`、`CI_API_USER`、`CI_API_PASS` 并重启服务（详见《管理员配置手册》第 7 章）。
+- 管理员已在 `.env` 配置 `CI_API_URL` 和 `CI_API_TOKEN`（或回退的 `CI_ADMIN_USER`/`CI_ADMIN_PASS`）并重启服务（详见《管理员配置手册》第 7 章）。
 - 当前用户有 CD 登录权限（`admin_users.systems` 含 `"cd"`）。
 
 ### 6.2 使用流程

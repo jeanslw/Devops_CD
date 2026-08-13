@@ -116,7 +116,7 @@ The **Build Management** menu proxies requests to Devops-Glue (CI) HTTP API, ena
 
 ### 6.1 Prerequisites
 
-- Admin has configured `.env` with `CI_API_URL`, `CI_API_USER`, `CI_API_PASS` and restarted the service (see Admin Manual §7).
+- Admin has configured `.env` with `CI_API_URL` and `CI_API_TOKEN` (or fallback `CI_ADMIN_USER`/`CI_ADMIN_PASS`) and restarted the service (see Admin Manual §7).
 - Your user has CD login access (`systems` contains `"cd"`).
 
 ### 6.2 Daily Usage
