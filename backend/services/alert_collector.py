@@ -1,6 +1,7 @@
 """告警指标采集器 — 连接服务器采集 CPU/内存/磁盘/Docker/Pod/进程/自定义指标"""
 
 import logging
+from contextlib import suppress
 
 from backend.config import settings
 from backend.deployers.base import ssh_connect
@@ -196,9 +197,7 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
     except Exception as e:
         logger.warning(f"Alert: metric collection failed for {server['host']}: {e}")
     finally:
-        try:
+        with suppress(Exception):
             ssh.close()
-        except Exception:
-            pass
 
     return results

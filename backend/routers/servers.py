@@ -56,8 +56,8 @@ def add_server(
             )
             clear_server_cache()
             return ok(message=f"服务器 '{req.name}' 已添加")
-        except pymysql.err.IntegrityError:
-            raise ConflictError(f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name})
+        except pymysql.err.IntegrityError as e:
+            raise ConflictError(f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}) from e
 
 
 @router.put("/{sid}")
@@ -97,8 +97,8 @@ def update_server(
             )
             clear_server_cache()
             return ok(message=f"服务器 '{req.name}' 已更新")
-        except pymysql.err.IntegrityError:
-            raise ConflictError(f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name})
+        except pymysql.err.IntegrityError as e:
+            raise ConflictError(f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}) from e
 
 
 @router.delete("/{sid}")

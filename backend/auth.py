@@ -49,8 +49,8 @@ def verify_token(
     try:
         decoded = base64.b64decode(token).decode()
         username, _, _hash = decoded.partition(":")
-    except Exception:
-        raise HTTPException(401, "Invalid token format")
+    except Exception as e:
+        raise HTTPException(401, "Invalid token format") from e
 
     with db.conn() as conn:
         row = _query_user_with_systems(conn, username, "password_hash, systems")
@@ -83,8 +83,8 @@ def get_current_user(
     try:
         decoded = base64.b64decode(token).decode()
         username, _, _hash = decoded.partition(":")
-    except Exception:
-        raise HTTPException(401, "Invalid token format")
+    except Exception as e:
+        raise HTTPException(401, "Invalid token format") from e
 
     with db.conn() as conn:
         row = _query_user_with_systems(conn, username, "username, password_hash, role, systems")
@@ -211,7 +211,7 @@ def _timing_safe_compare(a: str, b: str) -> bool:
     if len(a) != len(b):
         return False
     result = 0
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):
         result |= ord(x) ^ ord(y)
     return result == 0
 

@@ -288,7 +288,7 @@ class ComposeDeployer(Deployer):
 
     def _ssh_run(self, ssh, cmd: str, image: str) -> DeployResult:
         try:
-            out, err, exit_code = _exec_on(ssh, cmd)
+            out, err, _ = _exec_on(ssh, cmd)
             return DeployResult(
                 image=image,
                 status="ok",

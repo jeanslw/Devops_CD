@@ -47,7 +47,7 @@ def deploy(
         )
     except ValueError as e:
         logger.error("Deploy validation failed", exc_info=e)
-        raise ValidationError(str(e), error_key="errors.deploy_validation")
+        raise ValidationError(str(e), error_key="errors.deploy_validation") from e
 
 
 @router.post("/stop")
@@ -63,8 +63,8 @@ def stop(
     with db.conn() as conn:
         try:
             sid = int(req.server_ids.split(",")[0])
-        except (ValueError, IndexError):
-            raise ValidationError("请选择目标服务器", error_key="errors.select_server")
+        except (ValueError, IndexError) as e:
+            raise ValidationError("请选择目标服务器", error_key="errors.select_server") from e
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
@@ -97,8 +97,8 @@ def stop_k8s(
         raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
     try:
         sid = int(req.server_ids.split(",")[0])
-    except (ValueError, IndexError):
-        raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
+    except (ValueError, IndexError) as e:
+        raise ValidationError("请选择目标集群", error_key="errors.select_cluster") from e
     with db.conn() as conn:
         srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
     if not srv:

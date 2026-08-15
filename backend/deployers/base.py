@@ -6,7 +6,7 @@ import re
 import tempfile
 import time
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -28,10 +28,9 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
     try:
         kwargs = {"hostname": host, "port": port, "timeout": timeout}
         if ssh_key:
-            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
-            tmp.write(ssh_key)
-            tmp.close()
-            tmp_file = tmp.name
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
+                tmp.write(ssh_key)
+                tmp_file = tmp.name
             os.chmod(tmp_file, 0o600)
             kwargs["key_filename"] = tmp_file
             kwargs["username"] = username or "root"
@@ -67,8 +66,8 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
         return {"success": False, "message": "连接失败，请检查主机配置或凭据"}
     finally:
         if tmp_file:
-            try: os.unlink(tmp_file)
-            except FileNotFoundError: pass
+            with suppress(FileNotFoundError):
+                os.unlink(tmp_file)
         ssh.close()
 
 
@@ -95,10 +94,9 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     tmp_file = None
 
     if target.ssh_key:
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
-        tmp.write(target.ssh_key)
-        tmp.close()
-        tmp_file = tmp.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
+            tmp.write(target.ssh_key)
+            tmp_file = tmp.name
         os.chmod(tmp_file, 0o600)
         kwargs["key_filename"] = tmp_file
     elif target.password:
@@ -117,10 +115,8 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
                 transport.set_keepalive(settings.ssh_keepalive)
     finally:
         if tmp_file:
-            try:
+            with suppress(FileNotFoundError):
                 os.unlink(tmp_file)
-            except FileNotFoundError:
-                pass
     return ssh
 
 
@@ -225,10 +221,8 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
                 time.sleep(0.005)
 
         # 阻塞等待退出状态码接收完毕（确保远端已刷新所有 stdout/stderr）
-        try:
+        with suppress(Exception):
             channel.recv_exit_status()
-        except Exception:
-            pass
 
         # 补读残留数据，最多重试 5 次（含短暂延时，应对网络延迟导致的数据滞后到达）
         for _ in range(5):

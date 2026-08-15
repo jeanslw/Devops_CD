@@ -3,6 +3,7 @@
 import ipaddress
 import logging
 import shlex
+from contextlib import suppress
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
@@ -121,7 +122,7 @@ def _read_yaml(path: str, ssh=None) -> str:
     elif ssh:
         try:
             from backend.deployers.k8s_utils import _exec_exit
-            out, err, ec = _exec_exit(ssh, f"cat {shlex.quote(path)} 2>/dev/null")
+            out, _, ec = _exec_exit(ssh, f"cat {shlex.quote(path)} 2>/dev/null")
             if ec == 0:
                 return out
         except Exception:
@@ -146,7 +147,7 @@ def _k8s_deployment_exists(ssh, name: str, namespace: str = "") -> bool:
     try:
         from backend.deployers.k8s_utils import _exec_exit
         ns_flag = f"-n {namespace}" if namespace else ""
-        out, err, ec = _exec_exit(
+        out, _, ec = _exec_exit(
             ssh,
             f"kubectl get deployment/{shlex.quote(name)} {ns_flag} -o name 2>/dev/null",
         )
@@ -236,10 +237,8 @@ def deploy_k8s_check(
         return result
     finally:
         if ssh:
-            try:
+            with suppress(Exception):
                 ssh.close()
-            except Exception:
-                pass
 
     if not yaml_content:
         return result
@@ -373,10 +372,8 @@ async def deploy_k8s_stream(
         except Exception as e:
             logger.error("K8s deploy failed", exc_info=e)
             deploy_result = {"success": False, "error": str(e)}
-            try:
+            with suppress(Exception):
                 log_queue.put(None)
-            except Exception:
-                pass
 
     threading.Thread(target=do_deploy, daemon=True).start()
 

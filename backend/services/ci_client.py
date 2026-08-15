@@ -100,7 +100,7 @@ class CiClient:
                 self._token_expiry = time.time() + 86400  # CI token 24h
                 logger.info("CI token 已刷新")
             except requests.RequestException as e:
-                raise CiClientError(f"CI 登录失败: {e}")
+                raise CiClientError(f"CI 登录失败: {e}") from e
 
     # ── 通用请求 ──
 
@@ -116,7 +116,7 @@ class CiClient:
                 resp = self._session.get(url, params=params, headers=self._auth_headers(), timeout=self._timeout)
                 resp.raise_for_status()
                 return resp.json()
-            raise CiClientError(f"CI API GET 失败 [{url}]: {e}")
+            raise CiClientError(f"CI API GET 失败 [{url}]: {e}") from e
 
     def _post(self, url: str, body: dict) -> Any:
         self._ensure_token()
@@ -130,7 +130,7 @@ class CiClient:
                 resp = self._session.post(url, json=body, headers=self._auth_headers(), timeout=self._timeout)
                 resp.raise_for_status()
                 return resp.json()
-            raise CiClientError(f"CI API POST 失败 [{url}]: {e}")
+            raise CiClientError(f"CI API POST 失败 [{url}]: {e}") from e
 
     def _get_text(self, url: str) -> str:
         self._ensure_token()
@@ -144,7 +144,7 @@ class CiClient:
                 resp = self._session.get(url, headers=self._auth_headers(), timeout=self._timeout)
                 resp.raise_for_status()
                 return resp.text
-            raise CiClientError(f"CI API GET 失败 [{url}]: {e}")
+            raise CiClientError(f"CI API GET 失败 [{url}]: {e}") from e
 
     def _auth_headers(self) -> dict:
         return {"Authorization": f"Bearer {self._token}"}

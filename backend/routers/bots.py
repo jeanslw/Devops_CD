@@ -37,10 +37,10 @@ def add_bot(
                 (req.name, req.type, req.webhook_url, req.template or ""),
             )
             return ok(message=f"Bot '{req.name}' 已添加")
-        except pymysql.err.IntegrityError:
-            raise ConflictError(f"Bot '{req.name}' 已存在", error_key="errors.bot_already_exists")
-        except Exception:
-            raise DatabaseError(f"添加 Bot '{req.name}' 失败", error_key="errors.bot_add_failed")
+        except pymysql.err.IntegrityError as e:
+            raise ConflictError(f"Bot '{req.name}' 已存在", error_key="errors.bot_already_exists") from e
+        except Exception as e:
+            raise DatabaseError(f"添加 Bot '{req.name}' 失败", error_key="errors.bot_add_failed") from e
 
 
 @router.delete("/{bid}")

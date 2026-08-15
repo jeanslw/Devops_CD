@@ -5,7 +5,7 @@
 
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from backend.config import settings
@@ -131,10 +131,10 @@ class Database:
                     charset="utf8mb4",
                     cursorclass=pymysql.cursors.DictCursor,
                 )
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError(
                 "MySQL 模式需要安装 dbutils: pip install dbutils"
-            )
+            ) from e
 
     def _validate_shared_db(self):
         """校验数据库是否为 php_api 的共享数据库。"""
@@ -162,7 +162,7 @@ class Database:
             raise RuntimeError(
                 f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。"
                 f"当前驱动: {self._driver}，错误: {e}"
-            )
+            ) from e
         if not exists:
             raise RuntimeError(
                 f"未找到 ci_pipeline_tags 表。cd_service 无独立数据库，必须和 Devops-Glue共用同一数据库实例。"
@@ -186,10 +186,8 @@ class Database:
 
         if not Database._tables_ensured and self._driver == "sqlite":
             self._ensure_cd_tables(raw)
-            try:
+            with suppress(Exception):
                 raw.execute("ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'admin'")
-            except Exception:
-                pass
             raw.commit()
             Database._tables_ensured = True
 
@@ -246,14 +244,14 @@ class Database:
             tags VARCHAR(255) DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         )""")
-        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN password VARCHAR(255) DEFAULT ''")
-        except: pass
-        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN ssh_key TEXT DEFAULT ''")
-        except: pass
-        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN tags VARCHAR(255) DEFAULT ''")
-        except: pass
-        try: conn.execute("ALTER TABLE cd_servers ADD COLUMN auth_type VARCHAR(20) DEFAULT 'password'")
-        except: pass
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_servers ADD COLUMN password VARCHAR(255) DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_servers ADD COLUMN ssh_key TEXT DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_servers ADD COLUMN tags VARCHAR(255) DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_servers ADD COLUMN auth_type VARCHAR(20) DEFAULT 'password'")
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_deploy_logs (
             id {PK},
@@ -268,10 +266,10 @@ class Database:
             triggered_by VARCHAR(64) DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         )""")
-        try: conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
-        except: pass
-        try: conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN triggered_by VARCHAR(64) DEFAULT ''")
-        except: pass
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN triggered_by VARCHAR(64) DEFAULT ''")
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (
             id {PK},
@@ -281,8 +279,8 @@ class Database:
             template TEXT DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         )""")
-        try: conn.execute("ALTER TABLE cd_bots ADD COLUMN template TEXT DEFAULT ''")
-        except: pass
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_bots ADD COLUMN template TEXT DEFAULT ''")
 
         # 镜像仓库缓存表
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_registry_repositories (
@@ -356,8 +354,8 @@ class Database:
             sort_order INTEGER DEFAULT 0,
             FOREIGN KEY(monitor_id) REFERENCES cd_custom_monitors(id) ON DELETE CASCADE
         )""")
-        try: conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_monitor ON cd_custom_monitor_metrics(monitor_id)")
-        except: pass
+        with suppress(Exception):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_monitor ON cd_custom_monitor_metrics(monitor_id)")
 
         # Webhook 接收配置表
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_webhooks (
@@ -384,10 +382,8 @@ class Database:
             ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
         ]
         for tbl, col, col_def in migrations:
-            try:
+            with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
-            except Exception:
-                pass  # 列已存在
 
         self._ensure_indexes(conn)
         conn.commit()
@@ -413,6 +409,6 @@ class Database:
             ("idx_we_webhook",        "cd_webhook_events",     "webhook_id"),
             ("idx_we_received",       "cd_webhook_events",     "received_at"),
         ]:
-            try: conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")
-            except: pass
+            with suppress(Exception):
+                conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")
         conn.commit()

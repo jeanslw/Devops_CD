@@ -53,17 +53,17 @@ def create_webhook(
                 (req.name, token, req.bot_id, 1),
             )
             return ok(data={"token": token}, message=f"Webhook '{req.name}' 已创建")
-        except pymysql.err.IntegrityError:
+        except pymysql.err.IntegrityError as e:
             raise ConflictError(
                 f"Webhook '{req.name}' 已存在",
                 error_key="errors.webhook_already_exists",
                 error_params={"name": req.name},
-            )
+            ) from e
         except Exception as e:
             raise DatabaseError(
                 f"创建 Webhook 失败: {e}",
                 error_key="errors.webhook_create_failed",
-            )
+            ) from e
 
 
 @router.delete("/{wid}")
@@ -96,12 +96,12 @@ def update_webhook(
             if result.rowcount == 0:
                 raise NotFoundError("Webhook 不存在", error_key="errors.webhook_not_found")
             return ok(message="Webhook 已更新")
-        except pymysql.err.IntegrityError:
+        except pymysql.err.IntegrityError as e:
             raise ConflictError(
                 f"Webhook '{req.name}' 已存在",
                 error_key="errors.webhook_already_exists",
                 error_params={"name": req.name},
-            )
+            ) from e
 
 
 @router.post("/{wid}/toggle")
@@ -265,7 +265,7 @@ async def receive_webhook(
 def _format_event_message(data: dict, bot) -> str:
     """从 payload 中提取关键字段，配合 Bot 模板生成消息。
     如果 Bot 有自定义模板则用模板，否则用默认格式。"""
-    tpl_raw = bot["template"] if "template" in bot else ""
+    tpl_raw = bot.get("template", "")
     tpl = (tpl_raw or "").strip()
 
     if tpl:

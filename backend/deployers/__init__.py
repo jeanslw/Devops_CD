@@ -8,6 +8,21 @@ from .k8s_kubectl import KubectlDeployer
 from .registry import DeployerRegistry, deployer_registry
 from .ssh import SSHDeployer
 
+__all__ = [
+    "ArgoCDDeployer",
+    "ComposeDeployer",
+    "DeployResult",
+    "DeployTarget",
+    "Deployer",
+    "DeployerRegistry",
+    "FluxCDDeployer",
+    "HelmDeployer",
+    "K8sDeployer",
+    "KubectlDeployer",
+    "SSHDeployer",
+    "deployer_registry",
+]
+
 
 # 启动时注册所有部署器
 def _register_all():

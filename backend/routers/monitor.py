@@ -66,15 +66,14 @@ def list_monitor_servers(
 
             # type 优先；type 不明确时才用 tags 推断
             if srv_type in ("k8s", "argocd", "fluxcd"):
-                is_k8s, is_docker, is_ssh = True, False, False
+                is_k8s, is_docker = True, False
             elif srv_type == "docker":
-                is_k8s, is_docker, is_ssh = False, True, False
+                is_k8s, is_docker = False, True
             elif srv_type == "ssh":
-                is_k8s, is_docker, is_ssh = False, False, True
+                is_k8s, is_docker = False, False
             else:
                 is_k8s = any(t in ("k8s", "kubernetes") for t in tag_list)
                 is_docker = "docker" in tag_list
-                is_ssh = "ssh" in tag_list or (not is_k8s and not is_docker)
 
             if is_k8s:
                 entry["monitor_type"] = "k8s"
@@ -193,7 +192,7 @@ def get_nodes(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
     finally:
         if ssh:
             ssh.close()
@@ -275,7 +274,7 @@ def get_pods(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
     finally:
         if ssh:
             ssh.close()
@@ -314,7 +313,7 @@ def get_pod_detail(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
     finally:
         if ssh:
             ssh.close()
@@ -373,7 +372,7 @@ def get_docker_containers(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
     finally:
         if ssh:
             ssh.close()
@@ -429,7 +428,7 @@ def get_system_info(
         _cache_set(cache_key, resp)
         return resp
     except Exception as e:
-        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+        raise ServiceUnavailableError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
     finally:
         if ssh:
             ssh.close()

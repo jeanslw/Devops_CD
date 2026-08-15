@@ -105,7 +105,7 @@ class K8sDeployer(Deployer):
                 deploy_log = []
                 for i, c in enumerate(deploy_cmds):
                     self._log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
-                    o, e, exit_code = _exec_on(ssh, c)
+                    o, e, _ = _exec_on(ssh, c)
                     if o:
                         deploy_log.append(o)
                         self._log(callback, o)

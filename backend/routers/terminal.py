@@ -43,10 +43,7 @@ def _check_dangerous(cmd: str) -> bool:
     stripped = cmd.strip()
     if not stripped:
         return False
-    for pattern in _DANGEROUS_PATTERNS:
-        if re.search(pattern, stripped):
-            return True
-    return False
+    return any(re.search(pattern, stripped) for pattern in _DANGEROUS_PATTERNS)
 
 
 async def _ws_verify(token: str | None = None) -> str:
@@ -56,8 +53,8 @@ async def _ws_verify(token: str | None = None) -> str:
     try:
         decoded = base64.b64decode(token).decode()
         username, _, _hash = decoded.partition(":")
-    except Exception:
-        raise HTTPException(401, "token 无效")
+    except Exception as e:
+        raise HTTPException(401, "token 无效") from e
 
     db = get_db()
     with db.conn() as conn:
@@ -248,7 +245,7 @@ async def upload_file(
     try:
         ssh = await asyncio.to_thread(ssh_connect, dt, settings.ssh_timeout)
     except Exception as e:
-        raise ValidationError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed")
+        raise ValidationError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
 
     try:
         sftp = ssh.open_sftp()
@@ -264,4 +261,4 @@ async def upload_file(
         return ok(data={"path": target}, message="文件上传成功")
     except Exception as e:
         ssh.close()
-        raise ValidationError(f"上传失败: {e}", error_key="errors.upload_failed")
+        raise ValidationError(f"上传失败: {e}", error_key="errors.upload_failed") from e

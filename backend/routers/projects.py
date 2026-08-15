@@ -57,7 +57,7 @@ def project_tags(
         rows = conn.execute(
             f"SELECT tag, pipeline_iid, created_at FROM {svc._pipeline_tags} "
             f"WHERE project IN ({placeholders}) ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            keys + [page_size, offset],
+            [*keys, page_size, offset],
         ).fetchall()
         return {
             "items": [dict(r) for r in rows],

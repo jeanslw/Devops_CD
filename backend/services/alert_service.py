@@ -144,7 +144,6 @@ def _check_one(db, rule: dict):
     rule_id = rule["id"]
     resource_type = (rule.get("resource_type") or "").lower()
     target_type = rule.get("target_type", "system")
-    threshold = rule.get("threshold", 80)
     bot_id = rule.get("bot_id", 0)
     cooldown = rule.get("cooldown_minutes", 10)
     duration_minutes = rule.get("duration_minutes", 0)

@@ -85,7 +85,7 @@ def trigger_scan(
         return result
     except HarborUnavailableError as e:
         logger.error("Harbor unavailable", exc_info=e)
-        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable")
+        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable") from e
 
 
 # ── 删除 ──
@@ -106,7 +106,7 @@ def delete_artifact(
         return {"ok": True, "detail": f"Tag '{body.tag}' 已删除"}
     except HarborUnavailableError as e:
         logger.error("Harbor unavailable", exc_info=e)
-        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable")
+        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable") from e
 
 
 # ── 同步 ──
@@ -125,7 +125,7 @@ def trigger_sync(
         return svc.sync_all()
     except HarborUnavailableError as e:
         logger.error("Harbor unavailable", exc_info=e)
-        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable")
+        raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable") from e
 
 
 # ── 同步配置 ──
@@ -142,7 +142,7 @@ def get_sync_config(
         return {"interval": interval}
     except Exception as e:
         logger.error("get_sync_config error", exc_info=e)
-        raise ServiceUnavailableError("读取配置失败，请联系管理员", error_key="errors.sync_config_read_failed")
+        raise ServiceUnavailableError("读取配置失败，请联系管理员", error_key="errors.sync_config_read_failed") from e
 
 
 @router.put("/config")
@@ -159,7 +159,7 @@ def update_sync_config(
         svc.set_sync_interval(body.interval)
     except Exception as e:
         logger.error("update_sync_config error", exc_info=e)
-        raise ServiceUnavailableError("保存配置失败，请联系管理员", error_key="errors.sync_config_save_failed")
+        raise ServiceUnavailableError("保存配置失败，请联系管理员", error_key="errors.sync_config_save_failed") from e
     if body.interval <= 0:
         return {"ok": True, "interval": 0, "detail": "定时同步已关闭"}
     return {"ok": True, "interval": body.interval, "detail": f"定时同步已设为每 {body.interval} 分钟"}

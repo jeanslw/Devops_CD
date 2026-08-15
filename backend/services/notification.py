@@ -130,7 +130,7 @@ def notify_deploy(db, bot_id: int, tag: str, project_key: str, image: str,
         bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
         if not bot:
             return
-        tpl_raw = bot["template"] if "template" in bot else ""
+        tpl_raw = bot.get("template", "")
         tpl = (tpl_raw or "").strip() or _DEFAULT_TEMPLATES.get(lang, _DEFAULT_TEMPLATES["en"]).strip()
         msg = tpl.format(
             time=now, project=project_key, tag=tag,

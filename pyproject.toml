@@ -11,3 +11,6 @@ ignore = [
     "B008",  # FastAPI 的 Depends()/File()/Query() 写在默认参数是标准用法
     "RUF001", "RUF002", "RUF003",  # 中文注释/全角标点被误判为易混淆字符，禁用
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"smoke_test.py" = ["E402"]  # 冒烟测试按轮次分组组织 import，非顶部导入是有意为之

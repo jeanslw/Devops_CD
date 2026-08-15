@@ -5,6 +5,7 @@ import io
 import json as _json
 import logging
 import re
+from contextlib import suppress
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -75,10 +76,8 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
 
     # 尝试用 Sniffer 探测分隔符
     delim = None
-    try:
+    with suppress(Exception):
         delim = csv.Sniffer().sniff(text[:4096], delimiters=",\t;|").delimiter
-    except Exception:
-        pass
 
     lines = text.split("\n")
     if delim:
@@ -96,10 +95,10 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
             # 仿 DictReader：第一列可能是行标签
             if len(parts) == len(headers) + 1:
                 row = {"": parts[0]}
-                for h, v in zip(headers, parts[1:]):
+                for h, v in zip(headers, parts[1:], strict=True):
                     row[h] = v
             else:
-                row = dict(zip(headers, parts))
+                row = dict(zip(headers, parts))  # noqa: B905  # 长度不一致时保留截断行为
             rows.append(row)
 
     for row in rows:
@@ -268,10 +267,8 @@ def _diagnose_parse(raw: str, metrics: list[dict]) -> dict | None:
     # 尝试从第一行提取表头
     # 先尝试 Sniffer 探测分隔符
     delim = None
-    try:
+    with suppress(Exception):
         delim = csv.Sniffer().sniff(text[:4096], delimiters=",\t;|").delimiter
-    except Exception:
-        pass
 
     if delim:
         headers = [h.strip() for h in lines[0].split(delim)]
@@ -429,10 +426,8 @@ def test_monitor(
             try:
                 out = (_ssh_cmd(ssh, monitor["command"]) or "").strip()
             finally:
-                try:
+                with suppress(Exception):
                     ssh.close()
-                except Exception:
-                    pass
 
             parsed = parse_output(out, monitor.get("output_format", "auto"), metrics)
             result_item = {

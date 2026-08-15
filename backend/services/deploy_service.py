@@ -2,7 +2,6 @@
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
 
 from backend.auth import enforce_deploy_perm
 from backend.config import settings
@@ -103,14 +102,18 @@ class DeployService:
 
         image = f"{settings.harbor_registry}/{harbor_repo}:{tag}"
         project_key = self._ci.resolve_project_key(project) or project
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         options = _parse_command_options(commands) if commands else {}
-        if yaml_content: options["yaml_content"] = yaml_content
-        if k8s_ns: options["namespace"] = k8s_ns
-        if k8s_deploy: options["deployment"] = k8s_deploy
-        if k8s_container: options["container"] = k8s_container
-        if env_file: options["env_file"] = env_file
+        if yaml_content:
+            options["yaml_content"] = yaml_content
+        if k8s_ns:
+            options["namespace"] = k8s_ns
+        if k8s_deploy:
+            options["deployment"] = k8s_deploy
+        if k8s_container:
+            options["container"] = k8s_container
+        if env_file:
+            options["env_file"] = env_file
 
         if not deployer_registry.is_registered(deploy_type):
             raise ValueError(f"Unsupported deploy type: {deploy_type}")
