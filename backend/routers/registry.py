@@ -1,13 +1,14 @@
 """镜像制品库 API — 仓库/Artifact/同步/扫描/删除"""
 
 import logging
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from backend.auth import verify_token, get_db, require_perm
+from backend.auth import get_db, require_perm
 from backend.database import Database
-from backend.services.registry_service import RegistryService, HarborUnavailableError
-from backend.exceptions import NotFoundError, ValidationError, ConflictError, ServiceUnavailableError
+from backend.exceptions import ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
+from backend.services.registry_service import HarborUnavailableError, RegistryService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/registry", tags=["registry"])

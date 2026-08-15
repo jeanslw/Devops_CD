@@ -1,10 +1,11 @@
 """CI 项目路由 — 项目列表 + Pipeline 状态（需登录）"""
 
 from fastapi import APIRouter, Depends
-from backend.database import Database
+
 from backend.auth import get_db, verify_token
-from backend.services.ci_service import CiService
+from backend.database import Database
 from backend.exceptions import NotFoundError
+from backend.services.ci_service import CiService
 
 router = APIRouter(prefix="/api", tags=["projects"])
 

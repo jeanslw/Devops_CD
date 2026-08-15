@@ -1,1 +1,12 @@
-from .requests import LoginRequest, UserCreateRequest, ChangePasswordRequest, ServerRequest, TagRequest, BotRequest, DeployRequest, BuildTriggerRequest, WebhookRequest, WebhookForwardRequest
+from .requests import (
+    BotRequest,
+    BuildTriggerRequest,
+    ChangePasswordRequest,
+    DeployRequest,
+    LoginRequest,
+    ServerRequest,
+    TagRequest,
+    UserCreateRequest,
+    WebhookForwardRequest,
+    WebhookRequest,
+)

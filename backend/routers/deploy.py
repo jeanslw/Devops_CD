@@ -1,18 +1,18 @@
 """部署路由"""
 
 import logging
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
+from backend.auth import enforce_deploy_perm, get_db, require_perm
+from backend.crypto import decrypt
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm, enforce_deploy_perm
-from backend.models import DeployRequest
-from backend.services.deploy_service import DeployService
 from backend.deployers import DeployTarget
 from backend.deployers.registry import deployer_registry
-from backend.crypto import decrypt
-from backend.config import settings
-from backend.exceptions import ValidationError, NotFoundError
+from backend.exceptions import NotFoundError, ValidationError
+from backend.models import DeployRequest
+from backend.services.deploy_service import DeployService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["deploy"])

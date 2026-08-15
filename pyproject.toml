@@ -1,0 +1,13 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# 高信号规则集：E 风格错误 / F 真实缺陷 / I 导入排序 / UP 语法现代化
+# B bugbear / SIM 简化 / C4 推导式 / RUF ruff 特有
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = [
+    "E501",  # 行宽不统一（存在 200+ 字符长行），交给 formatter 单独处理
+    "B008",  # FastAPI 的 Depends()/File()/Query() 写在默认参数是标准用法
+    "RUF001", "RUF002", "RUF003",  # 中文注释/全角标点被误判为易混淆字符，禁用
+]

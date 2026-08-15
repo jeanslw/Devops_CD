@@ -5,6 +5,7 @@
 
 import base64
 from pathlib import Path
+
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -34,7 +35,7 @@ def _get_secret_key() -> bytes:
     new_key = Fernet.generate_key().decode()
     key_file.write_text(new_key, encoding="utf-8")
     print(f"[WARN] SECRET_KEY 未配置，已自动生成并保存到 {key_file}")
-    print(f"[WARN] 请妥善保管该文件，丢失后将无法解密已有数据。")
+    print("[WARN] 请妥善保管该文件，丢失后将无法解密已有数据。")
     return _derive_key(new_key)
 
 

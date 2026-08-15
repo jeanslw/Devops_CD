@@ -1,18 +1,20 @@
 """服务器管理路由"""
 
+import concurrent.futures
 import logging
 import socket
-import concurrent.futures
+
 import pymysql
 from fastapi import APIRouter, Depends
+
+from backend.auth import get_db, require_perm, verify_token
+from backend.crypto import decrypt, encrypt
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
-from backend.models import ServerRequest
-from backend.crypto import encrypt, decrypt
-from backend.services.monitor_utils import clear_server_cache, _cache_get, _cache_set
-from backend.exceptions import ConflictError, DatabaseError, NotFoundError
-from backend.responses import ok
 from backend.deployers.base import trust_ssh_host
+from backend.exceptions import ConflictError, NotFoundError
+from backend.models import ServerRequest
+from backend.responses import ok
+from backend.services.monitor_utils import _cache_get, _cache_set, clear_server_cache
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
 logger = logging.getLogger(__name__)
@@ -176,7 +178,7 @@ def test_server_connection(
             return {"success": False, "message": result["message"]}
     else:
         # 普通连接测试（使用 RejectPolicy）
-        from backend.deployers.base import ssh_connect, DeployTarget
+        from backend.deployers.base import DeployTarget, ssh_connect
         try:
             target = DeployTarget(
                 host=req.host, port=req.port, user=req.user,

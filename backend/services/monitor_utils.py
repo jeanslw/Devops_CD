@@ -1,10 +1,10 @@
 """监控工具函数 — SSH 测试 + 缓存 + 目标构造（被 monitor 路由和 alert_service 共用）"""
 
 import time
-from backend.config import settings
-from backend.deployers.base import DeployTarget, _ssh_cmd
-from backend.crypto import decrypt
 
+from backend.config import settings
+from backend.crypto import decrypt
+from backend.deployers.base import DeployTarget, _ssh_cmd
 
 # ── 简易内存缓存 ──
 _cache: dict[str, tuple[float, object]] = {}

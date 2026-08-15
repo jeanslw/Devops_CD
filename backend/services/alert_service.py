@@ -1,15 +1,14 @@
 """告警检测服务 — 后台线程定时检测阈值 + 推送 Bot 通知"""
 
-import time
-import threading
 import logging
+import threading
+import time
 from datetime import datetime
-from typing import Dict, Any
 
 from backend.config import settings
 from backend.database import Database
-from backend.services.notification import send_webhook
 from backend.services.alert_collector import collect_alert_metrics
+from backend.services.notification import send_webhook
 
 logger = logging.getLogger("cd.alert")
 
@@ -230,10 +229,7 @@ def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang
 
     unit = result.get("unit", "")
 
-    if template:
-        tpl = template
-    else:
-        tpl = _DEFAULT_TEMPLATES.get(target_type, _DEFAULT_TEMPLATES["system"]).get(lang, "")
+    tpl = template or _DEFAULT_TEMPLATES.get(target_type, _DEFAULT_TEMPLATES["system"]).get(lang, "")
 
     # 添加 unit / raw / entity / metric 到模板变量
     raw_val = result.get("raw", "")

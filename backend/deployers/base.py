@@ -3,12 +3,11 @@
 import logging
 import os
 import re
-import time
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     tmp_file = None
     try:
-        kwargs = dict(hostname=host, port=port, timeout=timeout)
+        kwargs = {"hostname": host, "port": port, "timeout": timeout}
         if ssh_key:
             tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
             tmp.write(ssh_key)
@@ -49,8 +48,8 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
         if not transport:
             raise RuntimeError("无法获取 SSH 传输层")
         key = transport.get_remote_server_key()
-        from hashlib import sha256
         import base64
+        from hashlib import sha256
         fp = sha256(key.asbytes()).digest()
         fingerprint = base64.b64encode(fp).decode().rstrip("=")
 
@@ -78,8 +77,9 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     优先级: ssh_key > password > 系统默认 key
     trust=True: 自动信任未知主机（用于首次添加服务器时验证）
     """
-    from backend.config import settings
     import paramiko
+
+    from backend.config import settings
     ssh = paramiko.SSHClient()
 
     if trust or settings.ssh_auto_trust:
@@ -91,7 +91,7 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
         if os.path.exists(kh_file):
             ssh.load_host_keys(kh_file)
 
-    kwargs = dict(hostname=target.host, port=target.port, username=target.user, timeout=timeout)
+    kwargs = {"hostname": target.host, "port": target.port, "username": target.user, "timeout": timeout}
     tmp_file = None
 
     if target.ssh_key:
@@ -134,7 +134,7 @@ def ssh_session(target: "DeployTarget", timeout: int):
         ssh.close()
 
 
-def _exec_on(ssh, cmd: str) -> Tuple[str, str, int]:
+def _exec_on(ssh, cmd: str) -> tuple[str, str, int]:
     """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr, exit_code)"""
     _, stdout, stderr = ssh.exec_command(cmd)
     o = stdout.read().decode(errors="replace").strip()
@@ -312,7 +312,7 @@ class Deployer(ABC):
         """
         ...
 
-    def validate(self, _target: DeployTarget) -> Optional[str]:
+    def validate(self, _target: DeployTarget) -> str | None:
         """校验目标参数是否有效，返回 None 通过，否则返回错误信息"""
         return None
 

@@ -1,10 +1,10 @@
 """K8S 部署共享工具函数 — Pod 轮询 + YAML 渲染"""
 
 import re
+
 import yaml
 
 from backend.config import settings
-from backend.deploy_log import S
 from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具（含 errors="replace"）
 
 
@@ -140,10 +140,7 @@ def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     full_image_name = image_parts[0]
     reg = settings.harbor_registry
     # 剥离原始 registry，只保留镜像路径（如 mycode/diagnosis-runtime）
-    if reg and full_image_name.startswith(reg + "/"):
-        image_name = full_image_name[len(reg) + 1:]
-    else:
-        image_name = full_image_name
+    image_name = full_image_name[len(reg) + 1:] if reg and full_image_name.startswith(reg + "/") else full_image_name
     # 统一以 .env 的 registry 拼接最终镜像地址
     final_image = f"{reg}/{image_name}:{tag}" if reg else f"{image_name}:{tag}"
     final_image_name = f"{reg}/{image_name}" if reg else image_name

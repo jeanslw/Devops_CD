@@ -9,13 +9,13 @@ import re
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
-from backend.services.monitor_utils import _make_target
-from backend.deployers.base import ssh_connect, _ssh_cmd
+from backend.auth import get_db, require_perm, verify_token
 from backend.config import settings
-from backend.exceptions import NotFoundError, ValidationError
+from backend.database import Database
+from backend.deployers.base import _ssh_cmd, ssh_connect
+from backend.exceptions import NotFoundError
 from backend.responses import ok
+from backend.services.monitor_utils import _make_target
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/custom-monitors", tags=["custom-monitors"])
@@ -87,7 +87,7 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
         rows = list(reader)
     else:
         # 变长空白（如 free -m）：按空白拆分
-        split_lines = [re.split(r"\s+", l.strip()) for l in lines if l.strip()]
+        split_lines = [re.split(r"\s+", line.strip()) for line in lines if line.strip()]
         if len(split_lines) < 2:
             return results
         headers = split_lines[0]
@@ -165,7 +165,7 @@ def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
     for obj in items:
         if not isinstance(obj, dict):
             continue
-        entity_label = str(list(obj.values())[0]) if obj else ""
+        entity_label = str(next(iter(obj.values()))) if obj else ""
         for m in metrics:
             fk = m.get("field_key", "").strip()
             if not fk:

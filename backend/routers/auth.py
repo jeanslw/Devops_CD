@@ -1,10 +1,11 @@
 """认证路由"""
 
 from fastapi import APIRouter, Depends
-from backend.auth import authenticate, get_db, get_current_user
-from backend.models import LoginRequest
+
+from backend.auth import authenticate, get_current_user, get_db
 from backend.database import Database
 from backend.exceptions import AppException
+from backend.models import LoginRequest
 
 router = APIRouter(tags=["auth"])
 

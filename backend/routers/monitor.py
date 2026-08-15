@@ -4,15 +4,19 @@ import logging
 import shlex
 
 from fastapi import APIRouter, Depends
-from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
-from backend.deployers.base import ssh_connect, _ssh_cmd
+
+from backend.auth import get_db, require_perm
 from backend.config import settings
+from backend.database import Database
+from backend.deployers.base import _ssh_cmd, ssh_connect
+from backend.exceptions import NotFoundError, ServiceUnavailableError, ValidationError
 from backend.services.monitor_utils import (
-    _cache_get, _cache_set, _parse_kubectl_top,
-    _ssh_test, _make_target, clear_server_cache,
+    _cache_get,
+    _cache_set,
+    _make_target,
+    _parse_kubectl_top,
+    _ssh_test,
 )
-from backend.exceptions import NotFoundError, ValidationError, ServiceUnavailableError
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 logger = logging.getLogger(__name__)

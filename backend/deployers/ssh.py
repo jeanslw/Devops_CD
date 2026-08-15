@@ -2,9 +2,11 @@
 
 import logging
 import shlex
-from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on, ssh_exec_stream
+
 from backend.config import settings
 from backend.deploy_log import S
+
+from .base import Deployer, DeployResult, DeployTarget, ssh_exec_stream, ssh_session
 
 logger = logging.getLogger(__name__)
 

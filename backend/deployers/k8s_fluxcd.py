@@ -4,11 +4,11 @@ import json
 import logging
 import shlex
 
-from backend.deployers.base import ssh_connect, DeployTarget
-from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import _ssh_cmd, _kubectl_pods, _log, _exec_exit
 from backend.config import settings
 from backend.deploy_log import S
+from backend.deployers.base import DeployTarget, ssh_connect
+from backend.deployers.k8s_base import K8sSubDeployer
+from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, _ssh_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ class FluxCDDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.helm_getting_current"))
             before = _kubectl_pods(ssh, flux_name)
             before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
-            before_pod_names = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
+            before_pod_names = {b.split()[0] for b in before.split("\n") if b.strip()} if before else set()
             if before.strip():
                 _log(callback, S("deploy_log.current_version"))
                 _log(callback, before)
@@ -182,9 +182,9 @@ class FluxCDDeployer(K8sSubDeployer):
                         }
 
                 after = _kubectl_pods(ssh, flux_name)
-                current_pod_names = set(l.split()[0] for l in after.split("\n") if l.strip()) if after else set()
+                current_pod_names = {line.split()[0] for line in after.split("\n") if line.strip()} if after else set()
                 new_names = current_pod_names - before_pod_names
-                terminating = any("Terminating" in l for l in after.split("\n")) if after else False
+                terminating = any("Terminating" in line for line in after.split("\n")) if after else False
 
                 if new_names or terminating:
                     flux_reacted = True
@@ -238,7 +238,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 _log(callback, after or "(无)")
 
             # 7. 构建结果
-            running_count = sum(1 for l in after.split("\n") if "Running" in l)
+            running_count = sum(1 for line in after.split("\n") if "Running" in line)
             rollout_ok = deploy_name and rollout_ec == 0
 
             if deploy_name and rollout_ok:
@@ -255,7 +255,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 result = (
                     f"{before_text}\n\n开始部署:\n镜像已更新，Flux 协调已触发"
                     + f"\n\n{rollout_result}\n\n部署后运行版本:\n{after}"
-                    + f"\n\n验证部署: ❌ 部署失败！"
+                    + "\n\n验证部署: ❌ 部署失败！"
                 )
                 return {"success": False, "output": result[:settings.log_truncate_chars]}
             else:

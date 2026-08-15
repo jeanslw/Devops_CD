@@ -2,8 +2,8 @@
 
 import logging
 
-from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deploy_log import S
+from backend.deployers.k8s_base import K8sSubDeployer
 
 logger = logging.getLogger(__name__)
 

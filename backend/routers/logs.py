@@ -1,8 +1,9 @@
 """部署日志路由"""
 
 from fastapi import APIRouter, Depends
-from backend.database import Database
+
 from backend.auth import get_db, verify_token
+from backend.database import Database
 from backend.services.deploy_service import DeployService
 
 router = APIRouter(prefix="/api", tags=["logs"])

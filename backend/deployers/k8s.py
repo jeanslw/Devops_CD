@@ -10,10 +10,11 @@ namespace 从 YAML 中解析，前端不提供 namespace 输入框。
 import logging
 import shlex
 
-from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on
 from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.k8s_utils import _kubectl_pods
+
+from .base import Deployer, DeployResult, DeployTarget, _exec_on, ssh_session
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class K8sDeployer(Deployer):
                         return DeployResult(
                             image=image, status="failed",
                             output=f"kubectl set image 需要集群中已存在 Deployment [{deploy_name}]，" +
-                                   f"当前未找到。请先用 YAML 方式首次部署。",
+                                   "当前未找到。请先用 YAML 方式首次部署。",
                         )
 
                 ns_flag = f"-n {namespace}" if namespace else ""
@@ -84,7 +85,7 @@ class K8sDeployer(Deployer):
                 self._log(callback, S("deploy_log.current_version"))
                 before = _kubectl_pods(ssh, deploy_name, namespace)
                 before_text = f"当前运行版本:\n{before}" if before.strip() else "当前运行版本: (无)"
-                before_pods = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
+                before_pods = {b.split()[0] for b in before.split("\n") if b.strip()} if before else set()
 
                 if before.strip():
                     self._log(callback, before)
@@ -126,7 +127,7 @@ class K8sDeployer(Deployer):
                 self._log(callback, S("deploy_log.after_version"))
                 all_after = _kubectl_pods(ssh, deploy_name, namespace)
                 if all_after.strip():
-                    after_pods = [l for l in all_after.split("\n") if l.strip() and l.split()[0] not in before_pods]
+                    after_pods = [line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods]
                     after = "\n".join(after_pods) if after_pods else all_after
                 else:
                     after = all_after
@@ -135,7 +136,7 @@ class K8sDeployer(Deployer):
                 # ── 成败判断：rollout status 输出为准 ──
                 is_ok = "successfully rolled out" in rollout_output
                 if is_ok:
-                    running_count = sum(1 for l in after.split("\n") if "Running" in l)
+                    running_count = sum(1 for line in after.split("\n") if "Running" in line)
                     self._log(callback, S("deploy_log.verify_ok"))
                     output = (
                         f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
@@ -148,7 +149,7 @@ class K8sDeployer(Deployer):
                     output = (
                         f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
                         + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
-                        + f"\n\n验证部署: ❌ 部署失败！"
+                        + "\n\n验证部署: ❌ 部署失败！"
                     )
                     return DeployResult(image=image, status="failed", output=output[:settings.log_truncate_chars])
         except Exception as e:

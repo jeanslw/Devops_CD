@@ -1,15 +1,16 @@
 """部署编排服务 — 查映射 → 选策略 → 执行 → 记日志 → 通知"""
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
 
-from backend.database import Database
-from backend.deployers import deployer_registry, DeployTarget
-from backend.config import settings
-from backend.deploy_log import S
-from backend.crypto import decrypt
 from backend.auth import enforce_deploy_perm
+from backend.config import settings
+from backend.crypto import decrypt
+from backend.database import Database
+from backend.deploy_log import S
+from backend.deployers import DeployTarget, deployer_registry
+
 from .ci_service import CiService
 from .notification import notify_deploy
 

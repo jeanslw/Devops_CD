@@ -1,11 +1,13 @@
 """认证模块 — 与 php_api 共享 admin_users 表"""
 
 import base64
+
 import bcrypt
-from fastapi import HTTPException, Depends, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from backend.database import Database
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from backend.config import settings
+from backend.database import Database
 
 security = HTTPBearer(auto_error=False)
 

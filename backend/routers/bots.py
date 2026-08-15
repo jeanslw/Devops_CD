@@ -2,10 +2,11 @@
 
 import pymysql
 from fastapi import APIRouter, Depends
+
+from backend.auth import get_db, require_perm, verify_token
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
-from backend.models import BotRequest
 from backend.exceptions import ConflictError, DatabaseError
+from backend.models import BotRequest
 from backend.responses import ok
 
 router = APIRouter(prefix="/api/bots", tags=["bots"])
@@ -50,4 +51,4 @@ def delete_bot(
 ):
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_bots WHERE id=?", (bid,))
-        return ok(message=f"Bot 已删除")
+        return ok(message="Bot 已删除")

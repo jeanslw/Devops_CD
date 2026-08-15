@@ -1,9 +1,9 @@
 """通知服务 — 钉钉 / 企业微信 webhook"""
 
-import time
-import hmac
-import hashlib
 import base64
+import hashlib
+import hmac
+import time
 import urllib.parse
 from datetime import datetime
 from urllib.parse import urlparse
@@ -130,7 +130,7 @@ def notify_deploy(db, bot_id: int, tag: str, project_key: str, image: str,
         bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
         if not bot:
             return
-        tpl_raw = bot["template"] if "template" in bot.keys() else ""
+        tpl_raw = bot["template"] if "template" in bot else ""
         tpl = (tpl_raw or "").strip() or _DEFAULT_TEMPLATES.get(lang, _DEFAULT_TEMPLATES["en"]).strip()
         msg = tpl.format(
             time=now, project=project_key, tag=tag,

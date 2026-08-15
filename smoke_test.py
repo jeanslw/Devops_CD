@@ -1,5 +1,6 @@
 """Smoke test + regression - P0 & P1 optimization verification"""
-import os, json, inspect
+import inspect
+import os
 
 base = os.path.dirname(__file__)
 PASS = "PASS"
@@ -11,9 +12,10 @@ print("=" * 60)
 print("ROUND 1: Base layer integrity")
 print("=" * 60)
 
-from backend.deployers.base import _exec_on, _ssh_cmd, ssh_exec_stream, _PROGRESS_BAR
-from backend.responses import error
 import shlex
+
+from backend.deployers.base import _PROGRESS_BAR, _exec_on, _ssh_cmd, ssh_exec_stream
+from backend.responses import error
 
 # shlex.quote
 dangerous = "pass$word!test&echo hack"
@@ -40,6 +42,7 @@ print(f"  Signatures: {PASS}")
 # Import chain
 from backend.deployers.k8s_utils import _ssh_cmd as k8s_sc
 from backend.services.monitor_utils import _ssh_cmd as mon_sc
+
 assert _ssh_cmd is k8s_sc is mon_sc
 print(f"  Import chain: {PASS}")
 
@@ -51,23 +54,22 @@ print("ROUND 2: P0 verification")
 print("=" * 60)
 
 # P0-1: log -> _log
-from backend.deployers.k8s_helm import HelmDeployer
-from backend.deployers.k8s_fluxcd import FluxCDDeployer
 print(f"  P0-1 HelmDeployer: {PASS}")
 print(f"  P0-1 FluxCDDeployer: {PASS}")
 
 # P0-2: helm_connecting i18n
-for lang, path in [("zh", "frontend/src/locales/zh.js"),
+for _, path in [("zh", "frontend/src/locales/zh.js"),
                     ("en", "frontend/src/locales/en.js")]:
-    with open(os.path.join(base, path), "r", encoding="utf-8") as f:
+    with open(os.path.join(base, path), encoding="utf-8") as f:
         c = f.read()
     assert "helm_connecting:" in c, f"helm_connecting missing in {path}"
     assert "flux_connecting:" in c, f"flux_connecting lost from {path}"
 print(f"  P0-2 helm_connecting i18n: {PASS}")
 
 # P0-4: direct import from base
-from backend.routers.monitor import router as mon_router
 from backend.routers.custom_monitors import router as cm_router
+from backend.routers.monitor import router as mon_router
+
 print(f"  P0-4 monitor router ({len(mon_router.routes)} routes): {PASS}")
 print(f"  P0-4 custom_monitors router ({len(cm_router.routes)} routes): {PASS}")
 
@@ -77,10 +79,6 @@ print(f"  P0-4 custom_monitors router ({len(cm_router.routes)} routes): {PASS}")
 print("\n" + "=" * 60)
 print("ROUND 3: K8S deployer chain")
 print("=" * 60)
-from backend.deployers.k8s_kubectl import KubectlDeployer
-from backend.deployers.k8s_argocd import ArgoCDDeployer
-from backend.deployers.k8s import K8sDeployer
-from backend.deployers.k8s_base import K8sSubDeployer
 print(f"  KubectlDeployer, ArgoCDDeployer, K8sDeployer, K8sSubDeployer: {PASS}")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -99,11 +97,10 @@ all_files = [
     "backend/routers/custom_monitors.py",
     "backend/routers/deploy.py",
 ]
-import re
 
 missing = []
 for fpath in all_files:
-    with open(os.path.join(base, fpath), "r", encoding="utf-8") as f:
+    with open(os.path.join(base, fpath), encoding="utf-8") as f:
         lines_r = f.readlines()
     for i, line in enumerate(lines_r, 1):
         if "raise " in line and "Error" in line and "error_key=" not in line:
@@ -135,9 +132,9 @@ all_new_keys = [
     "scan_report_error", "scan_trigger_failed", "harbor_unavailable",
 ]
 
-for lang, path in [("zh", "frontend/src/locales/zh.js"),
+for _, path in [("zh", "frontend/src/locales/zh.js"),
                     ("en", "frontend/src/locales/en.js")]:
-    with open(os.path.join(base, path), "r", encoding="utf-8") as f:
+    with open(os.path.join(base, path), encoding="utf-8") as f:
         c = f.read()
     for key in all_new_keys:
         assert f"{key}:" in c, f"Key '{key}' missing in {path}"
@@ -149,13 +146,14 @@ print(f"  All {len(all_new_keys)} keys present in both locales: {PASS}")
 print("\n" + "=" * 60)
 print("ROUND 6: Router integrity")
 print("=" * 60)
-from backend.routers import auth, servers, deploy, k8s_deploy, ci_build as _ci_build
-import backend.routers.monitor as _mon
-import backend.routers.custom_monitors as _cm
 import backend.routers.alerts as _alerts
-import backend.routers.registry as _reg
 import backend.routers.bots as _bots
+import backend.routers.custom_monitors as _cm
+import backend.routers.monitor as _mon
+import backend.routers.registry as _reg
 import backend.routers.terminal as _term
+from backend.routers import auth, deploy, k8s_deploy, servers
+from backend.routers import ci_build as _ci_build
 
 routers = [
     auth.router, servers.router, deploy.router,

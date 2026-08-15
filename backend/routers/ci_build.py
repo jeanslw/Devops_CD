@@ -1,12 +1,14 @@
 """CI 构建管理路由 — 代理 CI API，CD 前端统一入口（对照 CI OpenAPI 实现）"""
 import logging
 import traceback
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
-from backend.auth import verify_token, require_perm
-from backend.services.ci_client import get_ci_client, CiClientError
-from backend.models import BuildTriggerRequest
+
+from backend.auth import require_perm
 from backend.exceptions import ServiceUnavailableError
+from backend.models import BuildTriggerRequest
+from backend.services.ci_client import CiClientError, get_ci_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ci", tags=["ci-build"])

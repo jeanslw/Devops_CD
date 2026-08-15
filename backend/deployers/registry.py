@@ -1,13 +1,14 @@
 """DeployerRegistry —— 对齐 PHP BuildProviderRegistry"""
 
-from typing import Dict, Callable, Any
+from collections.abc import Callable
+from typing import Any
 
 
 class DeployerRegistry:
     """部署器注册表：按名称注册懒加载工厂，按需创建实例"""
 
     def __init__(self):
-        self._factories: Dict[str, Callable[[], Any]] = {}
+        self._factories: dict[str, Callable[[], Any]] = {}
 
     def register(self, name: str, factory: Callable[[], Any]):
         """注册部署器工厂"""

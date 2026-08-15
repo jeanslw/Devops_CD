@@ -3,9 +3,10 @@
 import logging
 import shlex
 
-from .base import Deployer, DeployTarget, DeployResult, ssh_session, _exec_on, ssh_exec_stream
 from backend.config import settings
 from backend.deploy_log import S
+
+from .base import Deployer, DeployResult, DeployTarget, _exec_on, ssh_exec_stream, ssh_session
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ class ComposeDeployer(Deployer):
 
                 # 4d. 用 docker inspect 补全完整 Digest 和镜像名（不受终端宽度截断）
                 #     同时清理 docker-compose 截断的 digest:/status: 行，避免存到部署记录
-                pull_lines = [l for l in pull_text.split('\n') if l.strip()]
+                pull_lines = [line for line in pull_text.split('\n') if line.strip()]
                 pull_clean = []
                 img_digest = ""
                 img_status = ""

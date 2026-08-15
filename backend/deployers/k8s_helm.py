@@ -3,11 +3,11 @@
 import logging
 import shlex
 
-from backend.deployers.base import ssh_connect, DeployTarget
-from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import _log, _ssh_cmd, _kubectl_pods, _exec_exit
 from backend.config import settings
 from backend.deploy_log import S
+from backend.deployers.base import DeployTarget, ssh_connect
+from backend.deployers.k8s_base import K8sSubDeployer
+from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log
 
 logger = logging.getLogger(__name__)
 

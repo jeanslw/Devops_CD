@@ -1,9 +1,8 @@
 """CI HTTP 客户端 — 对照 CI OpenAPI (/api/openapi.json) 实现"""
+import logging
 import threading
 import time
-import logging
 from typing import Any
-from urllib.parse import quote
 
 import requests
 from requests.adapters import HTTPAdapter

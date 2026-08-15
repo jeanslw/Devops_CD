@@ -1,8 +1,9 @@
 """标签路由 — 从 cd_servers.tags 聚合（逗号分隔）去重后作为标签库"""
 
 from fastapi import APIRouter, Depends
-from backend.database import Database
+
 from backend.auth import get_db, verify_token
+from backend.database import Database
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
 

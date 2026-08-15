@@ -4,9 +4,9 @@ FastAPI 部署执行器 — SSH / docker-compose / K8s
 
 架构: main.py(入口) → routers → services → deployers
 """
-from pathlib import Path
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -15,9 +15,26 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import settings
 from backend.database import Database
 from backend.exceptions import AppException
-from backend.routers import auth, projects, servers, deploy, logs, bots, tags, terminal, k8s_deploy, monitor, registry, alerts, custom_monitors, ci_build, users, webhooks
-from backend.services.registry_service import start_background_sync, RegistryService
+from backend.routers import (
+    alerts,
+    auth,
+    bots,
+    ci_build,
+    custom_monitors,
+    deploy,
+    k8s_deploy,
+    logs,
+    monitor,
+    projects,
+    registry,
+    servers,
+    tags,
+    terminal,
+    users,
+    webhooks,
+)
 from backend.services.alert_service import start_alert_checker
+from backend.services.registry_service import RegistryService, start_background_sync
 
 
 @asynccontextmanager
@@ -37,7 +54,7 @@ async def lifespan(app: FastAPI):
 # ── 创建 app ──
 app = FastAPI(title="Devops-Glue CD", version="1.2.2", lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
-_STARTED_AT = datetime.now(timezone.utc)
+_STARTED_AT = datetime.now(UTC)
 
 # 注册路由
 app.include_router(auth.router)
@@ -94,7 +111,7 @@ def api_info():
     except Exception:
         pass
 
-    uptime_seconds = int((datetime.now(timezone.utc) - _STARTED_AT).total_seconds())
+    uptime_seconds = int((datetime.now(UTC) - _STARTED_AT).total_seconds())
 
     return {
         "app": "Devops-Glue CD",

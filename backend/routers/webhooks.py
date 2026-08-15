@@ -6,10 +6,11 @@ from datetime import datetime
 
 import pymysql
 from fastapi import APIRouter, Depends, Request
+
+from backend.auth import get_db, require_perm, verify_token
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
-from backend.models import WebhookRequest, WebhookForwardRequest
-from backend.exceptions import NotFoundError, ConflictError, DatabaseError, ValidationError
+from backend.exceptions import ConflictError, DatabaseError, NotFoundError
+from backend.models import WebhookForwardRequest, WebhookRequest
 from backend.responses import ok
 from backend.services.notification import send_webhook
 
@@ -264,7 +265,7 @@ async def receive_webhook(
 def _format_event_message(data: dict, bot) -> str:
     """从 payload 中提取关键字段，配合 Bot 模板生成消息。
     如果 Bot 有自定义模板则用模板，否则用默认格式。"""
-    tpl_raw = bot["template"] if "template" in bot.keys() else ""
+    tpl_raw = bot["template"] if "template" in bot else ""
     tpl = (tpl_raw or "").strip()
 
     if tpl:

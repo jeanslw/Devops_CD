@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from backend.auth import get_db, require_perm, verify_token
 from backend.database import Database
-from backend.auth import get_db, verify_token, require_perm
 from backend.exceptions import NotFoundError
 from backend.responses import ok
 

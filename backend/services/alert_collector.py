@@ -1,10 +1,11 @@
 """告警指标采集器 — 连接服务器采集 CPU/内存/磁盘/Docker/Pod/进程/自定义指标"""
 
 import logging
-from backend.deployers.base import ssh_connect
+
 from backend.config import settings
-from backend.services.monitor_utils import _ssh_test, _ssh_cmd, _make_target
+from backend.deployers.base import ssh_connect
 from backend.routers.custom_monitors import parse_output
+from backend.services.monitor_utils import _make_target, _ssh_cmd, _ssh_test
 
 logger = logging.getLogger("cd.alert")
 

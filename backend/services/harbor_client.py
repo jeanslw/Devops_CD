@@ -1,7 +1,7 @@
 """Harbor API 客户端 — v1/v2 自动探测 + artifacts/scan/delete 操作"""
 
-import urllib.parse
 import logging
+import urllib.parse
 
 import requests
 

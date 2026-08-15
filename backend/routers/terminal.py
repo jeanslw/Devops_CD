@@ -7,12 +7,14 @@ import os
 import posixpath
 import re
 import shlex
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends, Query
-from backend.database import Database
-from backend.auth import verify_token, get_db, require_perm, _query_permissions
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+
+from backend.auth import _query_permissions, get_db, require_perm
 from backend.config import settings
-from backend.deployers.base import ssh_connect, DeployTarget
 from backend.crypto import decrypt
+from backend.database import Database
+from backend.deployers.base import DeployTarget, ssh_connect
 from backend.exceptions import NotFoundError, ValidationError
 from backend.responses import ok
 
@@ -182,7 +184,7 @@ async def terminal(websocket: WebSocket, server_id: int):
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except WebSocketDisconnect:
                 break

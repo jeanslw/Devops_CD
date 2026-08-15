@@ -1,7 +1,7 @@
 """K8S 部署路由 — kubectl SSH / Argo CD / Flux CD / Helm"""
 
-import logging
 import ipaddress
+import logging
 import shlex
 from urllib.parse import urlparse
 
@@ -9,15 +9,14 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from backend.auth import enforce_deploy_perm, get_db, require_perm
+from backend.config import settings
+from backend.crypto import decrypt
 from backend.database import Database
-from backend.auth import get_db, require_perm, enforce_deploy_perm
+from backend.deployers.registry import deployer_registry
+from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.services.ci_service import CiService
 from backend.services.notification import notify_deploy
-from backend.crypto import decrypt
-from backend.config import settings
-from backend.exceptions import ValidationError, NotFoundError, AppException
-
-from backend.deployers.registry import deployer_registry
 
 router = APIRouter(prefix="/api", tags=["k8s_deploy"])
 logger = logging.getLogger(__name__)
@@ -171,7 +170,7 @@ def deploy_k8s_check(
         "warning": "",
     }
 
-    from backend.deployers.base import ssh_connect, DeployTarget
+    from backend.deployers.base import DeployTarget, ssh_connect
 
     if not req.path or req.cd_type == "helm":
         if req.cd_type != "fluxcd":
@@ -341,15 +340,17 @@ async def deploy_k8s_stream(
     try:
         image, project_key, project_short = _resolve_image(db, req)
     except AppException as e:
+        msg = e.message
         async def err_no_repo():
-            yield f"retry: 3000\ndata: ERROR:{e.message}\n\n"
+            yield f"retry: 3000\ndata: ERROR:{msg}\n\n"
         return StreamingResponse(err_no_repo(), media_type="text/event-stream")
 
     try:
         host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
     except AppException as e:
+        msg = e.message
         async def err_no_cluster():
-            yield f"retry: 3000\ndata: ERROR:{e.message}\n\n"
+            yield f"retry: 3000\ndata: ERROR:{msg}\n\n"
         return StreamingResponse(err_no_cluster(), media_type="text/event-stream")
 
     def do_deploy():

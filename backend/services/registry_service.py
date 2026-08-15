@@ -1,10 +1,9 @@
 """镜像制品库服务 — 数据库缓存 + 定时同步 + CRUD"""
 
-import urllib.parse
-import threading
-import time
 import logging
-from datetime import datetime, timezone
+import threading
+import urllib.parse
+from datetime import UTC, datetime
 
 from backend.config import settings
 from backend.database import Database
@@ -70,10 +69,10 @@ class RegistryService:
             except RuntimeError as e:
                 logger.error("Harbor client initialization failed", exc_info=e)
                 raise HarborUnavailableError(
-                    f"Harbor 镜像仓库不可达。请检查：\n"
-                    f"1. HARBOR_REGISTRY 地址是否正确\n"
-                    f"2. 网络是否连通\n"
-                    f"3. Harbor 服务是否正常运行\n"
+                    "Harbor 镜像仓库不可达。请检查：\n"
+                    "1. HARBOR_REGISTRY 地址是否正确\n"
+                    "2. 网络是否连通\n"
+                    "3. Harbor 服务是否正常运行\n"
                 ) from e
         return self._harbor_client
 
@@ -125,7 +124,7 @@ class RegistryService:
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         count = 0
         for art in raw:
             if not art.get("tag"):
@@ -318,10 +317,10 @@ class RegistryService:
         c = raw_summary.get("critical", raw_summary.get("Critical", nested.get("Critical", 0)))
         h = raw_summary.get("high", raw_summary.get("High", nested.get("High", 0)))
         m = raw_summary.get("medium", raw_summary.get("Medium", nested.get("Medium", 0)))
-        l = raw_summary.get("low", raw_summary.get("Low", nested.get("Low", 0)))
-        total = raw_summary.get("total", c + h + m + l)
+        low = raw_summary.get("low", raw_summary.get("Low", nested.get("Low", 0)))
+        total = raw_summary.get("total", c + h + m + low)
         fixable = raw_summary.get("fixable", 0)
-        return {"critical": c, "high": h, "medium": m, "low": l, "total": total, "fixable": fixable}
+        return {"critical": c, "high": h, "medium": m, "low": low, "total": total, "fixable": fixable}
 
     def get_scan_report(self, repo_id: int, tag: str) -> dict | None:
         """先读数据库缓存，再实时请求 Harbor 获取详情（优先 Harbor 最新数据）"""
@@ -338,7 +337,7 @@ class RegistryService:
             if not row:
                 return {"error": "Tag 不存在"}
 
-            c, h, m, l = (row["vuln_critical"] or 0), (row["vuln_high"] or 0), (row["vuln_medium"] or 0), (row["vuln_low"] or 0)
+            c, h, m, low = (row["vuln_critical"] or 0), (row["vuln_high"] or 0), (row["vuln_medium"] or 0), (row["vuln_low"] or 0)
             digest = row["digest"] or ""
             # repo_name="mycode/devops-glue" → harbor_project="mycode", harbor_repo="devops-glue"
             repo_name = row["repo_name"] or ""
@@ -356,8 +355,8 @@ class RegistryService:
                 "critical": c,
                 "high": h,
                 "medium": m,
-                "low": l,
-                "total": c + h + m + l,
+                "low": low,
+                "total": c + h + m + low,
                 "fixable": row["vuln_fixable"] or 0,
             }
 
@@ -422,7 +421,7 @@ class RegistryService:
                 logger.warning(f"触发扫描失败（Harbor 不可达）: {e}")
                 return {"ok": False, "error": "Harbor 镜像仓库不可达，无法触发扫描"}
             except Exception as e:
-                logger.error(f"触发扫描失败", exc_info=e)
+                logger.error("触发扫描失败", exc_info=e)
                 return {"ok": False, "error": "触发扫描失败，请联系管理员"}
 
     # ── 删除 ──
@@ -491,6 +490,10 @@ _sync_stop = threading.Event()
 _sync_db_factory = None  # 保存 db_factory 用于重启
 
 
+def _default_db_factory():
+    return Database()
+
+
 def _sync_worker(db_factory, interval_minutes: int):
     """后台线程：定时全量同步"""
     while not _sync_stop.is_set():
@@ -511,10 +514,7 @@ def start_background_sync(db_factory, interval: int | None = None):
     """启动后台定时同步线程"""
     global _sync_thread, _sync_stop, _sync_db_factory
     _sync_db_factory = db_factory
-    if interval is None:
-        interval = int(getattr(settings, "registry_sync_interval", 30))
-    else:
-        interval = int(interval)
+    interval = int(getattr(settings, "registry_sync_interval", 30)) if interval is None else int(interval)
     if interval <= 0:
         logger.info("定时同步已关闭 (interval=0)")
         return
@@ -537,7 +537,7 @@ def restart_background_sync(interval: int):
         _sync_thread.join(timeout=5)
         _sync_stop.clear()
     if _sync_db_factory is None:
-        _sync_db_factory = lambda: Database()
+        _sync_db_factory = _default_db_factory
     if interval > 0:
         start_background_sync(_sync_db_factory, interval)
         logger.info(f"定时同步间隔已更新为 {interval} 分钟")

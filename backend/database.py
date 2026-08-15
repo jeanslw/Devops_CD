@@ -7,8 +7,8 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from backend.config import settings
 
+from backend.config import settings
 
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 
@@ -113,8 +113,8 @@ class Database:
         if self._driver != "mysql":
             return
         try:
-            from dbutils.pooled_db import PooledDB
             import pymysql
+            from dbutils.pooled_db import PooledDB
 
             if Database._pool is None:
                 Database._pool = PooledDB(
@@ -312,7 +312,7 @@ class Database:
         )""")
 
         # 系统配置表
-        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_config (
+        conn.execute("""CREATE TABLE IF NOT EXISTS cd_config (
             key_name VARCHAR(128) PRIMARY KEY,
             value TEXT NOT NULL
         )""")

@@ -3,13 +3,17 @@
 import logging
 import shlex
 
-from backend.deployers.base import ssh_connect, DeployTarget
-from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import (
-    _log, _kubectl_pods, _render_k8s_yaml, _get_deployment_name, _exec_exit,
-)
 from backend.config import settings
 from backend.deploy_log import S
+from backend.deployers.base import DeployTarget, ssh_connect
+from backend.deployers.k8s_base import K8sSubDeployer
+from backend.deployers.k8s_utils import (
+    _exec_exit,
+    _get_deployment_name,
+    _kubectl_pods,
+    _log,
+    _render_k8s_yaml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +100,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             before = _kubectl_pods(ssh, deploy_name)
             before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
-            before_pods = set(b.split()[0] for b in before.split("\n") if b.strip()) if before else set()
+            before_pods = {b.split()[0] for b in before.split("\n") if b.strip()} if before else set()
 
             is_first_deploy = False
             if not before.strip():
@@ -152,7 +156,7 @@ class KubectlDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.after_version"))
             all_after = _kubectl_pods(ssh, deploy_name)
             if all_after.strip():
-                after_pods = [l for l in all_after.split("\n") if l.strip() and l.split()[0] not in before_pods]
+                after_pods = [line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods]
                 after = "\n".join(after_pods) if after_pods else all_after
             else:
                 after = all_after
@@ -161,7 +165,7 @@ class KubectlDeployer(K8sSubDeployer):
             # ── 成败判断：rollout status exit code ──
             is_ok = rollout_ec == 0
             if is_ok:
-                running_count = sum(1 for l in after.split("\n") if "Running" in l)
+                running_count = sum(1 for line in after.split("\n") if "Running" in line)
                 _log(callback, S("deploy_log.verify_ok"))
                 result = (
                     f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
@@ -173,7 +177,7 @@ class KubectlDeployer(K8sSubDeployer):
                 result = (
                     f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
                     + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
-                    + f"\n\n验证部署: ❌ 部署失败！"
+                    + "\n\n验证部署: ❌ 部署失败！"
                 )
 
             return {"success": is_ok, "output": result[:settings.log_truncate_chars]}

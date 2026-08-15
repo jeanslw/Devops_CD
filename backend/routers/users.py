@@ -1,15 +1,18 @@
 """用户管理路由 — 仅 admin 可操作"""
 
 import bcrypt
-import pymysql
 from fastapi import APIRouter, Depends
-from backend.auth import get_current_user, require_admin_role, get_db, CD_SYSTEM
+
+from backend.auth import CD_SYSTEM, get_current_user, get_db, require_admin_role
 from backend.config import settings
-from backend.models import UserCreateRequest, ChangePasswordRequest
 from backend.database import Database
 from backend.exceptions import (
-    AppException, ValidationError, NotFoundError, ConflictError,
+    AppException,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
 )
+from backend.models import ChangePasswordRequest, UserCreateRequest
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
