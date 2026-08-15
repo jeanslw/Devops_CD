@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="1.2.2", lifespan=lifespan)
+app = FastAPI(title="Devops-Glue CD", version="1.3.0", lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
 _STARTED_AT = datetime.now(UTC)
 

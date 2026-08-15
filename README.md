@@ -64,25 +64,15 @@ docker compose up -d --build
 
 ## Documentation
 
-| Document | English | 中文 |
-|----------|---------|------|
-| User Manual | [USER_MANUAL.md](docs/USER_MANUAL.md) | [USER_MANUAL_ZH.md](docs/USER_MANUAL_ZH.md) |
-| Admin Manual | [ADMIN_MANUAL.md](docs/ADMIN_MANUAL.md) | [ADMIN_MANUAL_ZH.md](docs/ADMIN_MANUAL_ZH.md) |
-| FAQ | [FAQ.md](docs/FAQ.md) | [FAQ_ZH.md](docs/FAQ_ZH.md) |
-| Changelog | [CHANGELOG.md](docs/CHANGELOG.md) | [CHANGELOG_ZH.md](docs/CHANGELOG_ZH.md) |
-| Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | [ARCHITECTURE_ZH.md](docs/ARCHITECTURE_ZH.md) |
+- [USER_MANUAL](docs/USER_MANUAL.md)
+- [ADMIN_MANUAL](docs/ADMIN_MANUAL.md)
+- [FAQ](docs/FAQ.md)
+- [CHANGELOG](docs/CHANGELOG.md)
+- [ARCHITECTURE](docs/ARCHITECTURE.md)
 
 ## Related Projects
 
 - **Devops-Glue** — CI service ([GitHub](https://github.com/jeanslw/Devops-Glue) | [Gitee](https://gitee.com/jeanslw/devops_glue))
-
-## Changelog
-
-- **v1.0.0** (2026-07-15) — Initial release: end-to-end CI/CD workflow, SSH single-host / Docker / K8s cluster deployment, host resource monitoring, optimized notification templates.
-- **v1.1.0** (2026-07-24) — Harbor artifact registry: local persistence, Harbor API v1/v2 auto-detection, four-layer interaction (repository grid → tag list → vulnerability report → safe deletion), scheduled background sync and manual trigger.
-- **v1.2.0** (2026-07-28) — Vue 3 + Vite SPA frontend overhaul; asynchronous Web Shell with accurate connection feedback; project restructured (`app/` → `backend/`); bilingual support (Chinese/English); alert rules module; user role management (admin/deployer/viewer); custom monitor enhancement (unit suffix parsing, diagnostic panel); documentation restructured (user manual, admin manual, FAQ); LICENSE standardization.
-- **v1.2.1** (2026-07-29) — RBAC permission system adapted from Devops-Glue API; deploy log optimization; configuration variables migrated to `docker-compose.yml`; CI Build Management (Jenkins/GitLab HTTP proxy); documentation updates.
-- **v1.2.2** (2026-08-08) — **Webhook receiver endpoint** (`POST /api/webhooks/receive/{token}`) with auto-forward to DingTalk/WeCom/custom bots and event history; CI Build Management UI and `/api/ci/*` proxy endpoints; deploy ValueError pass-through via SSE (real-time error propagation to frontend); Pyright type safety across project + unified DB interface (SQLite `?` → MySQL `%s` auto conversion); frontend ErrorView with `error_key` i18n; public `/api/info` endpoint; CD & webhook tables index optimization; test warning cleanup; bilingual docs fully updated.
 
 ## Contact
 PR：[GitHub Issues](https://github.com/jeanslw/Devops_CD/issues)

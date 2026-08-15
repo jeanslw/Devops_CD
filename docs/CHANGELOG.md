@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.0 (2026-08-13) — CI connection switches to Devops-Glue dedicated API Token, bug fixes
+
+- **Docs update**: CI_API_TOKEN config instructions, fixed ruff-detected L1/L2/L3 bugs
+
+---
+
 ## v1.2.2 (2026-08-08) — Webhook Receiver Endpoint & CI Build Management & Type Safety Hardening & Deploy Error Passthrough
 
 ### New Features

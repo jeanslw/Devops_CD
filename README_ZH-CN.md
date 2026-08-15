@@ -68,25 +68,16 @@ docker compose up -d --build
 
 ## 文档
 
-| 文档 | 中文 | English |
-|------|------|---------|
-| 用户手册 | [USER_MANUAL_ZH.md](docs/USER_MANUAL_ZH.md) | [USER_MANUAL.md](docs/USER_MANUAL.md) |
-| 管理员手册 | [ADMIN_MANUAL_ZH.md](docs/ADMIN_MANUAL_ZH.md) | [ADMIN_MANUAL.md](docs/ADMIN_MANUAL.md) |
-| 常见问题 | [FAQ_ZH.md](docs/FAQ_ZH.md) | [FAQ.md](docs/FAQ.md) |
-| 更新日志 | [CHANGELOG_ZH.md](docs/CHANGELOG_ZH.md) | [CHANGELOG.md](docs/CHANGELOG.md) |
-| 架构图 | [ARCHITECTURE_ZH.md](docs/ARCHITECTURE_ZH.md) | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+- [用户手册](docs/USER_MANUAL_ZH.md)
+- [管理员手册](docs/ADMIN_MANUAL_ZH.md)
+- [常见问题](docs/FAQ_ZH.md)
+- [更新日志](docs/CHANGELOG_ZH.md)
+- [架构图](docs/ARCHITECTURE_ZH.md)
 
 ## 相关项目
 
 - **Devops-Glue** — CI 服务 ([GitHub](https://github.com/jeanslw/Devops-Glue) | [Gitee](https://gitee.com/jeanslw/devops_glue))
 
-## 更新日志
-
-- v1.0.0 | 2026-07-15 | 初始版本，衔接 CI 项目完善 CD 部署功能和部署校验，输出数据流日志；增加 SSH 单机 / Docker / K8s 集群的部署，增加主机资源监控，优化 Bot 通知模板。
-- v1.1.0 | 2026-07-24 | 新增镜像制品库：数据本地落库，兼容 Harbor API v1/v2，仓库卡片 → Tag 列表 → 扫描漏洞 → 安全删除四层交互，支持定时同步和手动触发。
-- v1.2.0 | 2026-07-28 | 前端重构为 Vue 3 + Vite 现代化 SPA；Web Shell 异步化，状态反馈精准；项目结构优化（app/ → backend/）；增加中英文双语支持；增加告警规则模块；增加用户权限管理（admin/deployer/viewer）；自定义监控增强（容量单位解析、诊断面板）；
-- v1.2.1 | 2026-07-29 | 配合 Devops-Glue API 适配 RBAC 权限，优化部署日志；部分变量配置迁移到 `docker-compose.yml`；新增 CI 构建管理（Jenkins/GitLab HTTP API 代理）；文档更新。
-- v1.2.2 | 2026-08-08 | **新增 Webhook 接收端点**（`POST /api/webhooks/receive/{token}`，32 字符 token 鉴权），支持关联 Bot 自动转发钉钉/企微/自定义通知，事件历史分页浏览、手动转发；新增 CI 构建管理 UI 与 `/api/ci/*` 代理端点；部署 ValueError 通过 SSE 实时透传到前端；全项目 Pyright 类型检查通过 + 统一 DB 接口（SQLite `?`/MySQL `%s` 自动转换）；前端 ErrorView 适配 `error_key` 国际化错误；新增公开 `/api/info` 端点；CD & Webhook 表索引优化；测试警告清理；中英文文档完整同步更新。
 ## 许可证
 
 MIT
