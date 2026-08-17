@@ -22,6 +22,14 @@ class K8sSubDeployer(ABC):
         """执行部署，返回 {"success": bool, "output": str}"""
         ...
 
+    def validate(self, _target=None, **kwargs) -> str | None:
+        """校验请求参数有效性，返回 None 通过，否则返回错误信息。
+        双调用兼容：
+        - DeployService.execute 调法：validate(target) → target 位置参数
+        - K8sSubDeployer 子类扩展调法：validate(req=...) → kwargs
+        """
+        return None
+
     def stop(self, req, project: str, host: str, port: int = 22,
              user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
         """停止服务。默认抛出 NotImplementedError，子类按需覆盖。"""

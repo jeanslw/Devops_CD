@@ -54,6 +54,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
+import { confirm } from '@/composables/useConfirm'
 
 const auth = useAuth()
 const { t } = useI18n()
@@ -106,7 +107,7 @@ function fmtDuration(ms) {
 }
 
 async function cancelRun(l) {
-  if (!confirm(t('deploy.confirmCancel'))) return
+  if (!await confirm({ text: t('deploy.confirmCancel'), danger: true })) return
   try {
     const r = await fetch('/api/deploy/cancel', {
       method: 'POST',

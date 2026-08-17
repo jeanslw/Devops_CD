@@ -75,7 +75,7 @@
         </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
-        <button v-if="loading" class="btn btn-orange" style="margin-left:8px" @click="doCancel">{{ $t('deploy.cancel') }}</button>
+        <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
         <pre class="output" v-text="output"></pre>
       </div>
     </div>
@@ -89,6 +89,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useDeploy } from '@/composables/useDeploy'
+import { confirm } from '@/composables/useConfirm'
 import CiPipelineStatus from '@/components/CiPipelineStatus.vue'
 import TagPager from '@/components/TagPager.vue'
 import MultiSelect from '@/components/MultiSelect.vue'
@@ -160,14 +161,14 @@ async function doDeploy() {
 }
 
 async function doCancel() {
-  if (!confirm(t('deploy.confirmCancel'))) return
+  if (!await confirm({ text: t('deploy.confirmCancel'), danger: true })) return
   const d = await cancelDeploy(selectedProject.value)
   if (d.success) toast(t('deploy.cancelled'), true)
   else if (!d.success) toast(t('deploy.cancelFailed'), false)
 }
 
 async function doStop() {
-  if (!confirm(t('deploy.confirmStop'))) return
+  if (!await confirm({ text: t('deploy.confirmStop'), danger: true })) return
   const body = {
     project: selectedProject.value,
     tag: selectedTag.value,

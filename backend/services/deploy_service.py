@@ -128,6 +128,12 @@ class DeployService:
                  传入 None 时跳过校验（仅限内部可信调用）。
         v1.3.1 起：部署开始插入 running 记录（并发锁 + 取消依据），结束时更新
                  状态 / 耗时 / 分阶段耗时 / 说明。"""
+        # K8S 子模式必须走 _deploy_k8s_core，禁止走 SSH/Compose 路线（API 签名不兼容）
+        if deploy_type.startswith("k8s/"):
+            raise ValueError(
+                f"部署类型 '{deploy_type}' 不属于 SSH/Compose 路线，"
+                "请使用 DeployService 之外的 K8S 专用流程（routers/k8s_deploy._deploy_k8s_core）"
+            )
         # ── 部署时二次权限校验（防御深度）──
         if user is not None:
             enforce_deploy_perm(user, deploy_type)
@@ -264,6 +270,21 @@ class DeployService:
             )
             return {"success": False, "deploy_id": deploy_id, "cancelled": True,
                     "results": results, "message": "❌ Cancelled"}
+        except Exception as e:
+            logger.error("Deploy service unexpected error", exc_info=e)
+            duration_ms = int((time.time() - started) * 1000)
+            error_output = self._build_output(results, is_batch, total)
+            if error_output:
+                error_output += f"\n\n━━━ 部署异常中断: {e} ━━━"
+            else:
+                error_output = f"部署异常中断: {e}"
+            finish_deploy_record(
+                self._db, row_id, status="failed",
+                target=self._build_target_str(results, is_batch, total),
+                output=error_output[: settings.log_truncate_chars],
+                duration_ms=duration_ms, stage_times=stage_times,
+            )
+            raise
         finally:
             deploy_run_manager.unregister(deploy_id)
             clear_cancel_checker()

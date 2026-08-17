@@ -33,12 +33,14 @@ class DeployRunManager:
         self._events: dict[int, threading.Event] = {}
 
     def register(self, deploy_id: int) -> threading.Event:
-        """注册一个进行中的部署，返回其取消事件（幂等：已存在则复用，避免覆盖已置位信号）。"""
+        """注册一个进行中的部署，返回其取消事件。
+        每次注册都 clear()，确保新部署不继承历史取消信号（防御 deploy_id 复用）。"""
         with self._lock:
             ev = self._events.get(deploy_id)
             if ev is None:
                 ev = threading.Event()
                 self._events[deploy_id] = ev
+            ev.clear()  # 关键：重置信号，避免复用 deploy_id 时继承旧取消状态
             return ev
 
     def cancel(self, deploy_id: int) -> bool:

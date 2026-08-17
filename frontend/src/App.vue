@@ -7,6 +7,7 @@
         <div v-if="sidebarOpen" class="sidebar-overlay" @click="closeSidebar"></div>
         <div class="content" @click="onContentClick">
           <Toast />
+          <ConfirmModal />
           <router-view v-slot="{ Component }">
             <transition name="fade">
               <component :is="Component" :key="$route.fullPath" />
@@ -28,6 +29,7 @@ import { useToast } from '@/composables/useToast'
 import Topbar from '@/components/Topbar.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import Toast from '@/components/Toast.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import LoginView from '@/views/LoginView.vue'
 import LandingView from '@/views/LandingView.vue'
 import { provide, watch, onMounted, onUnmounted, ref } from 'vue'

@@ -29,12 +29,12 @@
         </div>
         <div>
           <label>{{ $t('deploy.mode') }}</label>
-          <select v-model="cdType" @change="onTypeChange">
-            <option value="kubectl">kubectl SSH</option>
-            <option value="helm">Helm</option>
-            <option value="argocd">Argo CD</option>
-            <option value="fluxcd">Flux CD</option>
-          </select>
+          <select v-model="cdType">
+              <option value="kubectl">kubectl SSH</option>
+              <option value="helm">Helm</option>
+              <option value="argocd">Argo CD</option>
+              <option value="fluxcd">Flux CD</option>
+            </select>
         </div>
         <div>
           <label>{{ $t('k8sDeploy.cluster') }}</label>
@@ -73,13 +73,7 @@
       </div>
       <button class="btn btn-green" style="margin-top:8px" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
       <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
-      <button v-if="loading" class="btn btn-orange" style="margin-left:8px" @click="doCancel">{{ $t('deploy.cancel') }}</button>
-      <button
-        class="btn btn-blue btn-sm"
-        style="margin-left:8px"
-        v-if="showMonitorBtn"
-        @click="jumpToMonitor"
-      >{{ $t('k8sDeploy.viewResources') }}</button>
+      <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
       <pre class="output" v-text="output"></pre>
     </div>
 
@@ -101,16 +95,16 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useDeploy } from '@/composables/useDeploy'
+import { confirm } from '@/composables/useConfirm'
 import CiPipelineStatus from '@/components/CiPipelineStatus.vue'
 import TagPager from '@/components/TagPager.vue'
 
 const route = useRoute()
-const router = useRouter()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
@@ -124,8 +118,6 @@ const botId = ref(0)
 const path = ref('')
 const apiUrl = ref('')
 const deployNote = ref('')
-const showMonitorBtn = ref(false)
-let _lastClusterId = 0
 
 // ── 预检弹窗 ──
 const checkModal = reactive({
@@ -196,10 +188,6 @@ async function loadBots() {
   } catch (e) {}
 }
 
-function onTypeChange() {
-  showMonitorBtn.value = false
-}
-
 async function doDeploy() {
   if (!selectedTag.value) return toast(t('deploy.noTag'), false)
   const cid = parseInt(clusterId.value) || 0
@@ -223,26 +211,20 @@ async function doDeploy() {
 
   const success = await stream('/api/deploy-k8s-stream', body, {
     initialMsg: '',
-    onEnd: (ok) => {
-      toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok)
-      if (ok) {
-        showMonitorBtn.value = true
-        _lastClusterId = cid
-      }
-    },
+    onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
     onError: () => toast(t('deploy.deployFailed'), false)
   })
 }
 
 async function doCancel() {
-  if (!confirm(t('deploy.confirmCancel'))) return
+  if (!await confirm({ text: t('deploy.confirmCancel'), danger: true })) return
   const d = await cancelDeploy(selectedProject.value)
   if (d.success) toast(t('deploy.cancelled'), true)
   else toast(t('deploy.cancelFailed'), false)
 }
 
 async function doStop() {
-  if (!confirm(t('deploy.confirmStop'))) return
+  if (!await confirm({ text: t('deploy.confirmStop'), danger: true })) return
   const cid = parseInt(clusterId.value) || 0
   if (!cid) return toast('请选择集群', false)
   const body = {
@@ -260,11 +242,6 @@ async function doStop() {
   } catch (e) {
     toast(t('deploy.stopFailed'), false)
   }
-}
-
-function jumpToMonitor() {
-  showMonitorBtn.value = false
-  router.push({ path: '/monitor/app', query: { clusterId: _lastClusterId } })
 }
 
 onMounted(async () => {

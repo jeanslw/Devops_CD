@@ -66,8 +66,7 @@
           <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
         </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
-        <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
-        <button v-if="loading" class="btn btn-orange" style="margin-left:8px" @click="doCancel">{{ $t('deploy.cancel') }}</button>
+        <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
         <pre class="output" v-text="output"></pre>
       </div>
     </div>
@@ -81,6 +80,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useDeploy } from '@/composables/useDeploy'
+import { confirm } from '@/composables/useConfirm'
 import CiPipelineStatus from '@/components/CiPipelineStatus.vue'
 import TagPager from '@/components/TagPager.vue'
 import MultiSelect from '@/components/MultiSelect.vue'
@@ -150,32 +150,10 @@ async function doDeploy() {
 }
 
 async function doCancel() {
-  if (!confirm(t('deploy.confirmCancel'))) return
+  if (!await confirm({ text: t('deploy.confirmCancel'), danger: true })) return
   const d = await cancelDeploy(selectedProject.value)
   if (d.success) toast(t('deploy.cancelled'), true)
   else toast(t('deploy.cancelFailed'), false)
-}
-
-async function doStop() {
-  if (!confirm(t('deploy.confirmStop'))) return
-  const sid = selectedServers.value.join(',')
-  if (!sid) return toast(t('deploy.selectServerFirst'), false)
-  const body = {
-    project: selectedProject.value,
-    tag: selectedTag.value,
-    deploy_type: 'ssh',
-    server_ids: sid,
-    target_path: path.value,
-    commands: commands.value,
-  }
-  try {
-    const r = await fetch('/api/stop', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth.A() }, body: JSON.stringify(body) })
-    const d = await r.json()
-    output.value = d.output || ''
-    toast(d.success ? t('deploy.stopSuccess') : '❌ ' + t('common.failed'), d.success)
-  } catch (e) {
-    toast(t('deploy.stopFailed'), false)
-  }
 }
 
 onMounted(async () => {

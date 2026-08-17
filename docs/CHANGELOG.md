@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.3.1 (2026-08-17) — Deploy cancel mechanism, concurrency lock, structured timing, UI refinements
+
+### New Features
+- **Deploy Cancel Mechanism**: Added `POST /api/deploy/cancel` endpoint, allowing users to manually cancel an in-progress deployment. Uses `threading.Event` as an in-memory signal; low-level loops (ssh_exec_stream, k8s sub-deployers) poll the signal to interrupt long-running commands promptly. `DeployCancelled` inherits `BaseException` to pierce through `except Exception` fallbacks and bubble up to the orchestration layer for unified `terminated` status persistence.
+- **Deployment Concurrency Lock**: Only one `running` record allowed per project at a time. Pre-deploy check via `find_running_deploy`; the route layer also rejects `deploy_type='k8s/*'` from the SSH/Compose path (incompatible API signatures) and the service layer defensively raises `ValueError` before inserting a running record.
+- **Structured Timing & Deploy Note**: Deploy records now persist `duration_ms` (total elapsed), `stage_times` (per-server per-stage breakdown), and `deploy_note` (user-entered free-text audit note, displayed as a column in the deploy log table).
+- **Custom Confirm Modal**: Replaced native browser `confirm()` with a promise-based `useConfirm` composable + global `ConfirmModal` component across deploy stop / cancel / log-view cancel actions.
+
+### Changes
+- **SSH Deploy Page**: Removed the Stop button (custom SSH commands have no meaningful stop semantics); Cancel button is now always visible (disabled when not deploying) to avoid it disappearing mid-deploy.
+- **K8s Deploy Page**: Removed the "View Resource Usage" button (jumped to external monitor, low value); Cancel button now always visible.
+- **Docker / K8s Stop**: Retained with custom confirm modal for secondary confirmation.
+
+### Bug Fixes
+- **K8sSubDeployer missing `validate`**: Calling the SSH/Compose endpoint with `deploy_type='k8s/kubectl'` raised `AttributeError` (K8s sub-deployer inheritance chain lacked `validate`). Added a dual-signature-compatible `validate` on `K8sSubDeployer`.
+- **Running record orphan on exception**: `_deploy_k8s_core` and `DeployService.execute` only caught `DeployCancelled`, leaving the `running` record orphaned on other unexpected exceptions, dead-locking the concurrency lock. Added `except Exception` fallbacks to update the record to `failed`.
+- **`deploy_type='k8s/*'` mixing into SSH/Compose path**: The deployer registry happily created a `KubectlDeployer` for the SSH/Compose path, but the `deploy()` signature is incompatible. Added route-layer + service-layer double guard rejecting `k8s/*` early (before inserting any running record).
+- **`register()` not resetting Event state**: If a `deploy_id` was reused (rare), a previously-set cancel signal could leak into the new deployment. `register()` now always calls `ev.clear()`.
+
+---
+
 ## v1.3.0 (2026-08-13) — CI connection switches to Devops-Glue dedicated API Token, bug fixes
 
 - **Docs update**: CI_API_TOKEN config instructions, fixed ruff-detected L1/L2/L3 bugs

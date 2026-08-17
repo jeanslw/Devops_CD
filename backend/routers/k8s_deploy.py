@@ -122,6 +122,16 @@ def _deploy_k8s_core(db, req, user, image, project_key, project_short, host, por
             stage_times=[{"host": host, "status": "terminated", "duration_ms": duration_ms}],
         )
         return {"success": False, "output": "部署已被用户取消", "cancelled": True}
+    except Exception as e:
+        logger.error("K8s deploy core failed", exc_info=e)
+        duration_ms = int((time.time() - started) * 1000)
+        finish_deploy_record(
+            db, row_id, status="failed", target=host,
+            output=str(e)[: settings.log_truncate_chars],
+            duration_ms=duration_ms,
+            stage_times=[{"host": host, "status": "failed", "duration_ms": duration_ms}],
+        )
+        raise
     finally:
         deploy_run_manager.unregister(deploy_id)
         clear_cancel_checker()

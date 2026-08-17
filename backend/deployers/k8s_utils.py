@@ -5,8 +5,8 @@ import re
 import yaml
 
 from backend.config import settings
-from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具（含 errors="replace"）
 from backend.deploy_run import DeployCancelled, get_cancel_checker
+from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具（含 errors="replace"）
 
 
 def check_cancelled() -> None:

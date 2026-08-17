@@ -1,5 +1,26 @@
 # 更新日志
 
+## v1.3.1 (2026-08-17) — 部署取消机制 + 并发锁 + 结构化耗时 + UI 优化
+
+### 新增功能
+- **部署取消机制**：新增 `POST /api/deploy/cancel` 接口，支持用户手动取消进行中的部署。基于 `threading.Event` 内存信号，低层循环（ssh_exec_stream、k8s 子部署器）轮询信号及时中断长命令。`DeployCancelled` 继承 `BaseException` 以穿透 `except Exception` 兜底，冒泡到编排层统一按 `terminated` 落库。
+- **部署并发锁**：同一项目同时只允许一个 `running` 记录。部署前通过 `find_running_deploy` 检查；路由层同时拒绝 `deploy_type='k8s/*'` 混入 SSH/Compose 路线（API 签名不兼容），Service 层防御性抛 `ValueError`（在插入 running 记录之前）。
+- **结构化耗时与部署说明**：部署记录新增 `duration_ms`（总耗时）、`stage_times`（每台服务器每阶段耗时明细）、`deploy_note`（用户填写的自由文本说明，部署日志表新增"说明"列展示）。
+- **自定义确认弹窗**：用 promise-based 的 `useConfirm` 组合式 + 全局 `ConfirmModal` 组件替换原生浏览器 `confirm()`，覆盖部署停止/取消、日志页取消等操作。
+
+### 变更与优化
+- **SSH 部署页**：移除停止按钮（自定义 SSH 命令场景无停止语义）；取消按钮改为常驻显示（非部署中灰色禁用），不再中途消失。
+- **K8s 部署页**：移除"查看资源占用"按钮（跳转外部监控，价值低）；取消按钮同样常驻显示。
+- **Docker / K8s 停止**：保留，配合自定义确认弹窗做二次确认。
+
+### Bug 修复
+- **K8sSubDeployer 缺 `validate` 方法**：`deploy_type='k8s/kubectl'` 误调 SSH/Compose 接口时抛 `AttributeError`（K8s 子部署器继承链缺 validate）。在 `K8sSubDeployer` 补充双签名兼容的 `validate`。
+- **异常时 running 记录孤儿**：`_deploy_k8s_core` 和 `DeployService.execute` 只捕获 `DeployCancelled`，其他意外异常会让 running 记录残留，并发锁死锁。补 `except Exception` 兜底，将记录更新为 `failed`。
+- **`deploy_type='k8s/*'` 混入 SSH/Compose 路线**：registry 会为 SSH/Compose 路线创建 `KubectlDeployer`，但 `deploy()` 签名不兼容。路由层 + Service 层双拦截，在插入 running 记录之前就拒绝。
+- **`register()` 未重置 Event 状态**：`deploy_id` 复用（罕见）时历史取消信号可能泄漏到新部署。`register()` 现在始终 `ev.clear()`。
+
+---
+
 ## v1.3.0 (2026-08-13) - CI连接改用Devops-Glue的专用API Token，修复bug
 
 - **更新文档** CI_API_TOKEN 配置说明,修复ruff检测的L1/L2/L3级别bug

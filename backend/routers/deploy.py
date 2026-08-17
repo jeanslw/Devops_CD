@@ -25,6 +25,12 @@ def deploy(
     db: Database = Depends(get_db),
     user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
+    # K8S 子模式必须走 /api/deploy-k8s，禁止混进 SSH/Compose 路线（签名不兼容）
+    if req.deploy_type.startswith("k8s/"):
+        raise ValidationError(
+            f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/deploy-k8s",
+            error_key="errors.wrong_deploy_api",
+        )
     # 按具体 deploy_type 做二次权限校验（防御深度：service 层也会再查一次）
     enforce_deploy_perm(user, req.deploy_type)
     svc = DeployService(db)
@@ -160,6 +166,12 @@ async def deploy_stream(
     user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     """实时部署（SSE 流式推送）"""
+    # K8S 子模式必须走 /api/deploy-k8s-stream，禁止混进 SSH/Compose 路线（签名不兼容）
+    if req.deploy_type.startswith("k8s/"):
+        msg = f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/deploy-k8s-stream"
+        async def _err():
+            yield f"retry: 3000\ndata: ERROR:{msg}\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
     enforce_deploy_perm(user, req.deploy_type)
     import asyncio
     import queue
