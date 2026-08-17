@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 
+from backend.deploy_run import DeployCancelled, get_cancel_checker
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,7 +197,12 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
                 log_fn("\n".join(buffer))
                 buffer.clear()
 
+        check_cancel = get_cancel_checker()
         while not channel.exit_status_ready():
+            # 部署取消检查：用户调用 cancel 接口后，尽快中断远端长命令
+            if check_cancel is not None and check_cancel():
+                log_fn("\n[deploy cancelled by user]")
+                raise DeployCancelled()
             had_data = False
             if channel.recv_ready():
                 data = channel.recv(buf_size).decode("utf-8", errors="replace")

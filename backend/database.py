@@ -264,12 +264,21 @@ class Database:
             status VARCHAR(32),
             output TEXT,
             triggered_by VARCHAR(64) DEFAULT '',
+            deploy_note VARCHAR(512) DEFAULT '',
+            duration_ms INTEGER DEFAULT 0,
+            stage_times TEXT DEFAULT '',
             created_at TEXT DEFAULT ({NOW})
         )""")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN triggered_by VARCHAR(64) DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_note VARCHAR(512) DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN duration_ms INTEGER DEFAULT 0")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN stage_times TEXT DEFAULT ''")
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (
             id {PK},
@@ -396,6 +405,7 @@ class Database:
             ("idx_cdl_created",       "cd_deploy_logs",        "created_at"),
             ("idx_cdl_deploy_id",     "cd_deploy_logs",        "deploy_id"),
             ("idx_cdl_project_tag_status", "cd_deploy_logs",   "project, tag, status"),
+            ("idx_cdl_status",             "cd_deploy_logs",   "status"),
             ("idx_pt_project",        "ci_pipeline_tags",      "project"),
             ("idx_pt_created",        "ci_pipeline_tags",      "created_at"),
             ("idx_jgm_path",          "ci_job_git_map",        "current_path"),

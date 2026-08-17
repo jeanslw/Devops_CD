@@ -186,6 +186,7 @@ export default {
     filterPlaceholder: '{project} 或留空显示全部',
     deploy: '🚀 部署',
     stop: '🛑 停止',
+    cancel: '取消',
     noTag: '没有可用的 Tag',
     noTagHint: '没有可用的 Tag，请先运行 CI 构建',
     selectServer: '请选择至少一台服务器',
@@ -196,6 +197,11 @@ export default {
     stopFailed: '❌ 停止失败',
     confirmStop: '确定停止？',
     selectServerFirst: '请选择服务器',
+    note: '部署说明',
+    notePlaceholder: '本次部署的说明（可选）',
+    confirmCancel: '确定取消本次部署？',
+    cancelled: '部署已取消',
+    cancelFailed: '取消失败',
   },
   sshDeploy: {
     title: '🖥️ 单机部署',
@@ -252,6 +258,8 @@ export default {
     noOutput: '(无输出)',
     totalInfo: '共 {total} 条 / {pages} 页',
     perPage: '{n}条/页',
+    note: '说明',
+    duration: '耗时',
   },
   registry: {
     title: '📦 镜像仓库',

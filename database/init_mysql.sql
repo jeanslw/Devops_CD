@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS cd_deploy_logs (
     status      VARCHAR(32),
     output      TEXT,
     triggered_by VARCHAR(64) DEFAULT '',
+    deploy_note  VARCHAR(512) DEFAULT '',
+    duration_ms  INT          DEFAULT 0,
+    stage_times  TEXT,
     created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -102,6 +105,7 @@ CALL __add_index('cd_deploy_logs', 'idx_cdl_project', 'project');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_created', 'created_at');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_deploy_id', 'deploy_id');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_project_tag_status', 'project, tag, status');
+CALL __add_index('cd_deploy_logs', 'idx_cdl_status', 'status');
 
 -- CI 相关表索引（表可能不存在，存储过程内部会检查并跳过）
 CALL __add_index('ci_pipeline_tags', 'idx_pt_project', 'project');
@@ -120,6 +124,28 @@ CALL __add_index('cd_custom_monitors', 'idx_cdm_enabled', 'enabled');
 CALL __add_index('cd_custom_monitors', 'idx_cdm_created', 'created_at');
 
 CALL __add_index('cd_webhooks', 'idx_cwh_enabled', 'enabled');
+
+-- ============================================================================
+-- 列迁移（幂等）：为已存在的 cd_deploy_logs 表补充新增列（v1.3.1 起）
+-- ============================================================================
+DELIMITER $$
+DROP PROCEDURE IF EXISTS __add_column$$
+CREATE PROCEDURE __add_column(IN tbl VARCHAR(64), IN col VARCHAR(64), IN col_def VARCHAR(256))
+BEGIN
+    DECLARE _col INT DEFAULT 0;
+    SELECT COUNT(*) INTO _col FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl AND COLUMN_NAME = col;
+    IF _col = 0 THEN
+        SET @_ddl = CONCAT('ALTER TABLE ', tbl, ' ADD COLUMN ', col, ' ', col_def);
+        PREPARE _stmt FROM @_ddl; EXECUTE _stmt; DEALLOCATE PREPARE _stmt;
+    END IF;
+END $$
+DELIMITER ;
+
+CALL __add_column('cd_deploy_logs', 'deploy_note', "VARCHAR(512) DEFAULT ''");
+CALL __add_column('cd_deploy_logs', 'duration_ms', 'INT DEFAULT 0');
+CALL __add_column('cd_deploy_logs', 'stage_times', 'TEXT');
+DROP PROCEDURE IF EXISTS __add_column;
 
 DROP PROCEDURE IF EXISTS __add_index;
 

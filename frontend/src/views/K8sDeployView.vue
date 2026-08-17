@@ -67,8 +67,13 @@
           <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }}</option>
         </select>
       </div>
+      <div>
+        <label>{{ $t('deploy.note') }}</label>
+        <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+      </div>
       <button class="btn btn-green" style="margin-top:8px" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
       <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
+      <button v-if="loading" class="btn btn-orange" style="margin-left:8px" @click="doCancel">{{ $t('deploy.cancel') }}</button>
       <button
         class="btn btn-blue btn-sm"
         style="margin-left:8px"
@@ -109,7 +114,7 @@ const router = useRouter()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
-const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream } = useDeploy()
+const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy } = useDeploy()
 
 const cdType = ref('kubectl')
 const clusterId = ref(0)
@@ -118,6 +123,7 @@ const bots = ref([])
 const botId = ref(0)
 const path = ref('')
 const apiUrl = ref('')
+const deployNote = ref('')
 const showMonitorBtn = ref(false)
 let _lastClusterId = 0
 
@@ -206,6 +212,7 @@ async function doDeploy() {
     cluster_id: cid,
     path: path.value,
     api_url: apiUrl.value,
+    deploy_note: deployNote.value,
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }
@@ -225,6 +232,13 @@ async function doDeploy() {
     },
     onError: () => toast(t('deploy.deployFailed'), false)
   })
+}
+
+async function doCancel() {
+  if (!confirm(t('deploy.confirmCancel'))) return
+  const d = await cancelDeploy(selectedProject.value)
+  if (d.success) toast(t('deploy.cancelled'), true)
+  else toast(t('deploy.cancelFailed'), false)
 }
 
 async function doStop() {

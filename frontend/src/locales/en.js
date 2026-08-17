@@ -186,6 +186,7 @@ export default {
     filterPlaceholder: '{project} or leave blank for all',
     deploy: 'Deploy',
     stop: 'Stop',
+    cancel: 'Cancel',
     noTag: 'No available tag',
     noTagHint: 'No available tag, please run CI build first',
     selectServer: 'Please select at least one server',
@@ -196,6 +197,11 @@ export default {
     stopFailed: 'Stop failed',
     confirmStop: 'Confirm stop?',
     selectServerFirst: 'Please select a server',
+    note: 'Deploy Note',
+    notePlaceholder: 'Optional note for this deployment',
+    confirmCancel: 'Cancel this deployment?',
+    cancelled: 'Deployment cancelled',
+    cancelFailed: 'Cancel failed',
   },
   sshDeploy: {
     title: 'SSH Deployment',
@@ -252,6 +258,8 @@ export default {
     noOutput: '(No output)',
     totalInfo: 'Total {total} records / {pages} pages',
     perPage: '{n}/page',
+    note: 'Note',
+    duration: 'Duration',
   },
   registry: {
     title: 'Image Registry',

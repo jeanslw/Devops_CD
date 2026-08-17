@@ -4,6 +4,7 @@ import logging
 
 from backend.deploy_log import S
 from backend.deployers.k8s_base import K8sSubDeployer
+from backend.deployers.k8s_utils import check_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             health = ""
             sync = ""
             for i in range(30):
+                check_cancelled()
                 time.sleep(2)
                 r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
                 a = r.json()

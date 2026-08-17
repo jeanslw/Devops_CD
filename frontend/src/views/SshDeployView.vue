@@ -61,8 +61,13 @@
           <label>{{ $t('deploy.commands') }}</label>
           <textarea v-model="commands" rows="6" :placeholder="$t('sshDeploy.commandsPlaceholder')" style="width:100%;resize:vertical;font-family:monospace"></textarea>
         </div>
+        <div style="margin-bottom:8px">
+          <label>{{ $t('deploy.note') }}</label>
+          <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+        </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
+        <button v-if="loading" class="btn btn-orange" style="margin-left:8px" @click="doCancel">{{ $t('deploy.cancel') }}</button>
         <pre class="output" v-text="output"></pre>
       </div>
     </div>
@@ -84,7 +89,7 @@ const route = useRoute()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
-const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, loadPipeline, changeProject, changeTagPage, stream } = useDeploy()
+const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, loadPipeline, changeProject, changeTagPage, stream, cancelDeploy } = useDeploy()
 
 const mode = ref('commands')
 const selectedServers = ref([])
@@ -94,6 +99,7 @@ const botId = ref(0)
 const path = ref('')
 const inventory = ref('')
 const commands = ref('')
+const deployNote = ref('')
 
 async function onProjectChange() {
   await changeProject(selectedProject.value)
@@ -132,6 +138,7 @@ async function doDeploy() {
     deploy_mode: mode.value,
     target_path: path.value,
     commands: cmdStr,
+    deploy_note: deployNote.value,
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }
@@ -140,6 +147,13 @@ async function doDeploy() {
     onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
     onError: () => toast(t('deploy.deployFailed'), false)
   })
+}
+
+async function doCancel() {
+  if (!confirm(t('deploy.confirmCancel'))) return
+  const d = await cancelDeploy(selectedProject.value)
+  if (d.success) toast(t('deploy.cancelled'), true)
+  else toast(t('deploy.cancelFailed'), false)
 }
 
 async function doStop() {

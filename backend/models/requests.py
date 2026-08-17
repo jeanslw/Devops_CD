@@ -55,9 +55,15 @@ class DeployRequest(BaseModel):
     k8s_deploy: str = ""            # K8s deployment 名
     k8s_container: str = ""         # K8s container 名
     env_file: str = ""              # docker-compose --env-file 路径，空=默认 .env
+    deploy_note: str = ""           # 部署说明（记录到 cd_deploy_logs.deploy_note）
     cd_type: str = "kubectl"        # K8S 子模式：kubectl | helm | argocd | fluxcd
     bot_id: int = 0
     lang: str = "en"               # 前端当前语言 en/zh，用于 bot 通知消息国际化
+
+
+class CancelRequest(BaseModel):
+    deploy_id: int = 0             # 按部署 ID 取消（优先）
+    project: str = ""              # 无 deploy_id 时按项目定位进行中部署
 
 
 class BuildTriggerRequest(BaseModel):

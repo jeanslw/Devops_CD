@@ -57,6 +57,10 @@
             </select>
           </div>
         </div>
+        <div style="margin-bottom:8px">
+          <label>{{ $t('deploy.note') }}</label>
+          <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+        </div>
         <div v-if="mode === 'remote'" style="margin-bottom:8px">
           <label @click="yamlExpanded = !yamlExpanded" style="cursor:pointer;user-select:none">
             <span style="display:inline-block;width:14px;transition:transform 0.2s" :style="{ transform: yamlExpanded ? 'rotate(90deg)' : '' }">&#9654;</span>
@@ -71,6 +75,7 @@
         </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
+        <button v-if="loading" class="btn btn-orange" style="margin-left:8px" @click="doCancel">{{ $t('deploy.cancel') }}</button>
         <pre class="output" v-text="output"></pre>
       </div>
     </div>
@@ -92,7 +97,7 @@ const route = useRoute()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
-const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream } = useDeploy()
+const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy } = useDeploy()
 
 const mode = ref('remote')
 const selectedServers = ref([])
@@ -104,6 +109,7 @@ const envFile = ref('')
 const commands = ref('')
 const yamlContent = ref('')
 const yamlExpanded = ref(false)
+const deployNote = ref('')
 
 async function onProjectChange() {
   await changeProject(selectedProject.value)
@@ -142,6 +148,7 @@ async function doDeploy() {
     commands: commands.value,
     yaml_content: yamlContent.value,
     env_file: envFile.value,
+    deploy_note: deployNote.value,
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }
@@ -150,6 +157,13 @@ async function doDeploy() {
     onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
     onError: () => toast(t('deploy.deployFailed'), false)
   })
+}
+
+async function doCancel() {
+  if (!confirm(t('deploy.confirmCancel'))) return
+  const d = await cancelDeploy(selectedProject.value)
+  if (d.success) toast(t('deploy.cancelled'), true)
+  else if (!d.success) toast(t('deploy.cancelFailed'), false)
 }
 
 async function doStop() {

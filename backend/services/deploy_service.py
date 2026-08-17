@@ -1,6 +1,7 @@
 """部署编排服务 — 查映射 → 选策略 → 执行 → 记日志 → 通知"""
 
 import logging
+import time
 from collections.abc import Callable
 
 from backend.auth import enforce_deploy_perm
@@ -8,6 +9,15 @@ from backend.config import settings
 from backend.crypto import decrypt
 from backend.database import Database
 from backend.deploy_log import S
+from backend.deploy_run import (
+    DeployCancelled,
+    clear_cancel_checker,
+    deploy_run_manager,
+    find_running_deploy,
+    finish_deploy_record,
+    set_cancel_checker,
+    start_deploy_record,
+)
 from backend.deployers import DeployTarget, deployer_registry
 
 from .ci_service import CiService
@@ -67,6 +77,30 @@ class DeployService:
                 for r in rows
             ]
 
+    def _build_target_str(self, results: list, is_batch: bool, total: int) -> str:
+        """批量时合并 target 描述，单台时返回单条描述。"""
+        if is_batch:
+            return ", ".join(
+                f"[{i + 1}/{total}] #{r['server_id']} {r['host']}"
+                for i, r in enumerate(results)
+            )
+        if not results:
+            return "(无)"
+        r = results[0]
+        return f"#{r['server_id']} {r['host']}"
+
+    def _build_output(self, results: list, is_batch: bool, total: int) -> str:
+        """合并部署输出，批量时加服务器分隔线。"""
+        if is_batch:
+            parts = []
+            for i, r in enumerate(results):
+                parts.append(f"━━━ [{i + 1}/{total}] #{r['server_id']} {r['host']} ({r['status']}) ━━━")
+                parts.append(r["output"] or "")
+            return "\n".join(parts)
+        if not results:
+            return ""
+        return results[0]["output"] or ""
+
     def execute(
         self,
         project: str,
@@ -82,6 +116,7 @@ class DeployService:
         k8s_deploy: str = "",
         k8s_container: str = "",
         env_file: str = "",
+        deploy_note: str = "",
         bot_id: int = 0,
         lang: str = "en",
         callback: Callable | None = None,
@@ -90,7 +125,9 @@ class DeployService:
         """批量部署到一台或多台服务器。
         user 参数：当前登录用户信息 dict（含 role / permissions / username），
                  用于部署前的二次权限校验与审计日志 triggered_by 字段，
-                 传入 None 时跳过校验（仅限内部可信调用）。"""
+                 传入 None 时跳过校验（仅限内部可信调用）。
+        v1.3.1 起：部署开始插入 running 记录（并发锁 + 取消依据），结束时更新
+                 状态 / 耗时 / 分阶段耗时 / 说明。"""
         # ── 部署时二次权限校验（防御深度）──
         if user is not None:
             enforce_deploy_perm(user, deploy_type)
@@ -102,6 +139,13 @@ class DeployService:
 
         image = f"{settings.harbor_registry}/{harbor_repo}:{tag}"
         project_key = self._ci.resolve_project_key(project) or project
+
+        # ── 并发锁：同一项目同时只允许一个进行中部署 ──
+        running = find_running_deploy(self._db, project_key)
+        if running:
+            raise ValueError(
+                f"项目 '{project_key}' 已有部署进行中 (deploy #{running['deploy_id']})，请等待完成或取消后再试"
+            )
 
         options = _parse_command_options(commands) if commands else {}
         if yaml_content:
@@ -123,94 +167,106 @@ class DeployService:
             raise ValueError("No available target servers")
 
         deployer = deployer_registry.create(deploy_type)
-        results = []
 
+        # ── 插入 running 记录 + 注册取消信号 ──
+        deploy_id, row_id = start_deploy_record(
+            self._db, deploy_type=deploy_type, project=project_key, tag=tag,
+            image=image, triggered_by=triggered_by, deploy_note=deploy_note,
+        )
+        deploy_run_manager.register(deploy_id)
+        set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
+
+        results = []
+        stage_times = []
         total = len(targets)
         is_batch = total > 1
+        started = time.time()
 
-        for i, (sid, target) in enumerate(targets):
-            target.path = target_path
-            target.mode = deploy_mode
-            target.options = options
+        try:
+            for i, (sid, target) in enumerate(targets):
+                target.path = target_path
+                target.mode = deploy_mode
+                target.options = options
 
-            # 批量部署时在 SSE 流中显示服务器分隔线
-            if is_batch:
-                host_label = f"#{sid} {target.host}"
-                if callback:
-                    callback(S("deploy_log.batch_server_start", current=i + 1, total=total, host=host_label))
+                t0 = time.time()
+                # 批量部署时在 SSE 流中显示服务器分隔线
+                if is_batch:
+                    host_label = f"#{sid} {target.host}"
+                    if callback:
+                        callback(S("deploy_log.batch_server_start", current=i + 1, total=total, host=host_label))
 
-            error = deployer.validate(target)
-            if error:
-                results.append({"server_id": sid, "host": target.host, "status": "failed", "output": error})
+                error = deployer.validate(target)
+                if error:
+                    results.append({"server_id": sid, "host": target.host, "status": "failed", "output": error})
+                    stage_times.append({"server_id": sid, "host": target.host, "status": "failed", "duration_ms": int((time.time() - t0) * 1000)})
+                    if is_batch and callback:
+                        callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail"))
+                    continue
+
+                try:
+                    r = deployer.deploy(target, image, project_key, tag, callback=callback)
+                    results.append({"server_id": sid, "host": target.host, "status": r.status, "output": r.output})
+                except DeployCancelled:
+                    raise
+                except Exception as e:
+                    logger.error("Deploy service failed", exc_info=e)
+                    results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
+
+                stage_times.append({"server_id": sid, "host": target.host, "status": results[-1]["status"], "duration_ms": int((time.time() - t0) * 1000)})
                 if is_batch and callback:
-                    callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail"))
-                continue
+                    callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result=results[-1]["status"]))
 
-            try:
-                r = deployer.deploy(target, image, project_key, tag, callback=callback)
-                results.append({"server_id": sid, "host": target.host, "status": r.status, "output": r.output})
-            except Exception as e:
-                logger.error("Deploy service failed", exc_info=e)
-                results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
+            duration_ms = int((time.time() - started) * 1000)
 
-            if is_batch and callback:
-                callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result=results[-1]["status"]))
-
-        # 记录日志（一次部署一条记录，批量时合并输出和状态）
-        with self._db.conn() as conn:
-            row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
-            deploy_id = row["next_id"] if row else 1
-
-            if is_batch:
-                # 批量：合并为一条记录
-                target_str = ", ".join(
-                    f"[{i + 1}/{total}] #{r['server_id']} {r['host']}"
-                    for i, r in enumerate(results)
-                )
-                parts = []
-                for i, r in enumerate(results):
-                    parts.append(f"━━━ [{i + 1}/{total}] #{r['server_id']} {r['host']} ({r['status']}) ━━━")
-                    parts.append(r["output"] or "")
-                merged_output = "\n".join(parts)[:settings.log_truncate_chars]
-                # 整体状态
-                oks = sum(1 for r in results if r["status"] == "ok")
-                if oks == len(results):
-                    status = "ok"
-                elif oks == 0:
-                    status = "failed"
-                else:
-                    status = "partial"
-                conn.execute(
-                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output,triggered_by) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (deploy_id, project_key, tag, image, deploy_type, target_str, status, merged_output, triggered_by),
-                )
+            # 整体状态
+            oks = sum(1 for r in results if r["status"] == "ok")
+            if oks == len(results):
+                status = "ok"
+            elif oks == 0:
+                status = "failed"
             else:
-                r = results[0]
-                target_label = f"#{r['server_id']} {r['host']}"
-                output = r["output"][:settings.log_truncate_chars] if r["output"] else ""
-                conn.execute(
-                    "INSERT INTO cd_deploy_logs (deploy_id,project,tag,image,deploy_type,target,status,output,triggered_by) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (deploy_id, project_key, tag, image, deploy_type, target_label, r["status"], output, triggered_by),
-                )
+                status = "partial"
 
-        # 通知
-        ok_count = sum(1 for r in results if r["status"] == "ok")
-        if ok_count == len(results):
-            status = "✅ Success"
-        elif ok_count > 0:
-            status = f"⚠️ Partial success {ok_count}/{len(results)}"
-        else:
-            status = "❌ Failed"
-        targets = []
-        for r in results:
-            label = "docker" if deploy_mode == "docker" else "ssh"
-            targets.append(f"{label}[{r.get('host', '?')}]")
-        notify_deploy(self._db, bot_id, tag, project_key, image, status,
-                      deploy_mode or deploy_type, targets, lang=lang)
+            finish_deploy_record(
+                self._db, row_id, status=status,
+                target=self._build_target_str(results, is_batch, total),
+                output=self._build_output(results, is_batch, total),
+                duration_ms=duration_ms, stage_times=stage_times,
+            )
 
-        return {"success": ok_count == len(results), "deploy_id": deploy_id, "results": results, "message": status}
+            # 通知
+            if oks == len(results):
+                status_label = "✅ Success"
+            elif oks > 0:
+                status_label = f"⚠️ Partial success {oks}/{len(results)}"
+            else:
+                status_label = "❌ Failed"
+            notify_targets = []
+            for r in results:
+                label = "docker" if deploy_mode == "docker" else "ssh"
+                notify_targets.append(f"{label}[{r.get('host', '?')}]")
+            notify_deploy(self._db, bot_id, tag, project_key, image, status_label,
+                          deploy_mode or deploy_type, notify_targets, lang=lang)
+
+            return {"success": oks == len(results), "deploy_id": deploy_id, "results": results, "message": status_label}
+
+        except DeployCancelled:
+            duration_ms = int((time.time() - started) * 1000)
+            cancelled_output = self._build_output(results, is_batch, total)
+            if cancelled_output:
+                cancelled_output += "\n\n━━━ 部署已被用户取消 ━━━"
+            else:
+                cancelled_output = "部署已被用户取消"
+            finish_deploy_record(
+                self._db, row_id, status="terminated",
+                target=self._build_target_str(results, is_batch, total),
+                output=cancelled_output, duration_ms=duration_ms, stage_times=stage_times,
+            )
+            return {"success": False, "deploy_id": deploy_id, "cancelled": True,
+                    "results": results, "message": "❌ Cancelled"}
+        finally:
+            deploy_run_manager.unregister(deploy_id)
+            clear_cancel_checker()
 
     def list_logs(self, project: str = "", page: int = 1, page_size: int = 15) -> dict:
         """查询部署记录（分页）"""

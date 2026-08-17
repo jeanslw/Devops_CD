@@ -3,6 +3,7 @@
 import ipaddress
 import logging
 import shlex
+import time
 from contextlib import suppress
 from urllib.parse import urlparse
 
@@ -14,6 +15,15 @@ from backend.auth import enforce_deploy_perm, get_db, require_perm
 from backend.config import settings
 from backend.crypto import decrypt
 from backend.database import Database
+from backend.deploy_run import (
+    DeployCancelled,
+    clear_cancel_checker,
+    deploy_run_manager,
+    find_running_deploy,
+    finish_deploy_record,
+    set_cancel_checker,
+    start_deploy_record,
+)
 from backend.deployers.registry import deployer_registry
 from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.services.ci_service import CiService
@@ -31,6 +41,7 @@ class K8sDeployRequest(BaseModel):
     path: str = ""              # YAML path for kubectl mode
     api_url: str = ""           # Argo CD / Flux API base
     k8s_ns: str = ""            # 留空不传 -n，namespace 在 YAML 中声明
+    deploy_note: str = ""       # 部署说明（记录到 cd_deploy_logs.deploy_note）
     bot_id: int = 0
     lang: str = "en"           # 前端当前语言 en/zh
 
@@ -63,16 +74,57 @@ def _resolve_image(db, req):
     return image, project_key, project_short
 
 
-def _record_deploy(db, project_key, tag, image, cd_type, host, ok, output, triggered_by: str = ""):
-    """记录部署日志到数据库"""
-    with db.conn() as conn:
-        conn.execute(
-            "INSERT INTO cd_deploy_logs (project,tag,image,deploy_type,target,status,output,triggered_by) VALUES (?,?,?,?,?,?,?,?)",
-            (project_key, tag, image, f"k8s/{cd_type}", host,
-             "ok" if ok else "failed",
-             output[:settings.log_truncate_chars] if output else "",
-             triggered_by or ""),
+def _deploy_k8s_core(db, req, user, image, project_key, project_short, host, port,
+                     user_srv, pwd, ssh_key, callback=None):
+    """执行 K8S 部署核心流程：并发锁 + running 记录 + 取消 + 耗时。
+
+    返回 deployer 的结果 dict；被取消时返回 {"success": False, "cancelled": True}。
+    通知由调用方负责（区分同步/流式），避免阻塞 SSE 结束信号。
+    """
+    # ── 并发锁：同一项目同时只允许一个进行中部署 ──
+    running = find_running_deploy(db, project_key)
+    if running:
+        raise ValidationError(
+            f"项目 '{project_key}' 已有部署进行中 (deploy #{running['deploy_id']})，请等待完成或取消后再试",
+            error_key="errors.deploy_busy",
         )
+
+    deployer = deployer_registry.create(f"k8s/{req.cd_type}")
+    if deployer is None:
+        raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
+
+    deploy_type = f"k8s/{req.cd_type}"
+    deploy_id, row_id = start_deploy_record(
+        db, deploy_type=deploy_type, project=project_key, tag=req.tag,
+        image=image, triggered_by=user.get("username", ""),
+        deploy_note=req.deploy_note, target=host,
+    )
+    deploy_run_manager.register(deploy_id)
+    set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
+    started = time.time()
+
+    try:
+        result = deployer.deploy(req, image, project_short, host, port, user_srv, pwd, ssh_key, callback=callback)
+        ok = bool(result.get("success"))
+        status = "ok" if ok else "failed"
+        duration_ms = int((time.time() - started) * 1000)
+        finish_deploy_record(
+            db, row_id, status=status, target=host,
+            output=result.get("output", "") or "", duration_ms=duration_ms,
+            stage_times=[{"host": host, "status": status, "duration_ms": duration_ms}],
+        )
+        return result
+    except DeployCancelled:
+        duration_ms = int((time.time() - started) * 1000)
+        finish_deploy_record(
+            db, row_id, status="terminated", target=host,
+            output="部署已被用户取消", duration_ms=duration_ms,
+            stage_times=[{"host": host, "status": "terminated", "duration_ms": duration_ms}],
+        )
+        return {"success": False, "output": "部署已被用户取消", "cancelled": True}
+    finally:
+        deploy_run_manager.unregister(deploy_id)
+        clear_cancel_checker()
 
 
 def _notify_k8s(db, bot_id, tag, project_key, host, cd_type, image, ok, lang="en"):
@@ -308,15 +360,12 @@ def deploy_k8s(
     image, project_key, project_short = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
 
-    # 路由到对应 deployer（统一通过注册表）
-    deployer = deployer_registry.create(f"k8s/{req.cd_type}")
-    if deployer is None:
-        raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
-    result = deployer.deploy(req, image, project_short, host, port, user_srv, pwd, ssh_key)
+    result = _deploy_k8s_core(db, req, user, image, project_key, project_short,
+                              host, port, user_srv, pwd, ssh_key)
 
-    # 记录日志 + 通知
-    _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"], user.get("username", ""))
-    _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"], req.lang)
+    if not result.get("cancelled"):
+        _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image,
+                    bool(result.get("success")), req.lang)
 
     return result
 
@@ -358,17 +407,16 @@ async def deploy_k8s_stream(
             def log_callback(message):
                 log_queue.put(message)
 
-            deployer = deployer_registry.create(f"k8s/{req.cd_type}")
-            if deployer is None:
-                raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
-            result = deployer.deploy(req, image, project_short, host, port, user_srv, pwd, ssh_key, callback=log_callback)
+            result = _deploy_k8s_core(db, req, user, image, project_key, project_short,
+                                      host, port, user_srv, pwd, ssh_key, callback=log_callback)
 
             deploy_result = {"success": True, "data": result}
-            # 立即通知 SSE 流部署完成，避免 DB/通知操作阻塞 UI
+            # 立即通知 SSE 流部署完成，避免通知操作阻塞 UI
             log_queue.put(None)
 
-            _record_deploy(db, project_key, req.tag, image, req.cd_type, host, result["success"], result["output"], user.get("username", ""))
-            _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image, result["success"], req.lang)
+            if not result.get("cancelled"):
+                _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image,
+                            bool(result.get("success")), req.lang)
         except Exception as e:
             logger.error("K8s deploy failed", exc_info=e)
             deploy_result = {"success": False, "error": str(e)}

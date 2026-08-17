@@ -7,7 +7,7 @@ from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.base import DeployTarget, ssh_connect
 from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log
+from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, check_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,7 @@ class HelmDeployer(K8sSubDeployer):
                 f"{ns_flag} --wait --timeout {settings.k8s_helm_timeout}s"
             )
             _log(callback, S("deploy_log.helm_cmd", cmd=helm_cmd))
+            check_cancelled()
             helm_out, helm_err, exit_code = _exec_exit(ssh, helm_cmd, timeout=settings.k8s_helm_timeout + 10)
             if helm_out:
                 _log(callback, helm_out)

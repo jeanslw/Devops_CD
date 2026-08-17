@@ -6,6 +6,14 @@ import yaml
 
 from backend.config import settings
 from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具（含 errors="replace"）
+from backend.deploy_run import DeployCancelled, get_cancel_checker
+
+
+def check_cancelled() -> None:
+    """轮询部署取消信号，已取消则抛 DeployCancelled（穿透 except Exception）。"""
+    check = get_cancel_checker()
+    if check is not None and check():
+        raise DeployCancelled()
 
 
 def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:

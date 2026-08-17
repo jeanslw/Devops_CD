@@ -5,13 +5,14 @@ import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from backend.auth import enforce_deploy_perm, get_db, require_perm
+from backend.auth import enforce_deploy_perm, get_current_user, get_db, require_perm
 from backend.crypto import decrypt
 from backend.database import Database
+from backend.deploy_run import mark_deploy_cancelled
 from backend.deployers import DeployTarget
 from backend.deployers.registry import deployer_registry
 from backend.exceptions import NotFoundError, ValidationError
-from backend.models import DeployRequest
+from backend.models import CancelRequest, DeployRequest
 from backend.services.deploy_service import DeployService
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ def deploy(
             k8s_deploy=req.k8s_deploy,
             k8s_container=req.k8s_container,
             env_file=req.env_file,
+            deploy_note=req.deploy_note,
             bot_id=req.bot_id,
             lang=req.lang,
             user=user,
@@ -48,6 +50,43 @@ def deploy(
     except ValueError as e:
         logger.error("Deploy validation failed", exc_info=e)
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
+
+
+@router.post("/deploy/cancel")
+def deploy_cancel(
+    req: CancelRequest,
+    db: Database = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """取消进行中的部署 — 按 deploy_id 或 project 定位 running 记录。"""
+    if not req.deploy_id and not req.project:
+        raise ValidationError("请提供 deploy_id 或 project", error_key="errors.deploy_validation")
+
+    with db.conn() as conn:
+        if req.deploy_id:
+            row = conn.execute(
+                "SELECT deploy_id, deploy_type FROM cd_deploy_logs "
+                "WHERE deploy_id=? AND status='running' ORDER BY id DESC LIMIT 1",
+                (req.deploy_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT deploy_id, deploy_type FROM cd_deploy_logs "
+                "WHERE project=? AND status='running' ORDER BY id DESC LIMIT 1",
+                (req.project,),
+            ).fetchone()
+
+    if not row:
+        return {"success": False, "message": "未找到进行中的部署（可能已完成）"}
+
+    # 权限校验：按该部署的 deploy_type 判断（k8s 记录形如 "k8s/kubectl"）
+    deploy_type = row["deploy_type"] or "ssh"
+    if deploy_type.startswith("k8s/"):
+        enforce_deploy_perm(user, "k8s", deploy_type.split("/", 1)[1])
+    else:
+        enforce_deploy_perm(user, deploy_type)
+
+    return mark_deploy_cancelled(db, row["deploy_id"])
 
 
 @router.post("/stop")
@@ -150,6 +189,7 @@ async def deploy_stream(
                 k8s_deploy=req.k8s_deploy,
                 k8s_container=req.k8s_container,
                 env_file=req.env_file,
+                deploy_note=req.deploy_note,
                 bot_id=req.bot_id,
                 callback=log_callback,
                 lang=req.lang,

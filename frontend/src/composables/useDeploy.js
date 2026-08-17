@@ -1,9 +1,11 @@
 import { ref, reactive } from 'vue'
 import { useAuth } from './useAuth'
 import { useSseStream } from './useSseStream'
+import { useToast } from './useToast'
 
 export function useDeploy() {
   const auth = useAuth()
+  const { toast } = useToast()
   const { output, loading, stream } = useSseStream()
 
   const projects = ref([])
@@ -93,11 +95,29 @@ export function useDeploy() {
     loadTags(selectedProject.value, delta)
   }
 
+  async function cancelDeploy(project) {
+    if (!project) return { success: false, message: '' }
+    try {
+      const r = await fetch('/api/deploy/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...auth.A() },
+        body: JSON.stringify({ project })
+      })
+      const d = await r.json()
+      if (d.success) {
+        output.value += '\n━━━ ' + (d.message || 'deploy cancelled') + ' ━━━'
+      }
+      return d
+    } catch (e) {
+      return { success: false, message: e.message }
+    }
+  }
+
   return {
     projects, selectedProject, pipelineData, pipelineLoading,
     tagState, selectedTag,
     output, loading,
     loadProjects, loadPipeline, changeProject, loadTags, changeTagPage,
-    stream
+    stream, cancelDeploy
   }
 }

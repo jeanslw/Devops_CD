@@ -13,6 +13,7 @@ from backend.deployers.k8s_utils import (
     _kubectl_pods,
     _log,
     _render_k8s_yaml,
+    check_cancelled,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,7 @@ class KubectlDeployer(K8sSubDeployer):
             if not is_first_deploy:
                 cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)}")
             for i, c in enumerate(cmds):
+                check_cancelled()
                 _log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
                 o, e, ec = _exec_exit(ssh, c)
                 if o:
@@ -143,6 +145,7 @@ class KubectlDeployer(K8sSubDeployer):
                     return {"success": False, "output": f"{before_text}\n\nStep {i+1} failed (exit {ec}):\n{o or e}"}
 
             # ── rollout status 等待部署完成 ──
+            check_cancelled()
             _log(callback, S("deploy_log.waiting_pod"))
             rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s"
             rollout_out, rollout_err, rollout_ec = _exec_exit(ssh, rollout_cmd, timeout=settings.k8s_rollout_timeout + 30)

@@ -8,7 +8,7 @@ from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.base import DeployTarget, ssh_connect
 from backend.deployers.k8s_base import K8sSubDeployer
-from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, _ssh_cmd
+from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, _ssh_cmd, check_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,7 @@ class FluxCDDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.flux_wait"))
             flux_reacted = False
             for i in range(9):  # 9 × 10s = 90s
+                check_cancelled()
                 time.sleep(10)
 
                 # 从第 4 轮开始检查 Flux 资源是否报错

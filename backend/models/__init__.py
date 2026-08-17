@@ -1,6 +1,7 @@
 from .requests import (
     BotRequest,
     BuildTriggerRequest,
+    CancelRequest,
     ChangePasswordRequest,
     DeployRequest,
     LoginRequest,
@@ -14,6 +15,7 @@ from .requests import (
 __all__ = [
     "BotRequest",
     "BuildTriggerRequest",
+    "CancelRequest",
     "ChangePasswordRequest",
     "DeployRequest",
     "LoginRequest",

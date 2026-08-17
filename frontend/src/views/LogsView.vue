@@ -2,11 +2,11 @@
   <div class="card">
     <h3>{{ $t('logs.title') }}</h3>
     <table>
-      <thead><tr><th>{{ $t('logs.id') }}</th><th>{{ $t('logs.time') }}</th><th>{{ $t('logs.project') }}</th><th>{{ $t('logs.tag') }}</th><th>{{ $t('logs.method') }}</th><th>{{ $t('logs.status') }}</th><th>{{ $t('logs.operator') }}</th><th>{{ $t('logs.detail') }}</th></tr></thead>
+      <thead><tr><th>{{ $t('logs.id') }}</th><th>{{ $t('logs.time') }}</th><th>{{ $t('logs.project') }}</th><th>{{ $t('logs.tag') }}</th><th>{{ $t('logs.method') }}</th><th>{{ $t('logs.status') }}</th><th>{{ $t('logs.duration') }}</th><th>{{ $t('logs.note') }}</th><th>{{ $t('logs.operator') }}</th><th>{{ $t('logs.detail') }}</th></tr></thead>
       <tbody>
-        <tr v-if="loading"><td colspan="8" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+        <tr v-if="loading"><td colspan="10" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
         <template v-else-if="logs.length === 0">
-          <tr><td colspan="8" style="text-align:center;color:#888">{{ $t('logs.noRecords') }}</td></tr>
+          <tr><td colspan="10" style="text-align:center;color:#888">{{ $t('logs.noRecords') }}</td></tr>
         </template>
         <template v-else v-for="(l, idx) in logs" :key="l.id">
           <tr style="cursor:pointer" @click="toggleDetail(idx)">
@@ -16,13 +16,16 @@
             <td>{{ l.tag }}</td>
             <td>{{ l.deploy_type }}</td>
             <td>
-              <span class="badge" :class="'badge-' + (l.status === 'ok' ? 'ok' : l.status === 'failed' ? 'err' : 'pend')">{{ l.status }}</span>
+              <span class="badge" :class="badgeClass(l.status)">{{ l.status }}</span>
+              <button v-if="l.status === 'running'" class="btn btn-sm btn-orange" style="margin-left:6px" @click.stop="cancelRun(l)">{{ $t('deploy.cancel') }}</button>
             </td>
+            <td>{{ fmtDuration(l.duration_ms) }}</td>
+            <td>{{ l.deploy_note || '-' }}</td>
             <td>{{ l.triggered_by || '-' }}</td>
             <td class="output-preview">{{ l.output || '' }}</td>
           </tr>
           <tr v-if="expandedIdx === idx" class="log-detail">
-            <td colspan="8">
+            <td colspan="10">
               <div class="target-block">
                 <pre class="output-code">{{ escapeHtml(l.output || $t('logs.noOutput')) }}</pre>
               </div>
@@ -48,9 +51,13 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
+import { useToast } from '@/composables/useToast'
 
 const auth = useAuth()
+const { t } = useI18n()
+const { toast } = useToast()
 
 const logs = ref([])
 const loading = ref(true)
@@ -75,6 +82,43 @@ function toggleDetail(idx) {
 function escapeHtml(s) {
   if (!s) return ''
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function badgeClass(status) {
+  switch (status) {
+    case 'ok': return 'badge-ok'
+    case 'failed': return 'badge-err'
+    case 'running': return 'badge-running'
+    case 'terminated': return 'badge-gray'
+    case 'partial': return 'badge-blue'
+    default: return 'badge-pend'
+  }
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '-'
+  if (ms < 1000) return ms + 'ms'
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return s + 's'
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return m + 'm ' + r + 's'
+}
+
+async function cancelRun(l) {
+  if (!confirm(t('deploy.confirmCancel'))) return
+  try {
+    const r = await fetch('/api/deploy/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.A() },
+      body: JSON.stringify({ deploy_id: l.deploy_id })
+    })
+    const d = await r.json()
+    toast(d.success ? t('deploy.cancelled') : t('deploy.cancelFailed'), d.success)
+    if (d.success) loadData(page.value)
+  } catch (e) {
+    toast(t('deploy.cancelFailed'), false)
+  }
 }
 
 async function loadData(p = 1) {
