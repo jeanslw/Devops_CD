@@ -21,76 +21,162 @@ def _known_hosts_file() -> str:
     return os.path.join(cd_dir, "known_hosts")
 
 
-def trust_ssh_host(host: str, port: int, username: str = "", password: str = "", ssh_key: str = "", timeout: int = 30) -> dict:
-    """信任 SSH 主机，获取并保存主机密钥。返回 {success, key_fingerprint, message}"""
+def _save_first_host_key(host: str, port: int, timeout: int) -> None:
+    """通过 Transport 层取远端 host key 并存入 known_hosts（无 AutoAddPolicy）。
+
+    仅用于 trust=True 场景（用户主动点"测试连接/信任"）。不验证凭据，
+    只取 host key。调用方需要在保存后重新发起 SSH 连接。
+    """
+    import socket
+
     import paramiko
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    tmp_file = None
+
+    sock: socket.socket | None = None
+    transport: paramiko.Transport | None = None
     try:
-        kwargs = {"hostname": host, "port": port, "timeout": timeout}
-        if ssh_key:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
-                tmp.write(ssh_key)
-                tmp_file = tmp.name
-            os.chmod(tmp_file, 0o600)
-            kwargs["key_filename"] = tmp_file
-            kwargs["username"] = username or "root"
-        elif password:
-            kwargs["username"] = username or "root"
-            kwargs["password"] = password
-        else:
-            kwargs["username"] = username or "root"
-
-        ssh.connect(**kwargs)  # type: ignore[arg-type]
-
-        # 获取主机指纹
-        transport = ssh.get_transport()
-        if not transport:
-            raise RuntimeError("无法获取 SSH 传输层")
+        sock = socket.create_connection((host, port), timeout=timeout)
+        transport = paramiko.Transport(sock)
+        transport.start_client(timeout=timeout)
         key = transport.get_remote_server_key()
-        import base64
-        from hashlib import sha256
+        if not key:
+            raise RuntimeError("无法获取远端 SSH 主机密钥")
+
+        kh_file = _known_hosts_file()
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        if os.path.exists(kh_file):
+            client.load_host_keys(kh_file)
+        host_keys = client.get_host_keys()
+        host_keys.add(host, key.get_name(), key)
+        if f"[{host}]:{port}" != host:
+            host_keys.add(f"[{host}]:{port}", key.get_name(), key)
+        client.save_host_keys(kh_file)
+        client.close()
+    finally:
+        if transport is not None:
+            with suppress(Exception):
+                transport.close()
+        if sock is not None:
+            with suppress(Exception):
+                sock.close()
+
+
+def trust_ssh_host(host: str, port: int, username: str = "", password: str = "", ssh_key: str = "", timeout: int = 30) -> dict:
+    """信任 SSH 主机，获取并保存主机密钥。返回 {success, key_fingerprint, message}
+
+    使用 Transport 层直接握手取 host key，避免 AutoAddPolicy（消除中间人攻击告警）。
+    流程：
+      1. 匿名 Transport 层握手 → 取 host key（无需凭据）
+      2. 保存 host key 到 known_hosts（信任主机的核心目的，到此已完成）
+      3. 有凭据则顺便验证可登录；无凭据或凭据失败仅附加 warning（不影响信任成功）
+    """
+    import base64
+    import paramiko
+    import socket
+    from hashlib import sha256
+
+    key = None
+    sock = None
+    transport = None
+    tmp_file = None
+    ssh = None
+    try:
+        # 步骤 1：通过 Transport 层直接握手获取远端 host key（无需凭据，无 AutoAddPolicy）
+        sock = socket.create_connection((host, port), timeout=timeout)
+        transport = paramiko.Transport(sock)
+        transport.start_client(timeout=timeout)
+        key = transport.get_remote_server_key()
+        transport.close()
+        transport = None
+        sock = None
+
+        if not key:
+            raise RuntimeError("无法获取远端 SSH 主机密钥")
+
+        # 计算指纹
         fp = sha256(key.asbytes()).digest()
         fingerprint = base64.b64encode(fp).decode().rstrip("=")
 
-        # 保存到 known_hosts
+        # 步骤 2：写入 known_hosts（使用 RejectPolicy + 手动 load_host_keys，不使用 AutoAddPolicy）
         kh_file = _known_hosts_file()
-        ssh.save_host_keys(kh_file)
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        if os.path.exists(kh_file):
+            client.load_host_keys(kh_file)
+        host_key_entry = client.get_host_keys()
+        host_key_entry.add(host, key.get_name(), key)
+        if f"[{host}]:{port}" != host:
+            host_key_entry.add(f"[{host}]:{port}", key.get_name(), key)
+        client.save_host_keys(kh_file)
+        client.close()
+
+        # 步骤 3：有凭据则顺便验证可连通；失败只记警告（信任本身已成功）
+        warning = ""
+        if ssh_key or password:
+            try:
+                connect_kwargs = {"hostname": host, "port": port, "timeout": timeout, "allow_agent": False, "look_for_keys": False}
+                if ssh_key:
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
+                        tmp.write(ssh_key)
+                        tmp_file = tmp.name
+                    os.chmod(tmp_file, 0o600)
+                    connect_kwargs["key_filename"] = tmp_file
+                    connect_kwargs["username"] = username or "root"
+                else:  # password
+                    connect_kwargs["username"] = username or "root"
+                    connect_kwargs["password"] = password
+
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+                ssh.load_host_keys(kh_file)
+                ssh.connect(**connect_kwargs)  # type: ignore[arg-type]
+            except Exception as e:
+                logger.warning("trust_ssh_host: host key saved but credential check failed", exc_info=e)
+                if isinstance(e, paramiko.AuthenticationException):
+                    warning = "（主机密钥已保存，但凭据验证失败，请检查用户名/密码/密钥）"
+                else:
+                    warning = f"（主机密钥已保存，但连接验证失败：{e}）"
 
         return {
             "success": True,
             "key_fingerprint": f"SHA256:{fingerprint}",
-            "message": f"已信任主机 {host}:{port}，指纹: SHA256:{fingerprint}"
+            "message": f"已信任主机 {host}:{port}，指纹: SHA256:{fingerprint}{warning}"
         }
     except Exception as e:
         logger.error("SSH host trust failed", exc_info=e)
-        return {"success": False, "message": "连接失败，请检查主机配置或凭据"}
+        msg = str(e) if isinstance(e, (paramiko.AuthenticationException, paramiko.SSHException, OSError, RuntimeError)) else "连接失败，请检查主机是否可达"
+        return {"success": False, "message": msg}
     finally:
         if tmp_file:
             with suppress(FileNotFoundError):
                 os.unlink(tmp_file)
-        ssh.close()
+        if transport is not None:
+            with suppress(Exception):
+                transport.close()
+        if sock is not None:
+            with suppress(Exception):
+                sock.close()
+        if ssh is not None:
+            with suppress(Exception):
+                ssh.close()
 
 
 def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     """统一的 SSH 连接。
-    优先级: ssh_key > password > 系统默认 key
-    trust=True: 自动信任未知主机（用于首次添加服务器时验证）
+    优先级: ssh_key > password > system 默认 key
+    全程使用 RejectPolicy + known_hosts，无 AutoAddPolicy（避免中间人攻击）。
+    unknown host: 用户必须先调用 trust_ssh_host 把 host key 存入 ~/.cd_service/known_hosts。
     """
     import paramiko
 
     from backend.config import settings
     ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
 
-    if trust or settings.ssh_auto_trust:
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    else:
-        ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-        # 加载已信任的主机密钥
-        kh_file = _known_hosts_file()
-        if os.path.exists(kh_file):
-            ssh.load_host_keys(kh_file)
+    # 加载已信任的主机密钥（trust=True 和 正常部署路径都用 known_hosts）
+    kh_file = _known_hosts_file()
+    if os.path.exists(kh_file):
+        ssh.load_host_keys(kh_file)
 
     kwargs = {"hostname": target.host, "port": target.port, "username": target.user, "timeout": timeout}
     tmp_file = None
@@ -105,11 +191,22 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
         kwargs["password"] = target.password
 
     try:
-        ssh.connect(**kwargs)  # type: ignore[arg-type]
-        # 连接成功后，将新主机密钥保存到 known_hosts（如果用了 AutoAddPolicy）
-        if trust or settings.ssh_auto_trust:
-            kh_file = _known_hosts_file()
-            ssh.save_host_keys(kh_file)
+        try:
+            ssh.connect(**kwargs)  # type: ignore[arg-type]
+        except paramiko.ssh_exception.SSHException as e:
+            # RejectPolicy 不认识 host 时会抛 SSHException("Server ... not found in known_hosts")
+            # 仅在用户明确 trust=True（前端点了"测试连接/信任"按钮）时，先存 host key 再重试
+            if trust and "not found in known_hosts" in str(e).lower():
+                _save_first_host_key(target.host, target.port, timeout)
+                ssh.close()
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+                kh_file = _known_hosts_file()
+                if os.path.exists(kh_file):
+                    ssh.load_host_keys(kh_file)
+                ssh.connect(**kwargs)  # type: ignore[arg-type]
+            else:
+                raise
 
         if settings.ssh_keepalive > 0:
             transport = ssh.get_transport()

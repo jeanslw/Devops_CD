@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     # ── SSH（可选）──
     ssh_timeout: int = 30
     ssh_keepalive: int = 30          # 0 关闭 keepalive
-    ssh_auto_trust: bool = True       # True: 自动信任未知主机（生产环境可设为 False 并配合 known_hosts）
+    ssh_auto_trust: bool = False      # (已废弃) 保留字段仅为兼容旧配置，代码中始终使用 RejectPolicy + known_hosts
+                                       # 用户必须先调用 trust_ssh_host 把 host key 存入 ~/.cd_service/known_hosts
 
     # ── Docker 部署（可选）──
     container_restart_policy: str = "always"

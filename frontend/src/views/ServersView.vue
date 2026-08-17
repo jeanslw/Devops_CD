@@ -95,6 +95,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
+import { confirm } from '@/composables/useConfirm'
 
 const auth = useAuth()
 const { t } = useI18n()
@@ -229,7 +230,7 @@ async function edit(s) {
 }
 
 async function del(id) {
-  if (!confirm(t('servers.confirmDelete'))) return
+  if (!await confirm({ text: t('servers.confirmDelete'), danger: true })) return
   const r = await fetch(`/api/servers/${id}`, { method: 'DELETE', headers: auth.A() })
   if (auth.handle401(r)) return
   toast(t('servers.deleted'), true)
@@ -251,7 +252,10 @@ async function testConnection(trust = false) {
   }
   testing.value = true
   try {
-    const url = `/api/servers/test-connection${trust ? '?trust=true' : ''}`
+    const qs = []
+    if (trust) qs.push('trust=true')
+    if (editId.value) qs.push(`sid=${encodeURIComponent(editId.value)}`)
+    const url = `/api/servers/test-connection${qs.length ? '?' + qs.join('&') : ''}`
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...auth.A() },
@@ -276,7 +280,7 @@ async function testConnection(trust = false) {
 }
 
 async function trustServer(id) {
-  if (!confirm(t('servers.confirmTrust'))) return
+  if (!await confirm({ text: t('servers.confirmTrust') })) return
   const r = await fetch(`/api/servers/${id}/trust`, {
     method: 'POST',
     headers: auth.A()
