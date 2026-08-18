@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.4.0 (2026-08-19) — Custom_Push project read-only display
+
+### New Features
+- **Custom_Push project adaptation** — Build history view now detects `custom_push` projects and renders them read-only: the "Trigger Build" button is hidden and triggering is guarded at the action layer, since custom_push results are pushed by user CI (Devops-Glue only receives the report).
+- **Finish time column** — Build records now show finish time (`updated_at`) instead of create time, aligned with the push-based report lifecycle.
+
+### Changes
+- **Locale** — "Time" → "Finish Time" (EN), "时间" → "完成时间" (ZH).
+
+---
+
 ## v1.3.1 (2026-08-17) — Deploy cancel mechanism, concurrency lock, structured timing, UI refinements
 
 ### New Features

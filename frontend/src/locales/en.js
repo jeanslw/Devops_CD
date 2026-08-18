@@ -105,7 +105,7 @@ export default {
     pipelineId: 'Pipeline',
     ref: 'Branch',
     status: 'Status',
-    created: 'Time',
+    created: 'Finish Time',
     viewLog: 'Log',
     noBuilds: 'No build records',
     hint: 'Select a project to view build history',

@@ -105,7 +105,7 @@ export default {
     pipelineId: 'Pipeline',
     ref: '分支',
     status: '状态',
-    created: '时间',
+    created: '完成时间',
     viewLog: '📋 日志',
     noBuilds: '暂无构建记录',
     hint: '请选择一个项目查看构建历史',

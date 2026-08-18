@@ -10,7 +10,7 @@
           {{ p.job_name }}
         </option>
       </select>
-      <button v-if="auth.canTriggerBuild()" class="btn btn-green" :disabled="!selectedProject" @click="showTrigger = true">
+      <button v-if="auth.canTriggerBuild() && !isCustomPush" class="btn btn-green" :disabled="!selectedProject" @click="showTrigger = true">
         {{ $t('ciBuild.triggerBuild') }}
       </button>
       <button class="btn btn-sm" @click="refreshAll" :disabled="loading || buildsLoading">
@@ -40,7 +40,7 @@
               <td><strong>#{{ b.id || b.iid }}</strong></td>
               <td>{{ b.ref || b.branch || '—' }}</td>
               <td><span class="badge" :class="statusClass(b.status)">{{ b.status }}</span></td>
-              <td class="time-cell">{{ formatTime(b.created_at) }}</td>
+              <td class="time-cell">{{ formatTime(b.updated_at) }}</td>
               <td class="action-cell">
                 <button class="btn btn-sm btn-blue" @click="viewLog(b)">{{ $t('ciBuild.viewLog') }}</button>
                 <template v-if="buildProvider === 'gitlab_ci' && auth.canTriggerBuild()">
@@ -185,11 +185,13 @@ const triggerVars = reactive([])
 const triggering = ref(false)
 const branches = ref([])
 const loadingParams = ref(true)  // 初始为 true，避免弹窗首帧闪现"未定义参数"
-// 当前项目的 CI 提供商（jenkins / gitlab_ci）
+// 当前项目的 CI 提供商（jenkins / gitlab_ci / custom_push）
 const selectedProjectProvider = computed(() => {
   const p = projects.value.find(p => p.job_name === selectedProject.value)
   return p?.ci_provider || ''
 })
+// custom_push 项目完全以用户上报为准，CD 端只读、不触发
+const isCustomPush = computed(() => selectedProjectProvider.value === 'custom_push')
 
 // 构建日志
 const showLog = ref(false)
@@ -318,6 +320,8 @@ watch(showTrigger, async (val) => {
 
 // ── 执行触发 ──
 async function doTrigger() {
+  // custom_push 项目不触发：以用户上报为准
+  if (isCustomPush.value) return
   // GitLab CI 必须有 ref；Jenkins 不需要（分支由参数中的 git 参数指定）
   if (selectedProjectProvider.value === 'gitlab_ci' && !triggerRef.value) {
     toast(t('ciBuild.needBranch'), 'warn')
@@ -425,7 +429,7 @@ function statusClass(status) {
 }
 
 function formatTime(t) {
-  if (!t) return '—'
+  if (!t) return ''
   return t.replace('T', ' ').substring(0, 19)
 }
 
