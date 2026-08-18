@@ -25,8 +25,9 @@ class KubectlDeployer(K8sSubDeployer):
     def cd_type(self) -> str:
         return "kubectl"
 
-    def stop(self, req, project: str, host: str, port: int = 22,
-             user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
+    def stop(
+        self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
+    ) -> dict:
         """停止：kubectl delete -f <yaml> 或 kubectl delete deployment"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         if req.target_path:
@@ -38,7 +39,7 @@ class KubectlDeployer(K8sSubDeployer):
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
             success = ec == 0 or "not found" in (err or "").lower() or "not found" in (out or "").lower()
-            return {"success": success, "output": (err or out)[:settings.log_truncate_chars]}
+            return {"success": success, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("Kubectl stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}
@@ -58,6 +59,7 @@ class KubectlDeployer(K8sSubDeployer):
         if req.path.startswith("http"):
             _log(callback, S("deploy_log.downloading_yaml"))
             import requests
+
             r = requests.get(req.path, timeout=10)
             if r.status_code != 200:
                 _log(callback, S("deploy_log.yaml_fetch_fail", path=req.path))
@@ -114,7 +116,10 @@ class KubectlDeployer(K8sSubDeployer):
                     running_pods = all_pods.strip()
                     if running_pods:
                         _log(callback, S("deploy_log.app_not_found", name=deploy_name, running=running_pods))
-                        return {"success": False, "output": f"{before_text}\n\nDeploy failed: app [{deploy_name}] not found.\nRunning Pods:\n{running_pods}"}
+                        return {
+                            "success": False,
+                            "output": f"{before_text}\n\nDeploy failed: app [{deploy_name}] not found.\nRunning Pods:\n{running_pods}",
+                        }
                     else:
                         is_first_deploy = True
                         _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
@@ -132,7 +137,7 @@ class KubectlDeployer(K8sSubDeployer):
                 cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)}")
             for i, c in enumerate(cmds):
                 check_cancelled()
-                _log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
+                _log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
                 o, e, ec = _exec_exit(ssh, c)
                 if o:
                     deploy_log.append(o)
@@ -142,13 +147,15 @@ class KubectlDeployer(K8sSubDeployer):
                     _log(callback, e)
                 if ec != 0:
                     _log(callback, S("deploy_log.deploy_error", error=e or f"exit code {ec}"))
-                    return {"success": False, "output": f"{before_text}\n\nStep {i+1} failed (exit {ec}):\n{o or e}"}
+                    return {"success": False, "output": f"{before_text}\n\nStep {i + 1} failed (exit {ec}):\n{o or e}"}
 
             # ── rollout status 等待部署完成 ──
             check_cancelled()
             _log(callback, S("deploy_log.waiting_pod"))
             rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s"
-            rollout_out, rollout_err, rollout_ec = _exec_exit(ssh, rollout_cmd, timeout=settings.k8s_rollout_timeout + 30)
+            rollout_out, rollout_err, rollout_ec = _exec_exit(
+                ssh, rollout_cmd, timeout=settings.k8s_rollout_timeout + 30
+            )
             rollout_output = (rollout_out or rollout_err or "").strip()
             if rollout_out:
                 _log(callback, rollout_out)
@@ -159,7 +166,9 @@ class KubectlDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.after_version"))
             all_after = _kubectl_pods(ssh, deploy_name)
             if all_after.strip():
-                after_pods = [line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods]
+                after_pods = [
+                    line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods
+                ]
                 after = "\n".join(after_pods) if after_pods else all_after
             else:
                 after = all_after
@@ -171,19 +180,21 @@ class KubectlDeployer(K8sSubDeployer):
                 running_count = sum(1 for line in after.split("\n") if "Running" in line)
                 _log(callback, S("deploy_log.verify_ok"))
                 result = (
-                    f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                    f"{before_text}\n\n开始部署:\n"
+                    + "\n".join(deploy_log)
                     + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
                     + f"\n\n已部署: {running_count} 个 Running Pod\n\n验证部署: ✅ 部署成功！"
                 )
             else:
                 _log(callback, S("deploy_log.verify_fail_timeout"))
                 result = (
-                    f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                    f"{before_text}\n\n开始部署:\n"
+                    + "\n".join(deploy_log)
                     + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
                     + "\n\n验证部署: ❌ 部署失败！"
                 )
 
-            return {"success": is_ok, "output": result[:settings.log_truncate_chars]}
+            return {"success": is_ok, "output": result[: settings.log_truncate_chars]}
         except Exception as e:
             logger.error("Kubectl deploy failed", exc_info=e)
             _log(callback, S("deploy_log.deploy_error", error=str(e)))

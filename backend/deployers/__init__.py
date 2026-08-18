@@ -35,4 +35,5 @@ def _register_all():
     deployer_registry.register("k8s/helm", lambda: HelmDeployer())
     deployer_registry.register("k8s/fluxcd", lambda: FluxCDDeployer())
 
+
 _register_all()

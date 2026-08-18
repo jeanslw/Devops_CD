@@ -16,9 +16,18 @@ class K8sSubDeployer(ABC):
         ...
 
     @abstractmethod
-    def deploy(self, req, image: str, project: str, host: str,
-               port: int = 22, user: str = "root", pwd: str = "",
-               ssh_key: str = "", callback=None) -> dict:
+    def deploy(
+        self,
+        req,
+        image: str,
+        project: str,
+        host: str,
+        port: int = 22,
+        user: str = "root",
+        pwd: str = "",
+        ssh_key: str = "",
+        callback=None,
+    ) -> dict:
         """执行部署，返回 {"success": bool, "output": str}"""
         ...
 
@@ -30,8 +39,9 @@ class K8sSubDeployer(ABC):
         """
         return None
 
-    def stop(self, req, project: str, host: str, port: int = 22,
-             user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
+    def stop(
+        self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
+    ) -> dict:
         """停止服务。默认抛出 NotImplementedError，子类按需覆盖。"""
         raise NotImplementedError(f"{self.name()} does not support stop")
 

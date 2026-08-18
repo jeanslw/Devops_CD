@@ -16,9 +16,7 @@ def list_tags(
     """扫描所有服务器的 tags 字段，拆分为唯一标签列表"""
     with db.conn() as conn:
         tag_set = set()
-        rows = conn.execute(
-            "SELECT tags FROM cd_servers WHERE tags IS NOT NULL AND tags != ''"
-        ).fetchall()
+        rows = conn.execute("SELECT tags FROM cd_servers WHERE tags IS NOT NULL AND tags != ''").fetchall()
         for r in rows:
             for t in (r["tags"] if isinstance(r, dict) else r[0] or "").split(","):
                 t = t.strip()

@@ -18,7 +18,11 @@ class SSHDeployer(Deployer):
         return "ssh"
 
     def deploy(
-        self, target: DeployTarget, image: str, project: str, tag: str,
+        self,
+        target: DeployTarget,
+        image: str,
+        project: str,
+        tag: str,
         callback=None,
     ) -> DeployResult:
         if not target.host:
@@ -47,8 +51,7 @@ class SSHDeployer(Deployer):
             return "echo 'ERROR: Custom commands not configured' && exit 1"
         image_name = image.split(":")[0]
         return (
-            template
-            .replace("{image}", shlex.quote(image))
+            template.replace("{image}", shlex.quote(image))
             .replace("{image_name}", shlex.quote(image_name))
             .replace("{tag}", shlex.quote(tag))
             .replace("{project}", shlex.quote(project))
@@ -77,8 +80,7 @@ class SSHDeployer(Deployer):
         image = f"{project}:{tag}"
         image_name = project.split("/")[-1] if "/" in project else project
         cmd = (
-            commands
-            .replace("{image}", shlex.quote(image))
+            commands.replace("{image}", shlex.quote(image))
             .replace("{image_name}", shlex.quote(image_name))
             .replace("{tag}", shlex.quote(tag))
             .replace("{project}", shlex.quote(project))
@@ -88,7 +90,7 @@ class SSHDeployer(Deployer):
                 _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
                 out = stdout.read().decode(errors="replace").strip()
                 err = stderr.read().decode(errors="replace").strip()
-                return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+                return {"success": True, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("SSH stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}

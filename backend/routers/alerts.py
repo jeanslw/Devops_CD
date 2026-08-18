@@ -13,15 +13,15 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 class AlertRuleRequest(BaseModel):
     name: str
-    target_type: str = "system"    # system / app
-    resource_type: str             # cpu/memory/disk/pod_cpu/pod_memory/docker_cpu/docker_memory/process_cpu/process_memory
-    server_ids: str = ""           # 逗号分隔
+    target_type: str = "system"  # system / app
+    resource_type: str  # cpu/memory/disk/pod_cpu/pod_memory/docker_cpu/docker_memory/process_cpu/process_memory
+    server_ids: str = ""  # 逗号分隔
     threshold: int = 80
     bot_id: int = 0
     template: str = ""
     enabled: bool = True
     cooldown_minutes: int = 10
-    duration_minutes: int = 0      # 持续超标 N 分钟后报警，0=立即
+    duration_minutes: int = 0  # 持续超标 N 分钟后报警，0=立即
 
 
 @router.get("")
@@ -46,7 +46,18 @@ def create_alert(
         conn.execute(
             "INSERT INTO cd_alert_rules (name, target_type, resource_type, server_ids, threshold, bot_id, template, enabled, cooldown_minutes, duration_minutes) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (req.name, req.target_type, req.resource_type, req.server_ids, req.threshold, req.bot_id, req.template, 1 if req.enabled else 0, req.cooldown_minutes, req.duration_minutes),
+            (
+                req.name,
+                req.target_type,
+                req.resource_type,
+                req.server_ids,
+                req.threshold,
+                req.bot_id,
+                req.template,
+                1 if req.enabled else 0,
+                req.cooldown_minutes,
+                req.duration_minutes,
+            ),
         )
         return ok(message="告警规则已创建")
 
@@ -67,7 +78,19 @@ def update_alert(
         conn.execute(
             "UPDATE cd_alert_rules SET name=?, target_type=?, resource_type=?, server_ids=?, threshold=?, bot_id=?, template=?, enabled=?, cooldown_minutes=?, duration_minutes=? "
             "WHERE id=?",
-            (req.name, req.target_type, req.resource_type, req.server_ids, req.threshold, req.bot_id, req.template, 1 if req.enabled else 0, req.cooldown_minutes, req.duration_minutes, rule_id),
+            (
+                req.name,
+                req.target_type,
+                req.resource_type,
+                req.server_ids,
+                req.threshold,
+                req.bot_id,
+                req.template,
+                1 if req.enabled else 0,
+                req.cooldown_minutes,
+                req.duration_minutes,
+                rule_id,
+            ),
         )
         return ok(message="告警规则已更新")
 
@@ -91,9 +114,7 @@ def list_resource_types(
 ):
     """返回可用的资源类型列表（给前端下拉用），自定义项按 采集器 → 指标 层级"""
     with db.conn() as conn:
-        custom_rows = conn.execute(
-            "SELECT id, name FROM cd_custom_monitors WHERE enabled=1 ORDER BY name"
-        ).fetchall()
+        custom_rows = conn.execute("SELECT id, name FROM cd_custom_monitors WHERE enabled=1 ORDER BY name").fetchall()
         custom_metrics = {}  # monitor_id → [{metric}]
         for r in custom_rows:
             mid = r["id"]
@@ -147,5 +168,6 @@ def manual_check(
 ):
     """手动触发一次告警检测"""
     from backend.services.alert_service import check_all_rules
+
     check_all_rules()
     return ok(message="手动告警检测已触发")

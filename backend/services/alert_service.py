@@ -25,12 +25,7 @@ _stop = threading.Event()
 # ── 默认告警模板（中/英文）──
 _DEFAULT_TEMPLATES = {
     "system": {
-        "zh": (
-            "⚠️ [资源告警] {time}\n"
-            "服务器：{server}({host})\n"
-            "资源：{resource_name} ({value}%)\n"
-            "阈值：{threshold}%"
-        ),
+        "zh": ("⚠️ [资源告警] {time}\n服务器：{server}({host})\n资源：{resource_name} ({value}%)\n阈值：{threshold}%"),
         "en": (
             "⚠️ [Resource Alert] {time}\n"
             "Server: {server}({host})\n"
@@ -61,16 +56,26 @@ _DEFAULT_TEMPLATES = {
 # 资源名称中英文
 _RESOURCE_NAMES = {
     "zh": {
-        "cpu": "CPU", "memory": "内存", "disk": "硬盘",
-        "pod_cpu": "Pod CPU", "pod_memory": "Pod 内存",
-        "docker_cpu": "容器 CPU", "docker_memory": "容器 内存",
-        "process_cpu": "进程 CPU", "process_memory": "进程 内存",
+        "cpu": "CPU",
+        "memory": "内存",
+        "disk": "硬盘",
+        "pod_cpu": "Pod CPU",
+        "pod_memory": "Pod 内存",
+        "docker_cpu": "容器 CPU",
+        "docker_memory": "容器 内存",
+        "process_cpu": "进程 CPU",
+        "process_memory": "进程 内存",
     },
     "en": {
-        "cpu": "CPU", "memory": "Memory", "disk": "Disk",
-        "pod_cpu": "Pod CPU", "pod_memory": "Pod Memory",
-        "docker_cpu": "Container CPU", "docker_memory": "Container Memory",
-        "process_cpu": "Process CPU", "process_memory": "Process Memory",
+        "cpu": "CPU",
+        "memory": "Memory",
+        "disk": "Disk",
+        "pod_cpu": "Pod CPU",
+        "pod_memory": "Pod Memory",
+        "docker_cpu": "Container CPU",
+        "docker_memory": "Container Memory",
+        "process_cpu": "Process CPU",
+        "process_memory": "Process Memory",
     },
 }
 
@@ -105,6 +110,7 @@ def _set_cooldown(rule_id: int, server_id: int, entity: str = ""):
 
 # ── 持续时间追踪 ──
 
+
 def _mark_exceeded(rule_id: int, server_id: int, entity: str = ""):
     """记录首次超标时间"""
     key = _track_key(rule_id, server_id, entity)
@@ -131,9 +137,7 @@ def check_all_rules():
     """检查所有启用的告警规则"""
     db = Database()
     with db.conn() as conn:
-        rules = conn.execute(
-            "SELECT * FROM cd_alert_rules WHERE enabled=1"
-        ).fetchall()
+        rules = conn.execute("SELECT * FROM cd_alert_rules WHERE enabled=1").fetchall()
 
     for rule in rules:
         _check_one(db, dict(rule))
@@ -159,14 +163,9 @@ def _check_one(db, rule: dict):
             if not ids:
                 return
             placeholders = ",".join("?" for _ in ids)
-            servers = conn.execute(
-                f"SELECT * FROM cd_servers WHERE id IN ({placeholders})",
-                ids
-            ).fetchall()
+            servers = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
         else:
-            servers = conn.execute(
-                "SELECT * FROM cd_servers WHERE type IN ('ssh','docker')"
-            ).fetchall()
+            servers = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker')").fetchall()
 
     bot = _get_bot(db, bot_id)
     if not bot:

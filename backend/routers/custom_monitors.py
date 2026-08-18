@@ -25,7 +25,8 @@ router = APIRouter(prefix="/api/custom-monitors", tags=["custom-monitors"])
 # ── 请求模型 ──
 class MetricDef(BaseModel):
     """单个指标定义"""
-    id: int | None = None        # 编辑时传，新建时 null
+
+    id: int | None = None  # 编辑时传，新建时 null
     name: str = ""
     field_key: str = ""
     unit: str = ""
@@ -35,7 +36,7 @@ class MetricDef(BaseModel):
 class CustomMonitorRequest(BaseModel):
     name: str
     command: str
-    output_format: str = "auto"   # auto / csv / kv / json
+    output_format: str = "auto"  # auto / csv / kv / json
     description: str = ""
     server_ids: str = ""
     enabled: bool = True
@@ -111,15 +112,17 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
                 continue
             val_str = str(entity.get(fk, "") or "")
             val = _try_float(val_str)
-            results.append({
-                "metric_name": m.get("name", fk),
-                "field_key": fk,
-                "value": val,
-                "raw_val": val_str,
-                "unit": m.get("unit", ""),
-                "entity": entity,
-                "entity_label": entity_label,
-            })
+            results.append(
+                {
+                    "metric_name": m.get("name", fk),
+                    "field_key": fk,
+                    "value": val,
+                    "raw_val": val_str,
+                    "unit": m.get("unit", ""),
+                    "entity": entity,
+                    "entity_label": entity_label,
+                }
+            )
     return results
 
 
@@ -140,15 +143,17 @@ def _parse_kv(raw: str, metrics: list[dict]) -> list[dict]:
             continue
         val_str = kv_map[fk]
         val = _try_float(val_str)
-        results.append({
-            "metric_name": m.get("name", fk),
-            "field_key": fk,
-            "value": val,
-            "raw_val": val_str,
-            "unit": m.get("unit", ""),
-            "entity": kv_map,
-            "entity_label": "",
-        })
+        results.append(
+            {
+                "metric_name": m.get("name", fk),
+                "field_key": fk,
+                "value": val,
+                "raw_val": val_str,
+                "unit": m.get("unit", ""),
+                "entity": kv_map,
+                "entity_label": "",
+            }
+        )
     return results
 
 
@@ -175,15 +180,17 @@ def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
                 continue
             val_str = str(val)
             num = _try_float(val_str)
-            results.append({
-                "metric_name": m.get("name", fk),
-                "field_key": fk,
-                "value": num,
-                "raw_val": val_str,
-                "unit": m.get("unit", ""),
-                "entity": obj,
-                "entity_label": entity_label,
-            })
+            results.append(
+                {
+                    "metric_name": m.get("name", fk),
+                    "field_key": fk,
+                    "value": num,
+                    "raw_val": val_str,
+                    "unit": m.get("unit", ""),
+                    "entity": obj,
+                    "entity_label": entity_label,
+                }
+            )
     return results
 
 
@@ -199,15 +206,17 @@ def _parse_auto(raw: str, metrics: list[dict]) -> list[dict]:
     if val is None:
         return []
     label = (metrics[0].get("name") if metrics else "") or "value"
-    return [{
-        "metric_name": label,
-        "field_key": "",
-        "value": val,
-        "raw_val": str(val),
-        "unit": metrics[0].get("unit", "") if metrics else "",
-        "entity": {},
-        "entity_label": "",
-    }]
+    return [
+        {
+            "metric_name": label,
+            "field_key": "",
+            "value": val,
+            "raw_val": str(val),
+            "unit": metrics[0].get("unit", "") if metrics else "",
+            "entity": {},
+            "entity_label": "",
+        }
+    ]
 
 
 def _parse_number(raw: str) -> float | None:
@@ -290,7 +299,8 @@ def _diagnose_parse(raw: str, metrics: list[dict]) -> dict | None:
             "field_key 需与输出表头精确匹配（区分大小写）。"
             "如果表头是中文（如'已用%'），请将 field_key 改为对应中文，"
             "或在命令前加 LANG=C 强制英文输出（如 LANG=C df -h）。"
-            if unmatched_keys and len(unmatched_keys) == len(configured_keys) else ""
+            if unmatched_keys and len(unmatched_keys) == len(configured_keys)
+            else ""
         ),
     }
 
@@ -303,8 +313,7 @@ def _save_metrics(conn, monitor_id: int, metrics: list[MetricDef]):
         if not m.name.strip() or not m.field_key.strip():
             continue
         conn.execute(
-            "INSERT INTO cd_custom_monitor_metrics (monitor_id, name, field_key, unit, sort_order) "
-            "VALUES (?,?,?,?,?)",
+            "INSERT INTO cd_custom_monitor_metrics (monitor_id, name, field_key, unit, sort_order) VALUES (?,?,?,?,?)",
             (monitor_id, m.name.strip(), m.field_key.strip(), m.unit.strip(), m.sort_order),
         )
 
@@ -369,8 +378,15 @@ def update_monitor(
         conn.execute(
             "UPDATE cd_custom_monitors SET name=?, command=?, output_format=?, description=?, "
             "server_ids=?, enabled=? WHERE id=?",
-            (req.name, req.command, req.output_format, req.description,
-             req.server_ids, 1 if req.enabled else 0, monitor_id),
+            (
+                req.name,
+                req.command,
+                req.output_format,
+                req.description,
+                req.server_ids,
+                1 if req.enabled else 0,
+                monitor_id,
+            ),
         )
         _save_metrics(conn, monitor_id, req.metrics)
     return ok(message=f"监控项 '{req.name}' 已更新")
@@ -407,15 +423,11 @@ def test_monitor(
             ids = [int(x) for x in server_ids_str.split(",") if x.strip().isdigit()]
             if ids:
                 placeholders = ",".join("?" for _ in ids)
-                servers = conn.execute(
-                    f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids
-                ).fetchall()
+                servers = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
             else:
                 servers = []
         else:
-            servers = conn.execute(
-                "SELECT * FROM cd_servers WHERE type IN ('ssh','docker')"
-            ).fetchall()
+            servers = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker')").fetchall()
 
     results = []
     for server in servers:
@@ -446,13 +458,15 @@ def test_monitor(
             results.append(result_item)
         except Exception as e:
             logger.error(f"Custom monitor test failed for server {server.get('id')}", exc_info=e)
-            results.append({
-                "server_id": server["id"],
-                "server_name": server.get("name", "?"),
-                "host": server.get("host", "?"),
-                "output": "",
-                "parsed": [],
-                "error": "命令执行失败，请联系管理员",
-            })
+            results.append(
+                {
+                    "server_id": server["id"],
+                    "server_name": server.get("name", "?"),
+                    "host": server.get("host", "?"),
+                    "output": "",
+                    "parsed": [],
+                    "error": "命令执行失败，请联系管理员",
+                }
+            )
 
     return {"success": True, "results": results}

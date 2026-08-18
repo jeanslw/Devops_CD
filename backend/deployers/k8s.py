@@ -24,7 +24,7 @@ def _get_yaml_metadata(ssh, yaml_path):
     namespace 未声明时返回空串，调用方不传 -n，由 kubectl context 决定。"""
     _, stdout, _ = ssh.exec_command(
         f"kubectl get -f {shlex.quote(yaml_path)} "
-        f"-o jsonpath='{{.items[?(@.kind==\"Deployment\")].metadata.name}} {{{{.items[?(@.kind==\"Deployment\")].metadata.namespace}}}}' "
+        f'-o jsonpath=\'{{.items[?(@.kind=="Deployment")].metadata.name}} {{{{.items[?(@.kind=="Deployment")].metadata.namespace}}}}\' '
         f"2>/dev/null"
     )
     raw = stdout.read().decode().strip()
@@ -41,7 +41,11 @@ class K8sDeployer(Deployer):
         return "k8s"
 
     def deploy(
-        self, target: DeployTarget, image: str, project: str, _tag: str,
+        self,
+        target: DeployTarget,
+        image: str,
+        project: str,
+        _tag: str,
         callback=None,
     ) -> DeployResult:
         if not target.host:
@@ -58,12 +62,15 @@ class K8sDeployer(Deployer):
                     deploy_name, namespace = _get_yaml_metadata(ssh, target.path)
                     if not deploy_name:
                         return DeployResult(
-                            image=image, status="failed",
+                            image=image,
+                            status="failed",
                             output=f"YAML [{target.path}] 中未找到 Deployment 定义",
                         )
                     if filter_name != deploy_name:
                         # 前端预检弹窗已确认，这里只打警告不拦截
-                        self._log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=deploy_name, project=filter_name))
+                        self._log(
+                            callback, S("deploy_log.yaml_name_mismatch", yaml_name=deploy_name, project=filter_name)
+                        )
                 else:
                     deploy_name = deployment_name
                     namespace = ""  # 没 YAML，留空不传 -n
@@ -74,9 +81,10 @@ class K8sDeployer(Deployer):
                     )
                     if not check_stdout.read().decode().strip():
                         return DeployResult(
-                            image=image, status="failed",
-                            output=f"kubectl set image 需要集群中已存在 Deployment [{deploy_name}]，" +
-                                   "当前未找到。请先用 YAML 方式首次部署。",
+                            image=image,
+                            status="failed",
+                            output=f"kubectl set image 需要集群中已存在 Deployment [{deploy_name}]，"
+                            + "当前未找到。请先用 YAML 方式首次部署。",
                         )
 
                 ns_flag = f"-n {namespace}" if namespace else ""
@@ -104,7 +112,7 @@ class K8sDeployer(Deployer):
 
                 deploy_log = []
                 for i, c in enumerate(deploy_cmds):
-                    self._log(callback, S("deploy_log.exec_cmd", n=i+1, cmd=c))
+                    self._log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
                     o, e, _ = _exec_on(ssh, c)
                     if o:
                         deploy_log.append(o)
@@ -115,7 +123,9 @@ class K8sDeployer(Deployer):
 
                 # ── rollout status 等待部署完成 ──
                 self._log(callback, S("deploy_log.waiting_pod"))
-                rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout=120s".strip()
+                rollout_cmd = (
+                    f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout=120s".strip()
+                )
                 rollout_out, rollout_err, _ = _exec_on(ssh, rollout_cmd)
                 rollout_output = (rollout_out or rollout_err or "").strip()
                 if rollout_out:
@@ -127,7 +137,9 @@ class K8sDeployer(Deployer):
                 self._log(callback, S("deploy_log.after_version"))
                 all_after = _kubectl_pods(ssh, deploy_name, namespace)
                 if all_after.strip():
-                    after_pods = [line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods]
+                    after_pods = [
+                        line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods
+                    ]
                     after = "\n".join(after_pods) if after_pods else all_after
                 else:
                     after = all_after
@@ -139,19 +151,21 @@ class K8sDeployer(Deployer):
                     running_count = sum(1 for line in after.split("\n") if "Running" in line)
                     self._log(callback, S("deploy_log.verify_ok"))
                     output = (
-                        f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                        f"{before_text}\n\n开始部署:\n"
+                        + "\n".join(deploy_log)
                         + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
                         + f"\n\n已部署: {running_count} 个 Running Pod\n\n验证部署: ✅ 部署成功！"
                     )
-                    return DeployResult(image=image, status="ok", output=output[:settings.log_truncate_chars])
+                    return DeployResult(image=image, status="ok", output=output[: settings.log_truncate_chars])
                 else:
                     self._log(callback, S("deploy_log.verify_fail_timeout"))
                     output = (
-                        f"{before_text}\n\n开始部署:\n" + "\n".join(deploy_log)
+                        f"{before_text}\n\n开始部署:\n"
+                        + "\n".join(deploy_log)
                         + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
                         + "\n\n验证部署: ❌ 部署失败！"
                     )
-                    return DeployResult(image=image, status="failed", output=output[:settings.log_truncate_chars])
+                    return DeployResult(image=image, status="failed", output=output[: settings.log_truncate_chars])
         except Exception as e:
             logger.error("K8s deploy failed", exc_info=e)
             self._log(callback, S("deploy_log.k8s_fail_error", error=str(e)))
@@ -168,8 +182,11 @@ class K8sDeployer(Deployer):
                 err = stderr.read().decode(errors="replace").strip()
                 exit_code = stdout.channel.recv_exit_status()
                 if exit_code != 0:
-                    return {"success": False, "output": f"kubectl delete failed (exit {exit_code}): {(err or out)[:settings.log_truncate_chars]}"}
-                return {"success": True, "output": (err or out)[:settings.log_truncate_chars]}
+                    return {
+                        "success": False,
+                        "output": f"kubectl delete failed (exit {exit_code}): {(err or out)[: settings.log_truncate_chars]}",
+                    }
+                return {"success": True, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("K8s stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}

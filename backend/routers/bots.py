@@ -18,10 +18,7 @@ def list_bots(
     username: str = Depends(verify_token),
 ):
     with db.conn() as conn:
-        return [
-            dict(r)
-            for r in conn.execute("SELECT * FROM cd_bots ORDER BY name").fetchall()
-        ]
+        return [dict(r) for r in conn.execute("SELECT * FROM cd_bots ORDER BY name").fetchall()]
 
 
 @router.post("")

@@ -4,6 +4,7 @@ import concurrent.futures
 import logging
 import socket
 
+import paramiko
 import pymysql
 from fastapi import APIRouter, Depends
 
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 MASK = "***"
+
 
 @router.get("")
 def list_servers(
@@ -51,13 +53,24 @@ def add_server(
         try:
             conn.execute(
                 "INSERT INTO cd_servers (name,host,port,user,auth_type,password,ssh_key,type,tags) VALUES (?,?,?,?,?,?,?,?,?)",
-                (req.name, req.host, req.port, req.user, req.auth_type,
-                 encrypt(req.password), encrypt(req.ssh_key), req.type, req.tags),
+                (
+                    req.name,
+                    req.host,
+                    req.port,
+                    req.user,
+                    req.auth_type,
+                    encrypt(req.password),
+                    encrypt(req.ssh_key),
+                    req.type,
+                    req.tags,
+                ),
             )
             clear_server_cache()
             return ok(message=f"服务器 '{req.name}' 已添加")
         except pymysql.err.IntegrityError as e:
-            raise ConflictError(f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}) from e
+            raise ConflictError(
+                f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}
+            ) from e
 
 
 @router.put("/{sid}")
@@ -92,13 +105,14 @@ def update_server(
         try:
             conn.execute(
                 "UPDATE cd_servers SET name=?, host=?, port=?, user=?, auth_type=?, password=?, ssh_key=?, type=?, tags=? WHERE id=?",
-                (req.name, req.host, req.port, req.user, req.auth_type,
-                 password, ssh_key, req.type, req.tags, sid),
+                (req.name, req.host, req.port, req.user, req.auth_type, password, ssh_key, req.type, req.tags, sid),
             )
             clear_server_cache()
             return ok(message=f"服务器 '{req.name}' 已更新")
         except pymysql.err.IntegrityError as e:
-            raise ConflictError(f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}) from e
+            raise ConflictError(
+                f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}
+            ) from e
 
 
 @router.delete("/{sid}")
@@ -207,14 +221,27 @@ def test_server_connection(
     else:
         # 普通连接测试（使用 RejectPolicy）
         from backend.deployers.base import DeployTarget, ssh_connect
+
         try:
             target = DeployTarget(
-                host=req.host, port=req.port, user=req.user,
-                password=password, ssh_key=ssh_key,
+                host=req.host,
+                port=req.port,
+                user=req.user,
+                password=password,
+                ssh_key=ssh_key,
             )
             ssh = ssh_connect(target, timeout=10)
             ssh.close()
             return ok(message="连接成功")
+        except (TimeoutError, ConnectionRefusedError, OSError) as e:
+            logger.warning("SSH test unreachable: %s:%s — %s", req.host, req.port, e)
+            return {"success": False, "message": "服务器不可达，请检查地址/端口/网络"}
+        except paramiko.AuthenticationException:
+            logger.warning("SSH test auth failed: %s@%s:%s", req.user, req.host, req.port)
+            return {"success": False, "message": "认证失败，请检查用户名/密码/密钥"}
+        except paramiko.SSHException as e:
+            logger.warning("SSH test protocol error: %s:%s — %s", req.host, req.port, e)
+            return {"success": False, "message": "SSH 协议错误，请检查服务端配置"}
         except Exception as e:
             logger.error("SSH connection test failed", exc_info=e)
             return {"success": False, "message": "连接失败，请检查主机配置"}
@@ -242,8 +269,10 @@ def trust_existing_server(
         elif auth_type == "key":
             password = ""
 
-        logger.info(f"trust_existing_server: sid={sid}, auth_type={auth_type}, "
-                    f"password_len={len(password or '')}, ssh_key_len={len(ssh_key or '')}")
+        logger.info(
+            f"trust_existing_server: sid={sid}, auth_type={auth_type}, "
+            f"password_len={len(password or '')}, ssh_key_len={len(ssh_key or '')}"
+        )
 
         result = trust_ssh_host(
             host=row["host"],

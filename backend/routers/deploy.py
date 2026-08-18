@@ -115,7 +115,9 @@ def stop(
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
     target = DeployTarget(
-        host=srv["host"], port=srv["port"], user=srv["user"],
+        host=srv["host"],
+        port=srv["port"],
+        user=srv["user"],
         password=decrypt(srv["password"] or ""),
         ssh_key=decrypt(srv["ssh_key"] or ""),
     )
@@ -124,9 +126,12 @@ def stop(
         raise ValidationError(f"不支持的部署类型: {req.deploy_type}", error_key="errors.unsupported_deploy_type")
 
     return deployer.stop(
-        target=target, project=req.project,
-        tag=req.tag, commands=req.commands,
-        target_path=req.target_path, k8s_ns=req.k8s_ns,
+        target=target,
+        project=req.project,
+        tag=req.tag,
+        commands=req.commands,
+        target_path=req.target_path,
+        k8s_ns=req.k8s_ns,
     )
 
 
@@ -169,8 +174,10 @@ async def deploy_stream(
     # K8S 子模式必须走 /api/deploy-k8s-stream，禁止混进 SSH/Compose 路线（签名不兼容）
     if req.deploy_type.startswith("k8s/"):
         msg = f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/deploy-k8s-stream"
+
         async def _err():
             yield f"retry: 3000\ndata: ERROR:{msg}\n\n"
+
         return StreamingResponse(_err(), media_type="text/event-stream")
     enforce_deploy_perm(user, req.deploy_type)
     import asyncio

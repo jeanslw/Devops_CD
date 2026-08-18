@@ -18,8 +18,9 @@ class HelmDeployer(K8sSubDeployer):
     def cd_type(self) -> str:
         return "helm"
 
-    def stop(self, req, project: str, host: str, port: int = 22,
-             user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
+    def stop(
+        self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
+    ) -> dict:
         """停止：helm uninstall（先检查 release 是否存在）"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         ns = req.k8s_ns
@@ -38,7 +39,7 @@ class HelmDeployer(K8sSubDeployer):
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
             success = ec == 0
-            return {"success": success, "output": (out or err)[:settings.log_truncate_chars]}
+            return {"success": success, "output": (out or err)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("Helm stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}
@@ -63,13 +64,12 @@ class HelmDeployer(K8sSubDeployer):
             # 检查 release 是否已存在（用 _exec_exit 防 helm 挂了静默失败）
             existing, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
             if list_ec != 0:
-                _log(callback, S("deploy_log.helm_fail",
-                    error=f"helm list failed (exit {list_ec}): {list_err or 'no output'}"))
+                _log(
+                    callback,
+                    S("deploy_log.helm_fail", error=f"helm list failed (exit {list_ec}): {list_err or 'no output'}"),
+                )
                 ssh.close()
-                return {
-                    "success": False,
-                    "output": f"helm list failed (exit {list_ec}):\n{list_err or 'no output'}"
-                }
+                return {"success": False, "output": f"helm list failed (exit {list_ec}):\n{list_err or 'no output'}"}
 
             if helm_release in existing.split("\n"):
                 _log(callback, S("deploy_log.helm_upgrading", name=helm_release))
@@ -123,15 +123,13 @@ class HelmDeployer(K8sSubDeployer):
                         f"Helm upgrade failed (exit {exit_code}):\n{helm_err or helm_out}"
                         f"\n\nPod status:\n{after or '(none)'}"
                         f"\n\n{status_out}"
-                    )[:settings.log_truncate_chars],
+                    )[: settings.log_truncate_chars],
                 }
 
             _log(callback, S("deploy_log.verify_ok"))
             return {
                 "success": True,
-                "output": (
-                    f"{status_out}\n\nPod status:\n{after or '(none)'}"
-                )[:settings.log_truncate_chars],
+                "output": (f"{status_out}\n\nPod status:\n{after or '(none)'}")[: settings.log_truncate_chars],
             }
         except Exception as e:
             logger.error("Helm deploy failed", exc_info=e)

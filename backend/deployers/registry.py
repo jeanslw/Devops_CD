@@ -17,9 +17,7 @@ class DeployerRegistry:
     def create(self, name: str) -> Any:
         """创建部署器实例（懒加载）"""
         if name not in self._factories:
-            raise ValueError(
-                f"不支持的部署类型: {name}，可用: {list(self._factories.keys())}"
-            )
+            raise ValueError(f"不支持的部署类型: {name}，可用: {list(self._factories.keys())}")
         return self._factories[name]()
 
     def is_registered(self, name: str) -> bool:

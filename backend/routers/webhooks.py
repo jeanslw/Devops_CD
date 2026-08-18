@@ -24,6 +24,7 @@ def _generate_token() -> str:
 
 # ── Webhook 配置管理 ──
 
+
 @router.get("")
 def list_webhooks(
     db: Database = Depends(get_db),
@@ -32,8 +33,7 @@ def list_webhooks(
     """列出所有 Webhook 配置"""
     with db.conn() as conn:
         rows = conn.execute(
-            "SELECT id, name, token, bot_id, enabled, created_at "
-            "FROM cd_webhooks ORDER BY created_at DESC"
+            "SELECT id, name, token, bot_id, enabled, created_at FROM cd_webhooks ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -112,9 +112,7 @@ def toggle_webhook(
 ):
     """启用/禁用 Webhook"""
     with db.conn() as conn:
-        row = conn.execute(
-            "SELECT enabled FROM cd_webhooks WHERE id=?", (wid,)
-        ).fetchone()
+        row = conn.execute("SELECT enabled FROM cd_webhooks WHERE id=?", (wid,)).fetchone()
         if not row:
             raise NotFoundError("Webhook 不存在", error_key="errors.webhook_not_found")
         new_val = 0 if row["enabled"] else 1
@@ -123,6 +121,7 @@ def toggle_webhook(
 
 
 # ── 事件查看 ──
+
 
 @router.get("/{wid}/events")
 def list_events(
@@ -137,9 +136,9 @@ def list_events(
     page_size = max(1, min(100, page_size))
     offset = (page - 1) * page_size
     with db.conn() as conn:
-        total = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM cd_webhook_events WHERE webhook_id=?", (wid,)
-        ).fetchone()["cnt"]
+        total = conn.execute("SELECT COUNT(*) AS cnt FROM cd_webhook_events WHERE webhook_id=?", (wid,)).fetchone()[
+            "cnt"
+        ]
         rows = conn.execute(
             "SELECT id, webhook_id, payload, received_at, forwarded, forwarded_at "
             "FROM cd_webhook_events WHERE webhook_id=? "
@@ -170,6 +169,7 @@ def delete_event(
 
 # ── 手动转发 ──
 
+
 @router.post("/events/{eid}/forward")
 def forward_event(
     eid: int,
@@ -179,15 +179,11 @@ def forward_event(
 ):
     """手动转发某条事件到指定 Bot"""
     with db.conn() as conn:
-        event = conn.execute(
-            "SELECT * FROM cd_webhook_events WHERE id=?", (eid,)
-        ).fetchone()
+        event = conn.execute("SELECT * FROM cd_webhook_events WHERE id=?", (eid,)).fetchone()
         if not event:
             raise NotFoundError("事件不存在", error_key="errors.webhook_event_not_found")
 
-        bot = conn.execute(
-            "SELECT * FROM cd_bots WHERE id=?", (req.bot_id,)
-        ).fetchone()
+        bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (req.bot_id,)).fetchone()
         if not bot:
             raise NotFoundError("Bot 不存在", error_key="errors.bot_not_found")
 
@@ -215,6 +211,7 @@ def forward_event(
 
 # ── 公开接收端点（无需登录验证，靠 token 鉴权）──
 
+
 @router.post("/receive/{token}")
 async def receive_webhook(
     token: str,
@@ -224,9 +221,7 @@ async def receive_webhook(
     """CI / 外部系统 POST 到此端点，靠 token 匹配 Webhook 配置。
     收到后存记录，若配了 bot_id 则自动转发。"""
     with db.conn() as conn:
-        wh = conn.execute(
-            "SELECT * FROM cd_webhooks WHERE token=? AND enabled=1", (token,)
-        ).fetchone()
+        wh = conn.execute("SELECT * FROM cd_webhooks WHERE token=? AND enabled=1", (token,)).fetchone()
         if not wh:
             raise NotFoundError("Webhook 不存在或已禁用", error_key="errors.webhook_not_found")
 
@@ -244,9 +239,7 @@ async def receive_webhook(
         # 自动转发
         bot_id = wh["bot_id"]
         if bot_id:
-            bot = conn.execute(
-                "SELECT * FROM cd_bots WHERE id=?", (bot_id,)
-            ).fetchone()
+            bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
             if bot:
                 try:
                     data = json.loads(payload_str)

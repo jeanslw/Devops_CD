@@ -29,6 +29,7 @@ def project_tags(
 ):
     """获取项目的 pipeline tag 列表（分页）"""
     from backend.services.ci_service import CiService
+
     svc = CiService(db)
     with db.conn() as conn:
         svc._resolve_tables(conn)
@@ -77,5 +78,7 @@ def pipeline_status(
     """获取项目实时 pipeline 状态（调 PHP API）"""
     result = CiService(db).get_pipeline_status(project)
     if result is None:
-        raise NotFoundError(f"项目 '{project}' 未找到", error_key="errors.project_not_found", error_params={"project": project})
+        raise NotFoundError(
+            f"项目 '{project}' 未找到", error_key="errors.project_not_found", error_params={"project": project}
+        )
     return result

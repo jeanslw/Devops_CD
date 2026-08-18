@@ -16,14 +16,16 @@ _CACHE_TTL: dict[str, int] = {}
 def _get_cache_ttl() -> dict[str, int]:
     """懒加载缓存 TTL，确保 settings 已初始化"""
     if not _CACHE_TTL:
-        _CACHE_TTL.update({
-            "servers": settings.monitor_cache_servers,
-            "system": settings.monitor_cache_system,
-            "nodes": settings.monitor_cache_nodes,
-            "pods": settings.monitor_cache_pods,
-            "docker": settings.monitor_cache_docker,
-            "pod_detail": settings.monitor_cache_pod_detail,
-        })
+        _CACHE_TTL.update(
+            {
+                "servers": settings.monitor_cache_servers,
+                "system": settings.monitor_cache_system,
+                "nodes": settings.monitor_cache_nodes,
+                "pods": settings.monitor_cache_pods,
+                "docker": settings.monitor_cache_docker,
+                "pod_detail": settings.monitor_cache_pod_detail,
+            }
+        )
     return _CACHE_TTL
 
 
@@ -46,11 +48,18 @@ def _cache_set(key: str, data: object):
 def clear_server_cache():
     """服务器变更时清除相关监控缓存"""
     for key in list(_cache.keys()):
-        if key.startswith("servers:") or key.startswith("system:") or key.startswith("docker:") or key.startswith("nodes:") or key.startswith("pods:"):
+        if (
+            key.startswith("servers:")
+            or key.startswith("system:")
+            or key.startswith("docker:")
+            or key.startswith("nodes:")
+            or key.startswith("pods:")
+        ):
             del _cache[key]
 
 
 # ── 工具函数 ──
+
 
 def _parse_kubectl_top(text: str, has_header: bool = False) -> list[dict]:
     """解析 kubectl top nodes/pods 输出"""
@@ -63,19 +72,23 @@ def _parse_kubectl_top(text: str, has_header: bool = False) -> list[dict]:
     for line in lines:
         parts = line.split()
         if len(parts) >= 5:  # nodes: NAME CPU CORES CPU% MEMORY MEMORY%
-            items.append({
-                "name": parts[0],
-                "cpu": parts[1],
-                "cpu_percent": parts[2],
-                "memory": parts[3],
-                "memory_percent": parts[4],
-            })
+            items.append(
+                {
+                    "name": parts[0],
+                    "cpu": parts[1],
+                    "cpu_percent": parts[2],
+                    "memory": parts[3],
+                    "memory_percent": parts[4],
+                }
+            )
         elif len(parts) >= 3:
-            items.append({
-                "name": parts[0],
-                "cpu": parts[1],
-                "memory": parts[2],
-            })
+            items.append(
+                {
+                    "name": parts[0],
+                    "cpu": parts[1],
+                    "memory": parts[2],
+                }
+            )
     return items
 
 
@@ -183,7 +196,8 @@ docker info --format '{{.ContainersRunning}}/{{.Containers}}' 2>/dev/null || ech
 def _make_target(srv) -> DeployTarget:
     """从数据库行构造 DeployTarget，自动解密 password / ssh_key"""
     return DeployTarget(
-        host=srv["host"], port=srv["port"],
+        host=srv["host"],
+        port=srv["port"],
         user=srv["user"],
         password=decrypt(srv["password"] or ""),
         ssh_key=decrypt(srv["ssh_key"] or ""),

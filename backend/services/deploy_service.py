@@ -25,6 +25,7 @@ from .notification import notify_deploy
 
 logger = logging.getLogger(__name__)
 
+
 def _parse_server_ids(server_ids: str) -> list[int]:
     """安全地解析 server_ids，忽略空值和非法内容。"""
     return [int(s) for s in (server_ids or "").split(",") if s.strip().isdigit()]
@@ -62,28 +63,28 @@ class DeployService:
                 if not ids:
                     return []
                 placeholders = ",".join("?" * len(ids))
-                rows = conn.execute(
-                    f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids
-                ).fetchall()
+                rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
             else:
                 rows = conn.execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
 
             return [
-                (r["id"], DeployTarget(
-                    host=r["host"], port=r["port"], user=r["user"],
-                    password=decrypt(r["password"] or ""),
-                    ssh_key=decrypt(r["ssh_key"] or ""),
-                ))
+                (
+                    r["id"],
+                    DeployTarget(
+                        host=r["host"],
+                        port=r["port"],
+                        user=r["user"],
+                        password=decrypt(r["password"] or ""),
+                        ssh_key=decrypt(r["ssh_key"] or ""),
+                    ),
+                )
                 for r in rows
             ]
 
     def _build_target_str(self, results: list, is_batch: bool, total: int) -> str:
         """批量时合并 target 描述，单台时返回单条描述。"""
         if is_batch:
-            return ", ".join(
-                f"[{i + 1}/{total}] #{r['server_id']} {r['host']}"
-                for i, r in enumerate(results)
-            )
+            return ", ".join(f"[{i + 1}/{total}] #{r['server_id']} {r['host']}" for i, r in enumerate(results))
         if not results:
             return "(无)"
         r = results[0]
@@ -176,8 +177,13 @@ class DeployService:
 
         # ── 插入 running 记录 + 注册取消信号 ──
         deploy_id, row_id = start_deploy_record(
-            self._db, deploy_type=deploy_type, project=project_key, tag=tag,
-            image=image, triggered_by=triggered_by, deploy_note=deploy_note,
+            self._db,
+            deploy_type=deploy_type,
+            project=project_key,
+            tag=tag,
+            image=image,
+            triggered_by=triggered_by,
+            deploy_note=deploy_note,
         )
         deploy_run_manager.register(deploy_id)
         set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
@@ -204,9 +210,18 @@ class DeployService:
                 error = deployer.validate(target)
                 if error:
                     results.append({"server_id": sid, "host": target.host, "status": "failed", "output": error})
-                    stage_times.append({"server_id": sid, "host": target.host, "status": "failed", "duration_ms": int((time.time() - t0) * 1000)})
+                    stage_times.append(
+                        {
+                            "server_id": sid,
+                            "host": target.host,
+                            "status": "failed",
+                            "duration_ms": int((time.time() - t0) * 1000),
+                        }
+                    )
                     if is_batch and callback:
-                        callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail"))
+                        callback(
+                            S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail")
+                        )
                     continue
 
                 try:
@@ -218,9 +233,24 @@ class DeployService:
                     logger.error("Deploy service failed", exc_info=e)
                     results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
 
-                stage_times.append({"server_id": sid, "host": target.host, "status": results[-1]["status"], "duration_ms": int((time.time() - t0) * 1000)})
+                stage_times.append(
+                    {
+                        "server_id": sid,
+                        "host": target.host,
+                        "status": results[-1]["status"],
+                        "duration_ms": int((time.time() - t0) * 1000),
+                    }
+                )
                 if is_batch and callback:
-                    callback(S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result=results[-1]["status"]))
+                    callback(
+                        S(
+                            "deploy_log.batch_server_end",
+                            current=i + 1,
+                            total=total,
+                            host=host_label,
+                            result=results[-1]["status"],
+                        )
+                    )
 
             duration_ms = int((time.time() - started) * 1000)
 
@@ -234,10 +264,13 @@ class DeployService:
                 status = "partial"
 
             finish_deploy_record(
-                self._db, row_id, status=status,
+                self._db,
+                row_id,
+                status=status,
                 target=self._build_target_str(results, is_batch, total),
                 output=self._build_output(results, is_batch, total),
-                duration_ms=duration_ms, stage_times=stage_times,
+                duration_ms=duration_ms,
+                stage_times=stage_times,
             )
 
             # 通知
@@ -251,8 +284,17 @@ class DeployService:
             for r in results:
                 label = "docker" if deploy_mode == "docker" else "ssh"
                 notify_targets.append(f"{label}[{r.get('host', '?')}]")
-            notify_deploy(self._db, bot_id, tag, project_key, image, status_label,
-                          deploy_mode or deploy_type, notify_targets, lang=lang)
+            notify_deploy(
+                self._db,
+                bot_id,
+                tag,
+                project_key,
+                image,
+                status_label,
+                deploy_mode or deploy_type,
+                notify_targets,
+                lang=lang,
+            )
 
             return {"success": oks == len(results), "deploy_id": deploy_id, "results": results, "message": status_label}
 
@@ -264,12 +306,21 @@ class DeployService:
             else:
                 cancelled_output = "部署已被用户取消"
             finish_deploy_record(
-                self._db, row_id, status="terminated",
+                self._db,
+                row_id,
+                status="terminated",
                 target=self._build_target_str(results, is_batch, total),
-                output=cancelled_output, duration_ms=duration_ms, stage_times=stage_times,
+                output=cancelled_output,
+                duration_ms=duration_ms,
+                stage_times=stage_times,
             )
-            return {"success": False, "deploy_id": deploy_id, "cancelled": True,
-                    "results": results, "message": "❌ Cancelled"}
+            return {
+                "success": False,
+                "deploy_id": deploy_id,
+                "cancelled": True,
+                "results": results,
+                "message": "❌ Cancelled",
+            }
         except Exception as e:
             logger.error("Deploy service unexpected error", exc_info=e)
             duration_ms = int((time.time() - started) * 1000)
@@ -279,10 +330,13 @@ class DeployService:
             else:
                 error_output = f"部署异常中断: {e}"
             finish_deploy_record(
-                self._db, row_id, status="failed",
+                self._db,
+                row_id,
+                status="failed",
                 target=self._build_target_str(results, is_batch, total),
                 output=error_output[: settings.log_truncate_chars],
-                duration_ms=duration_ms, stage_times=stage_times,
+                duration_ms=duration_ms,
+                stage_times=stage_times,
             )
             raise
         finally:
@@ -305,9 +359,7 @@ class DeployService:
                     (project, page_size, offset),
                 ).fetchall()
             else:
-                total = conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM cd_deploy_logs"
-                ).fetchone()["cnt"]
+                total = conn.execute("SELECT COUNT(*) AS cnt FROM cd_deploy_logs").fetchone()["cnt"]
                 rows = conn.execute(
                     "SELECT * FROM cd_deploy_logs ORDER BY deploy_id DESC LIMIT ? OFFSET ?",
                     (page_size, offset),

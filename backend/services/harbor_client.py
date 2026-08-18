@@ -12,6 +12,7 @@ logger = logging.getLogger("registry")
 
 class HarborUnavailableError(Exception):
     """Harbor 服务不可达异常"""
+
     pass
 
 
@@ -178,21 +179,23 @@ class HarborClient:
             nested = summary.get("summary") or {}
             tags = art.get("tags") or []
             for t in tags:
-                result.append({
-                    "tag": t.get("name", ""),
-                    "digest": art.get("digest", "")[:71],
-                    "size_bytes": art.get("size", 0),
-                    "size_mb": round(art.get("size", 0) / 1048576, 2),
-                    "push_time": t.get("push_time") or art.get("push_time", ""),
-                    "pull_time": art.get("pull_time", ""),
-                    "scan_status": scan.get("scan_status", ""),
-                    "scan_severity": scan.get("severity", ""),
-                    "vuln_critical": summary.get("critical", summary.get("Critical", nested.get("Critical", 0))),
-                    "vuln_high": summary.get("high", summary.get("High", nested.get("High", 0))),
-                    "vuln_medium": summary.get("medium", summary.get("Medium", nested.get("Medium", 0))),
-                    "vuln_low": summary.get("low", summary.get("Low", nested.get("Low", 0))),
-                    "vuln_fixable": summary.get("fixable", 0),
-                })
+                result.append(
+                    {
+                        "tag": t.get("name", ""),
+                        "digest": art.get("digest", "")[:71],
+                        "size_bytes": art.get("size", 0),
+                        "size_mb": round(art.get("size", 0) / 1048576, 2),
+                        "push_time": t.get("push_time") or art.get("push_time", ""),
+                        "pull_time": art.get("pull_time", ""),
+                        "scan_status": scan.get("scan_status", ""),
+                        "scan_severity": scan.get("severity", ""),
+                        "vuln_critical": summary.get("critical", summary.get("Critical", nested.get("Critical", 0))),
+                        "vuln_high": summary.get("high", summary.get("High", nested.get("High", 0))),
+                        "vuln_medium": summary.get("medium", summary.get("Medium", nested.get("Medium", 0))),
+                        "vuln_low": summary.get("low", summary.get("Low", nested.get("Low", 0))),
+                        "vuln_fixable": summary.get("fixable", 0),
+                    }
+                )
         return result
 
     def _list_artifacts_v1(self, repo_full: str) -> list[dict]:
@@ -228,21 +231,23 @@ class HarborClient:
             for s in summary_list:
                 sev_name = severity_map.get(s.get("severity", 0), "Unknown")
                 vulns[sev_name.lower()] = s.get("count", 0)
-            result.append({
-                "tag": t.get("name", ""),
-                "digest": (t.get("digest") or "")[:71],
-                "size_bytes": t.get("size", 0),
-                "size_mb": round(t.get("size", 0) / 1048576, 2),
-                "push_time": t.get("created", ""),
-                "pull_time": "",
-                "scan_status": scan_status,
-                "scan_severity": severity_map.get(scan_ov.get("severity", 1), "None"),
-                "vuln_critical": vulns.get("critical", 0),
-                "vuln_high": vulns.get("high", 0),
-                "vuln_medium": vulns.get("medium", 0),
-                "vuln_low": vulns.get("low", 0),
-                "vuln_fixable": scan_ov.get("fixable", 0),
-            })
+            result.append(
+                {
+                    "tag": t.get("name", ""),
+                    "digest": (t.get("digest") or "")[:71],
+                    "size_bytes": t.get("size", 0),
+                    "size_mb": round(t.get("size", 0) / 1048576, 2),
+                    "push_time": t.get("created", ""),
+                    "pull_time": "",
+                    "scan_status": scan_status,
+                    "scan_severity": severity_map.get(scan_ov.get("severity", 1), "None"),
+                    "vuln_critical": vulns.get("critical", 0),
+                    "vuln_high": vulns.get("high", 0),
+                    "vuln_medium": vulns.get("medium", 0),
+                    "vuln_low": vulns.get("low", 0),
+                    "vuln_fixable": scan_ov.get("fixable", 0),
+                }
+            )
         return result
 
     def delete_artifact(self, repo_full: str, tag: str, digest: str = "") -> bool:

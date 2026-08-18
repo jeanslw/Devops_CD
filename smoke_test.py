@@ -1,4 +1,5 @@
 """Smoke test + regression - P0 & P1 optimization verification"""
+
 import inspect
 import os
 
@@ -58,8 +59,7 @@ print(f"  P0-1 HelmDeployer: {PASS}")
 print(f"  P0-1 FluxCDDeployer: {PASS}")
 
 # P0-2: helm_connecting i18n
-for _, path in [("zh", "frontend/src/locales/zh.js"),
-                    ("en", "frontend/src/locales/en.js")]:
+for _, path in [("zh", "frontend/src/locales/zh.js"), ("en", "frontend/src/locales/en.js")]:
     with open(os.path.join(base, path), encoding="utf-8") as f:
         c = f.read()
     assert "helm_connecting:" in c, f"helm_connecting missing in {path}"
@@ -124,16 +124,22 @@ print("ROUND 5: Frontend i18n key consistency")
 print("=" * 60)
 
 all_new_keys = [
-    "monitoring_disabled", "monitor_not_found",
-    "bot_already_exists", "bot_add_failed",
-    "ci_service_unavailable", "ci_trigger_failed",
-    "ci_log_failed", "ci_retry_failed", "ci_cancel_failed",
+    "monitoring_disabled",
+    "monitor_not_found",
+    "bot_already_exists",
+    "bot_add_failed",
+    "ci_service_unavailable",
+    "ci_trigger_failed",
+    "ci_log_failed",
+    "ci_retry_failed",
+    "ci_cancel_failed",
     "deploy_validation",
-    "scan_report_error", "scan_trigger_failed", "harbor_unavailable",
+    "scan_report_error",
+    "scan_trigger_failed",
+    "harbor_unavailable",
 ]
 
-for _, path in [("zh", "frontend/src/locales/zh.js"),
-                    ("en", "frontend/src/locales/en.js")]:
+for _, path in [("zh", "frontend/src/locales/zh.js"), ("en", "frontend/src/locales/en.js")]:
     with open(os.path.join(base, path), encoding="utf-8") as f:
         c = f.read()
     for key in all_new_keys:
@@ -156,10 +162,17 @@ from backend.routers import auth, deploy, k8s_deploy, servers
 from backend.routers import ci_build as _ci_build
 
 routers = [
-    auth.router, servers.router, deploy.router,
-    k8s_deploy.router, _ci_build.router,
-    _mon.router, _cm.router, _alerts.router,
-    _reg.router, _bots.router, _term.router,
+    auth.router,
+    servers.router,
+    deploy.router,
+    k8s_deploy.router,
+    _ci_build.router,
+    _mon.router,
+    _cm.router,
+    _alerts.router,
+    _reg.router,
+    _bots.router,
+    _term.router,
 ]
 total = 0
 for r in routers:

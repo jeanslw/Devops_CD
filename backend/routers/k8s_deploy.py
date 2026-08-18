@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 class K8sDeployRequest(BaseModel):
     project: str
     tag: str
-    cd_type: str = "kubectl"   # kubectl | argocd | fluxcd | helm
+    cd_type: str = "kubectl"  # kubectl | argocd | fluxcd | helm
     cluster_id: int = 0
-    path: str = ""              # YAML path for kubectl mode
-    api_url: str = ""           # Argo CD / Flux API base
-    k8s_ns: str = ""            # 留空不传 -n，namespace 在 YAML 中声明
-    deploy_note: str = ""       # 部署说明（记录到 cd_deploy_logs.deploy_note）
+    path: str = ""  # YAML path for kubectl mode
+    api_url: str = ""  # Argo CD / Flux API base
+    k8s_ns: str = ""  # 留空不传 -n，namespace 在 YAML 中声明
+    deploy_note: str = ""  # 部署说明（记录到 cd_deploy_logs.deploy_note）
     bot_id: int = 0
-    lang: str = "en"           # 前端当前语言 en/zh
+    lang: str = "en"  # 前端当前语言 en/zh
 
 
 def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
@@ -67,15 +67,20 @@ def _resolve_image(db, req):
     svc = CiService(db)
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
-        raise ValidationError(f"项目 '{req.project}' 未配置 harbor_repository", error_key="errors.no_harbor_repo", error_params={"project": req.project})
+        raise ValidationError(
+            f"项目 '{req.project}' 未配置 harbor_repository",
+            error_key="errors.no_harbor_repo",
+            error_params={"project": req.project},
+        )
     image = f"{settings.harbor_registry}/{harbor_repo}:{req.tag}"
     project_key = svc.resolve_project_key(req.project) or req.project
     project_short = project_key.split("/")[-1]
     return image, project_key, project_short
 
 
-def _deploy_k8s_core(db, req, user, image, project_key, project_short, host, port,
-                     user_srv, pwd, ssh_key, callback=None):
+def _deploy_k8s_core(
+    db, req, user, image, project_key, project_short, host, port, user_srv, pwd, ssh_key, callback=None
+):
     """执行 K8S 部署核心流程：并发锁 + running 记录 + 取消 + 耗时。
 
     返回 deployer 的结果 dict；被取消时返回 {"success": False, "cancelled": True}。
@@ -95,9 +100,14 @@ def _deploy_k8s_core(db, req, user, image, project_key, project_short, host, por
 
     deploy_type = f"k8s/{req.cd_type}"
     deploy_id, row_id = start_deploy_record(
-        db, deploy_type=deploy_type, project=project_key, tag=req.tag,
-        image=image, triggered_by=user.get("username", ""),
-        deploy_note=req.deploy_note, target=host,
+        db,
+        deploy_type=deploy_type,
+        project=project_key,
+        tag=req.tag,
+        image=image,
+        triggered_by=user.get("username", ""),
+        deploy_note=req.deploy_note,
+        target=host,
     )
     deploy_run_manager.register(deploy_id)
     set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
@@ -109,16 +119,24 @@ def _deploy_k8s_core(db, req, user, image, project_key, project_short, host, por
         status = "ok" if ok else "failed"
         duration_ms = int((time.time() - started) * 1000)
         finish_deploy_record(
-            db, row_id, status=status, target=host,
-            output=result.get("output", "") or "", duration_ms=duration_ms,
+            db,
+            row_id,
+            status=status,
+            target=host,
+            output=result.get("output", "") or "",
+            duration_ms=duration_ms,
             stage_times=[{"host": host, "status": status, "duration_ms": duration_ms}],
         )
         return result
     except DeployCancelled:
         duration_ms = int((time.time() - started) * 1000)
         finish_deploy_record(
-            db, row_id, status="terminated", target=host,
-            output="部署已被用户取消", duration_ms=duration_ms,
+            db,
+            row_id,
+            status="terminated",
+            target=host,
+            output="部署已被用户取消",
+            duration_ms=duration_ms,
             stage_times=[{"host": host, "status": "terminated", "duration_ms": duration_ms}],
         )
         return {"success": False, "output": "部署已被用户取消", "cancelled": True}
@@ -126,7 +144,10 @@ def _deploy_k8s_core(db, req, user, image, project_key, project_short, host, por
         logger.error("K8s deploy core failed", exc_info=e)
         duration_ms = int((time.time() - started) * 1000)
         finish_deploy_record(
-            db, row_id, status="failed", target=host,
+            db,
+            row_id,
+            status="failed",
+            target=host,
             output=str(e)[: settings.log_truncate_chars],
             duration_ms=duration_ms,
             stage_times=[{"host": host, "status": "failed", "duration_ms": duration_ms}],
@@ -143,6 +164,7 @@ def _notify_k8s(db, bot_id, tag, project_key, host, cd_type, image, ok, lang="en
 
 
 # ── 预检：部署前校验 YAML 名称与 K8S 存量 ──
+
 
 class K8sDeployCheckRequest(BaseModel):
     project: str
@@ -174,6 +196,7 @@ def _read_yaml(path: str, ssh=None) -> str:
         try:
             _validate_url(path)
             import requests
+
             r = requests.get(path, timeout=10)
             if r.ok:
                 return r.text
@@ -184,6 +207,7 @@ def _read_yaml(path: str, ssh=None) -> str:
     elif ssh:
         try:
             from backend.deployers.k8s_utils import _exec_exit
+
             out, _, ec = _exec_exit(ssh, f"cat {shlex.quote(path)} 2>/dev/null")
             if ec == 0:
                 return out
@@ -196,6 +220,7 @@ def _parse_deployment_name(yaml_content: str) -> str:
     """从多文档 YAML 中提取第一个 Deployment 的 metadata.name"""
     try:
         import yaml as yaml_lib
+
         for doc in yaml_lib.safe_load_all(yaml_content):
             if isinstance(doc, dict) and doc.get("kind") == "Deployment":
                 return doc.get("metadata", {}).get("name", "") or ""
@@ -208,6 +233,7 @@ def _k8s_deployment_exists(ssh, name: str, namespace: str = "") -> bool:
     """SSH 上 kubectl get deployment/{name} 是否存在"""
     try:
         from backend.deployers.k8s_utils import _exec_exit
+
         ns_flag = f"-n {namespace}" if namespace else ""
         out, _, ec = _exec_exit(
             ssh,
@@ -228,8 +254,10 @@ def deploy_k8s_check(
     enforce_deploy_perm(_user, "k8s", req.cd_type)
     filter_name = req.project.split("/")[-1]
     result = {
-        "ok": True, "exists": False,
-        "yaml_deploy_name": "", "project_name": filter_name,
+        "ok": True,
+        "exists": False,
+        "yaml_deploy_name": "",
+        "project_name": filter_name,
         "warning": "",
     }
 
@@ -241,6 +269,7 @@ def deploy_k8s_check(
 
         # FluxCD: SSH 发现 Flux 资源名，用于名称对比
         from backend.deployers.k8s_fluxcd import _discover_flux_resource
+
         try:
             host, port, user, pwd, ssh_key = _resolve_cluster(db, req)
             ssh = ssh_connect(
@@ -326,11 +355,13 @@ def deploy_k8s_check(
         if req.api_url:
             try:
                 import requests
+
                 host, _, _, pwd, _ = _resolve_cluster(db, req)
                 r = requests.get(
                     f"{req.api_url.rstrip('/')}/api/v1/applications/{deploy_name}",
                     headers={"Authorization": f"Bearer {pwd}"},
-                    timeout=10, verify=False,
+                    timeout=10,
+                    verify=False,
                 )
                 result["exists"] = r.status_code == 200
             except Exception:
@@ -370,12 +401,12 @@ def deploy_k8s(
     image, project_key, project_short = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
 
-    result = _deploy_k8s_core(db, req, user, image, project_key, project_short,
-                              host, port, user_srv, pwd, ssh_key)
+    result = _deploy_k8s_core(db, req, user, image, project_key, project_short, host, port, user_srv, pwd, ssh_key)
 
     if not result.get("cancelled"):
-        _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image,
-                    bool(result.get("success")), req.lang)
+        _notify_k8s(
+            db, req.bot_id, req.tag, project_key, host, req.cd_type, image, bool(result.get("success")), req.lang
+        )
 
     return result
 
@@ -399,34 +430,60 @@ async def deploy_k8s_stream(
         image, project_key, project_short = _resolve_image(db, req)
     except AppException as e:
         msg = e.message
+
         async def err_no_repo():
             yield f"retry: 3000\ndata: ERROR:{msg}\n\n"
+
         return StreamingResponse(err_no_repo(), media_type="text/event-stream")
 
     try:
         host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
     except AppException as e:
         msg = e.message
+
         async def err_no_cluster():
             yield f"retry: 3000\ndata: ERROR:{msg}\n\n"
+
         return StreamingResponse(err_no_cluster(), media_type="text/event-stream")
 
     def do_deploy():
         nonlocal deploy_result
         try:
+
             def log_callback(message):
                 log_queue.put(message)
 
-            result = _deploy_k8s_core(db, req, user, image, project_key, project_short,
-                                      host, port, user_srv, pwd, ssh_key, callback=log_callback)
+            result = _deploy_k8s_core(
+                db,
+                req,
+                user,
+                image,
+                project_key,
+                project_short,
+                host,
+                port,
+                user_srv,
+                pwd,
+                ssh_key,
+                callback=log_callback,
+            )
 
             deploy_result = {"success": True, "data": result}
             # 立即通知 SSE 流部署完成，避免通知操作阻塞 UI
             log_queue.put(None)
 
             if not result.get("cancelled"):
-                _notify_k8s(db, req.bot_id, req.tag, project_key, host, req.cd_type, image,
-                            bool(result.get("success")), req.lang)
+                _notify_k8s(
+                    db,
+                    req.bot_id,
+                    req.tag,
+                    project_key,
+                    host,
+                    req.cd_type,
+                    image,
+                    bool(result.get("success")),
+                    req.lang,
+                )
         except Exception as e:
             logger.error("K8s deploy failed", exc_info=e)
             deploy_result = {"success": False, "error": str(e)}

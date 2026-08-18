@@ -61,7 +61,9 @@ def _save_first_host_key(host: str, port: int, timeout: int) -> None:
                 sock.close()
 
 
-def trust_ssh_host(host: str, port: int, username: str = "", password: str = "", ssh_key: str = "", timeout: int = 30) -> dict:
+def trust_ssh_host(
+    host: str, port: int, username: str = "", password: str = "", ssh_key: str = "", timeout: int = 30
+) -> dict:
     """信任 SSH 主机，获取并保存主机密钥。返回 {success, key_fingerprint, message}
 
     使用 Transport 层直接握手取 host key，避免 AutoAddPolicy（消除中间人攻击告警）。
@@ -71,9 +73,10 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
       3. 有凭据则顺便验证可登录；无凭据或凭据失败仅附加 warning（不影响信任成功）
     """
     import base64
-    import paramiko
     import socket
     from hashlib import sha256
+
+    import paramiko
 
     key = None
     sock = None
@@ -114,7 +117,13 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
         warning = ""
         if ssh_key or password:
             try:
-                connect_kwargs = {"hostname": host, "port": port, "timeout": timeout, "allow_agent": False, "look_for_keys": False}
+                connect_kwargs = {
+                    "hostname": host,
+                    "port": port,
+                    "timeout": timeout,
+                    "allow_agent": False,
+                    "look_for_keys": False,
+                }
                 if ssh_key:
                     with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
                         tmp.write(ssh_key)
@@ -131,20 +140,37 @@ def trust_ssh_host(host: str, port: int, username: str = "", password: str = "",
                 ssh.load_host_keys(kh_file)
                 ssh.connect(**connect_kwargs)  # type: ignore[arg-type]
             except Exception as e:
-                logger.warning("trust_ssh_host: host key saved but credential check failed", exc_info=e)
                 if isinstance(e, paramiko.AuthenticationException):
+                    logger.warning("trust_ssh_host: credential check failed (auth) for %s@%s:%s", username, host, port)
                     warning = "（主机密钥已保存，但凭据验证失败，请检查用户名/密码/密钥）"
+                elif isinstance(e, (TimeoutError, OSError)):
+                    logger.warning("trust_ssh_host: credential check failed (unreachable) for %s:%s", host, port)
+                    warning = "（主机密钥已保存，但连接验证失败，服务器不可达）"
                 else:
-                    warning = f"（主机密钥已保存，但连接验证失败：{e}）"
+                    logger.warning("trust_ssh_host: credential check failed for %s:%s — %s", host, port, e)
+                    warning = "（主机密钥已保存，但连接验证失败，请检查主机可达性及配置）"
 
         return {
             "success": True,
             "key_fingerprint": f"SHA256:{fingerprint}",
-            "message": f"已信任主机 {host}:{port}，指纹: SHA256:{fingerprint}{warning}"
+            "message": f"已信任主机 {host}:{port}，指纹: SHA256:{fingerprint}{warning}",
         }
     except Exception as e:
-        logger.error("SSH host trust failed", exc_info=e)
-        msg = str(e) if isinstance(e, (paramiko.AuthenticationException, paramiko.SSHException, OSError, RuntimeError)) else "连接失败，请检查主机是否可达"
+        if isinstance(e, paramiko.AuthenticationException):
+            logger.warning("SSH trust auth failed: %s@%s:%s", username, host, port)
+            msg = "凭据验证失败，请检查用户名/密码/密钥"
+        elif isinstance(e, (paramiko.SSHException,)):
+            logger.warning("SSH trust protocol error: %s:%s — %s", host, port, e)
+            msg = "SSH 协议错误，请检查服务端配置"
+        elif isinstance(e, OSError):
+            logger.warning("SSH trust unreachable: %s:%s — %s", host, port, e)
+            msg = "连接失败，请检查主机地址、端口及网络可达性"
+        elif isinstance(e, RuntimeError):
+            logger.warning("SSH trust host key failed: %s:%s — %s", host, port, e)
+            msg = "主机密钥获取失败，请检查服务端 SSH 服务状态"
+        else:
+            logger.error("SSH host trust failed", exc_info=e)
+            msg = "连接失败，请检查主机配置"
         return {"success": False, "message": msg}
     finally:
         if tmp_file:
@@ -170,6 +196,7 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     import paramiko
 
     from backend.config import settings
+
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
 
@@ -245,7 +272,7 @@ def _ssh_cmd(ssh, cmd: str) -> str:
 
 
 # 进度条特征：终端用 \r 刷新，形如 "[==>                ]" 或 "[=====>     ]"
-_PROGRESS_BAR = re.compile(r'\[[=> ]+\]')
+_PROGRESS_BAR = re.compile(r"\[[=> ]+\]")
 
 
 def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
@@ -254,7 +281,7 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
     有数据时全速读，没数据时才 sleep，保证高吞吐。
     log_fn 签名: log_fn(message: str)
     """
-    ANSI_RE = re.compile(chr(27) + r'\[[0-9;?]*[A-Za-z]')
+    ANSI_RE = re.compile(chr(27) + r"\[[0-9;?]*[A-Za-z]")
     BATCH = 50
     channel = ssh.get_transport().open_session()
     try:
@@ -267,11 +294,11 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
             # 去掉 ANSI 转义码，\r 分段智能去重：
             # - 连续的进度条段（如 "[==>   ]" → "[====> ]"）只保留最后一段
             # - 其余所有内容全部保留，不写死任何关键词
-            line = ANSI_RE.sub('', line)
+            line = ANSI_RE.sub("", line)
             # 快速路径：不含 \r 的普通行原样返回，避免误进分段逻辑
-            if '\r' not in line:
+            if "\r" not in line:
                 return line
-            segments = [p.strip() for p in line.split('\r') if p.strip()]
+            segments = [p.strip() for p in line.split("\r") if p.strip()]
             if not segments:
                 return ""
             if len(segments) == 1:
@@ -373,20 +400,21 @@ class DeployTarget:
       - apply: kubectl apply -f {path} (默认，有 path 时)
       - setimage: kubectl set image (无 path 时兜底)
     """
+
     host: str = ""
     port: int = 22
     user: str = "root"
     password: str = ""
-    ssh_key: str = ""              # SSH 私钥内容（PEM 格式）
-    path: str = ""                 # compose路径 / K8s YAML路径 / Ansible playbook路径
-    mode: str = ""                 # docker | commands | ansible (SSH) / remote | commands (Compose)
+    ssh_key: str = ""  # SSH 私钥内容（PEM 格式）
+    path: str = ""  # compose路径 / K8s YAML路径 / Ansible playbook路径
+    mode: str = ""  # docker | commands | ansible (SSH) / remote | commands (Compose)
     options: dict = field(default_factory=dict)  # commands / namespace / deployment / container
 
 
 @dataclass
 class DeployResult:
     image: str
-    status: str                     # ok | failed | skipped
+    status: str  # ok | failed | skipped
     output: str = ""
 
 
@@ -402,7 +430,11 @@ class Deployer(ABC):
 
     @abstractmethod
     def deploy(
-        self, target: DeployTarget, image: str, project: str, tag: str,
+        self,
+        target: DeployTarget,
+        image: str,
+        project: str,
+        tag: str,
         callback=None,
     ) -> DeployResult:
         """执行部署，同步方法（由调用方负责线程池包装）

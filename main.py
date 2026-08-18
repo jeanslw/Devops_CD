@@ -4,6 +4,7 @@ FastAPI 部署执行器 — SSH / docker-compose / K8s
 
 架构: main.py(入口) → routers → services → deployers
 """
+
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,6 +75,7 @@ app.include_router(ci_build.router)
 app.include_router(users.router)
 app.include_router(webhooks.router)
 
+
 # ── 异常处理器 ──
 @app.exception_handler(AppException)
 async def app_exception_handler(request, exc: AppException):
@@ -84,11 +86,9 @@ async def app_exception_handler(request, exc: AppException):
             body["error_params"] = exc.error_params
     return JSONResponse(status_code=exc.status_code, content=body)
 
+
 # 静态文件
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-
-
-
 
 
 # ── 健康检查 ──
@@ -134,6 +134,7 @@ def vue_spa(full_path: str):
 # ── 启动 ──
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "main:app",
         host=settings.host,

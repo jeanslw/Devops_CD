@@ -47,8 +47,9 @@ class FluxCDDeployer(K8sSubDeployer):
     def cd_type(self) -> str:
         return "fluxcd"
 
-    def stop(self, req, project: str, host: str, port: int = 22,
-             user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
+    def stop(
+        self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
+    ) -> dict:
         """停止：flux suspend <resource>"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         try:
@@ -60,7 +61,7 @@ class FluxCDDeployer(K8sSubDeployer):
             cmd = f"flux suspend {flux_kind} {flux_name} -n {settings.flux_namespace}"
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
-            return {"success": ec == 0, "output": (err or out)[:settings.log_truncate_chars]}
+            return {"success": ec == 0, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("FluxCD stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}
@@ -79,7 +80,7 @@ class FluxCDDeployer(K8sSubDeployer):
             raw = _ssh_cmd(
                 ssh,
                 f"kubectl get {resource_kind} {resource_name} -n {settings.flux_namespace} "
-                f"-o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}|{{.status.conditions[?(@.type==\"Ready\")].reason}}|{{.status.conditions[?(@.type==\"Ready\")].message}}' 2>/dev/null",
+                f'-o jsonpath=\'{{.status.conditions[?(@.type=="Ready")].status}}|{{.status.conditions[?(@.type=="Ready")].reason}}|{{.status.conditions[?(@.type=="Ready")].message}}\' 2>/dev/null',
             )
             if not raw or "|" not in raw:
                 return None
@@ -106,7 +107,7 @@ class FluxCDDeployer(K8sSubDeployer):
                     "output": f"No Flux resource (HelmRelease/Kustomization) referencing image [{img_name}] found in flux-system namespace.",
                 }
             if flux_name != project.split("/")[-1]:
-                _log(callback, S("deploy_log.flux_name_diff", name=flux_name, project=project.split('/')[-1]))
+                _log(callback, S("deploy_log.flux_name_diff", name=flux_name, project=project.split("/")[-1]))
             _log(callback, S("deploy_log.flux_detected", kind=flux_kind, name=flux_name))
 
             # 1. 获取部署前状态
@@ -156,7 +157,7 @@ class FluxCDDeployer(K8sSubDeployer):
             annotate_cmd = (
                 f"kubectl annotate {shlex.quote(flux_kind)} {shlex.quote(flux_name)} "
                 f"-n {shlex.quote(settings.flux_namespace)} "
-                f"reconcile.fluxcd.io/requestedAt=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --overwrite"
+                f'reconcile.fluxcd.io/requestedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite'
             )
             anno_out, anno_err, anno_ec = _exec_exit(ssh, annotate_cmd)
             if anno_ec != 0:
@@ -190,9 +191,9 @@ class FluxCDDeployer(K8sSubDeployer):
                 if new_names or terminating:
                     flux_reacted = True
                     status = f"新 Pod: {new_names}" if new_names else "旧 Pod 正在终止"
-                    _log(callback, S("deploy_log.flux_reacted", n=i+1, status=status))
+                    _log(callback, S("deploy_log.flux_reacted", n=i + 1, status=status))
                     break
-                _log(callback, S("deploy_log.flux_polling", n=i+1, total=9))
+                _log(callback, S("deploy_log.flux_polling", n=i + 1, total=9))
 
             if not flux_reacted:
                 flux_err = _check_flux_error(ssh, flux_name, flux_kind)
@@ -250,7 +251,7 @@ class FluxCDDeployer(K8sSubDeployer):
                     + f"\n\n{rollout_result}\n\n部署后运行版本:\n{after}"
                     + f"\n\n{status_text}\n\n验证部署: ✅ 部署成功！"
                 )
-                return {"success": True, "output": result[:settings.log_truncate_chars]}
+                return {"success": True, "output": result[: settings.log_truncate_chars]}
             elif deploy_name:
                 _log(callback, S("deploy_log.flux_fail_error"))
                 result = (
@@ -258,7 +259,7 @@ class FluxCDDeployer(K8sSubDeployer):
                     + f"\n\n{rollout_result}\n\n部署后运行版本:\n{after}"
                     + "\n\n验证部署: ❌ 部署失败！"
                 )
-                return {"success": False, "output": result[:settings.log_truncate_chars]}
+                return {"success": False, "output": result[: settings.log_truncate_chars]}
             else:
                 # 没找到 deployment，但 Flux 已 patch 触发协调，由 Flux 自己完成
                 status_text = f"当前 Pod: {running_count} 个 Running"
@@ -268,7 +269,7 @@ class FluxCDDeployer(K8sSubDeployer):
                     + f"\n\n部署后运行版本:\n{after or '(无)'}"
                     + f"\n\n{status_text}\n\n验证部署: ⚠️ 已触发 Flux 协调，未找到对应 Deployment"
                 )
-                return {"success": True, "output": result[:settings.log_truncate_chars]}
+                return {"success": True, "output": result[: settings.log_truncate_chars]}
         except Exception as e:
             logger.error("FluxCD deploy failed", exc_info=e)
             _log(callback, S("deploy_log.flux_fail_error", error=str(e)))

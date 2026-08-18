@@ -22,17 +22,17 @@ router = APIRouter()
 
 # ── 危险命令黑名单（正则匹配，检测完整命令行）──
 _DANGEROUS_PATTERNS = [
-    r'\brm\s+.*-rf\s+/',                # rm -rf /
-    r'\brm\s+.*-rf\s+~',                # rm -rf ~
-    r'\bdd\s+if=',                       # dd if=/dev/zero of=/dev/sda
-    r'\bmkfs\.',                         # mkfs.ext4 /dev/sda
-    r':\(\)\s*\{.*:\|:&\s*\};:',        # fork bomb
-    r'>\s*/dev/sd',                      # redirect to disk device
-    r'\bchmod\s+.*777\s+/',             # chmod 777 /
-    r'>\s*/etc/passwd',                  # overwrite system files
-    r'\brm\s+.*--no-preserve-root\s+/', # rm --no-preserve-root /
-    r'\bchown\s+.*-R\s+\w+\s+/',        # chown -R on /
-    r'\bchmod\s+.*-R\s+\d+\s+/etc',     # chmod on /etc
+    r"\brm\s+.*-rf\s+/",  # rm -rf /
+    r"\brm\s+.*-rf\s+~",  # rm -rf ~
+    r"\bdd\s+if=",  # dd if=/dev/zero of=/dev/sda
+    r"\bmkfs\.",  # mkfs.ext4 /dev/sda
+    r":\(\)\s*\{.*:\|:&\s*\};:",  # fork bomb
+    r">\s*/dev/sd",  # redirect to disk device
+    r"\bchmod\s+.*777\s+/",  # chmod 777 /
+    r">\s*/etc/passwd",  # overwrite system files
+    r"\brm\s+.*--no-preserve-root\s+/",  # rm --no-preserve-root /
+    r"\bchown\s+.*-R\s+\w+\s+/",  # chown -R on /
+    r"\bchmod\s+.*-R\s+\d+\s+/etc",  # chmod on /etc
 ]
 
 _DANGEROUS_WARNING = "\r\n⚠️  危险命令已被拦截，未发送到服务器\r\n"
@@ -58,14 +58,10 @@ async def _ws_verify(token: str | None = None) -> str:
 
     db = get_db()
     with db.conn() as conn:
-        row = conn.execute(
-            "SELECT username, password_hash FROM admin_users WHERE username=?", (username,)
-        ).fetchone()
+        row = conn.execute("SELECT username, password_hash FROM admin_users WHERE username=?", (username,)).fetchone()
         if row is None:
             raise HTTPException(401, "token 无效")
-        expected = base64.b64encode(
-            f"{row['username']}:{row['password_hash']}".encode()
-        ).decode()
+        expected = base64.b64encode(f"{row['username']}:{row['password_hash']}".encode()).decode()
         if token != expected:
             raise HTTPException(401, "token 无效")
         return row["username"]
@@ -84,9 +80,7 @@ async def terminal(websocket: WebSocket, server_id: int):
     # 权限检查：需要 cd.webshell
     db = get_db()
     with db.conn() as conn:
-        row = conn.execute(
-            "SELECT role FROM admin_users WHERE username=?", (username,)
-        ).fetchone()
+        row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
         if row:
             perms = _query_permissions(db, row["role"])
             if row["role"] != "super_admin" and "cd.webshell" not in perms:
@@ -105,8 +99,11 @@ async def terminal(websocket: WebSocket, server_id: int):
         return
 
     target = DeployTarget(
-        host=srv["host"], port=srv["port"], user=srv["user"],
-        password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""),
+        host=srv["host"],
+        port=srv["port"],
+        user=srv["user"],
+        password=decrypt(srv["password"] or ""),
+        ssh_key=decrypt(srv["ssh_key"] or ""),
     )
 
     # SSH 连接（在线程池中执行，避免阻塞事件循环）
@@ -195,6 +192,7 @@ async def terminal(websocket: WebSocket, server_id: int):
 
 # ── SCP 文件上传 ──
 
+
 @router.post("/api/upload/{server_id}")
 async def upload_file(
     server_id: int,
@@ -213,7 +211,7 @@ async def upload_file(
     # 浏览器可能传入 Windows 完整路径 (D:\tmp\2012.txt)，\ 在 Linux 上不被识别为分隔符
     # 统一将 \ 转为 /，再取 basename，确保 Windows/Linux 后端行为一致
     _fn = (file.filename or "").replace("\\", "/")
-    _fn = re.sub(r'^[a-zA-Z]:', '', _fn)  # 去除 Windows 盘符
+    _fn = re.sub(r"^[a-zA-Z]:", "", _fn)  # 去除 Windows 盘符
     safe_filename = _fn.rsplit("/", 1)[-1]
     if not safe_filename:
         raise ValidationError("无效文件名", error_key="errors.invalid_filename")
@@ -226,7 +224,7 @@ async def upload_file(
     # 用 posixpath 强制按 POSIX 规则归一化，无论 Python 跑在 Windows 还是 Linux 都一致
     # （os.path.realpath 在 Windows 上会自动加盘符 D:\，导致 SFTP 把目标写到错误位置）
     combined = (path.rstrip("/") + "/" + safe_filename).replace("\\", "/")
-    combined = re.sub(r'^[a-zA-Z]:', '', combined)  # 去 Windows 盘符
+    combined = re.sub(r"^[a-zA-Z]:", "", combined)  # 去 Windows 盘符
     target = posixpath.normpath(combined)
     # 拦截写入系统敏感目录
     blocked_prefixes = ["/etc", "/boot", "/sys", "/proc", "/dev"]
@@ -239,8 +237,11 @@ async def upload_file(
             )
 
     dt = DeployTarget(
-        host=srv["host"], port=srv["port"], user=srv["user"],
-        password=decrypt(srv["password"] or ""), ssh_key=decrypt(srv["ssh_key"] or ""),
+        host=srv["host"],
+        port=srv["port"],
+        user=srv["user"],
+        password=decrypt(srv["password"] or ""),
+        ssh_key=decrypt(srv["ssh_key"] or ""),
     )
     try:
         ssh = await asyncio.to_thread(ssh_connect, dt, settings.ssh_timeout)

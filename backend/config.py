@@ -6,14 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # ── 数据库（必填: sqlite | mysql）──
     db_driver: str = ""
-    db_path: str = ""           # SQLite 模式必填，MySQL 模式忽略
+    db_path: str = ""  # SQLite 模式必填，MySQL 模式忽略
     db_host: str = ""
     db_port: int = 3306
     db_name: str = ""
     db_user: str = ""
     db_pass: str = ""
-    db_pool_max: int = 10       # MySQL 连接池最大值
-    db_pool_min: int = 2        # MySQL 连接池最小值（常开连接数）
+    db_pool_max: int = 10  # MySQL 连接池最大值
+    db_pool_min: int = 2  # MySQL 连接池最小值（常开连接数）
 
     # ── 加密密钥（可选）──
     # 用于加密 cd_servers 的 password / ssh_key；留空则自动生成 .cd_secret_key 文件
@@ -40,20 +40,20 @@ class Settings(BaseSettings):
 
     # ── SSH（可选）──
     ssh_timeout: int = 30
-    ssh_keepalive: int = 30          # 0 关闭 keepalive
-    ssh_auto_trust: bool = False      # (已废弃) 保留字段仅为兼容旧配置，代码中始终使用 RejectPolicy + known_hosts
-                                       # 用户必须先调用 trust_ssh_host 把 host key 存入 ~/.cd_service/known_hosts
+    ssh_keepalive: int = 30  # 0 关闭 keepalive
+    ssh_auto_trust: bool = False  # (已废弃) 保留字段仅为兼容旧配置，代码中始终使用 RejectPolicy + known_hosts
+    # 用户必须先调用 trust_ssh_host 把 host key 存入 ~/.cd_service/known_hosts
 
     # ── Docker 部署（可选）──
     container_restart_policy: str = "always"
 
     # ── K8s 部署（可选）──
     flux_namespace: str = "flux-system"
-    k8s_helm_timeout: int = 300         # helm upgrade --install --timeout（秒）
-    k8s_rollout_timeout: int = 120      # kubectl rollout status --timeout（秒）
+    k8s_helm_timeout: int = 300  # helm upgrade --install --timeout（秒）
+    k8s_rollout_timeout: int = 120  # kubectl rollout status --timeout（秒）
 
     # ── 通知（可选）──
-    dingtalk_secret: str = ""    # 钉钉加签密钥
+    dingtalk_secret: str = ""  # 钉钉加签密钥
     log_truncate_chars: int = 20000
     notify_truncate_chars: int = 200
 
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     monitor_cache_pods: int = 30
     monitor_cache_docker: int = 30
     monitor_cache_pod_detail: int = 15
-    alert_check_interval: int = 60      # 告警检测间隔（秒）
+    alert_check_interval: int = 60  # 告警检测间隔（秒）
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -30,9 +30,7 @@ class RegistryService:
         """读取配置项"""
         with self._db.conn() as conn:
             try:
-                row = conn.execute(
-                    "SELECT value FROM cd_config WHERE key_name=?", (key,)
-                ).fetchone()
+                row = conn.execute("SELECT value FROM cd_config WHERE key_name=?", (key,)).fetchone()
                 return row["value"] if row else None
             except Exception:
                 return None
@@ -85,7 +83,7 @@ class RegistryService:
             return ""
         s = iso_str.replace("T", " ").replace("Z", "")
         if "." in s:
-            s = s[:s.index(".")]
+            s = s[: s.index(".")]
         return s
 
     # ── 从 CI 映射获取待同步仓库 ──
@@ -104,15 +102,13 @@ class RegistryService:
         """同步单个仓库的 artifacts 到数据库，返回新增/更新的数量"""
         # 确保 repo 记录存在
         rows = conn.execute(
-            "SELECT id FROM cd_registry_repositories WHERE project_name=? AND repo_name=?",
-            (project, repo)
+            "SELECT id FROM cd_registry_repositories WHERE project_name=? AND repo_name=?", (project, repo)
         ).fetchall()
         if rows:
             repo_id = rows[0]["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO cd_registry_repositories(project_name,repo_name) VALUES (?,?)",
-                (project, repo)
+                "INSERT INTO cd_registry_repositories(project_name,repo_name) VALUES (?,?)", (project, repo)
             )
             repo_id = cur.lastrowid
 
@@ -134,7 +130,7 @@ class RegistryService:
             # upsert
             rows = conn.execute(
                 "SELECT id FROM cd_registry_artifacts WHERE repo_id=? AND tag=? AND digest=?",
-                (repo_id, art["tag"], art["digest"])
+                (repo_id, art["tag"], art["digest"]),
             ).fetchall()
             if rows:
                 conn.execute(
@@ -142,10 +138,20 @@ class RegistryService:
                     scan_status=?,scan_severity=?,vuln_critical=?,vuln_high=?,vuln_medium=?,
                     vuln_low=?,vuln_fixable=?,last_sync=?
                     WHERE id=?""",
-                    (art["size_bytes"], push_time, pull_time,
-                     art["scan_status"], art["scan_severity"],
-                     art["vuln_critical"], art["vuln_high"], art["vuln_medium"],
-                     art["vuln_low"], art["vuln_fixable"], now, rows[0]["id"])
+                    (
+                        art["size_bytes"],
+                        push_time,
+                        pull_time,
+                        art["scan_status"],
+                        art["scan_severity"],
+                        art["vuln_critical"],
+                        art["vuln_high"],
+                        art["vuln_medium"],
+                        art["vuln_low"],
+                        art["vuln_fixable"],
+                        now,
+                        rows[0]["id"],
+                    ),
                 )
             else:
                 conn.execute(
@@ -153,11 +159,22 @@ class RegistryService:
                     (repo_id,tag,digest,size_bytes,push_time,pull_time,
                      scan_status,scan_severity,vuln_critical,vuln_high,vuln_medium,vuln_low,vuln_fixable,last_sync)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (repo_id, art["tag"], art["digest"], art["size_bytes"],
-                     push_time, pull_time,
-                     art["scan_status"], art["scan_severity"],
-                     art["vuln_critical"], art["vuln_high"], art["vuln_medium"],
-                     art["vuln_low"], art["vuln_fixable"], now)
+                    (
+                        repo_id,
+                        art["tag"],
+                        art["digest"],
+                        art["size_bytes"],
+                        push_time,
+                        pull_time,
+                        art["scan_status"],
+                        art["scan_severity"],
+                        art["vuln_critical"],
+                        art["vuln_high"],
+                        art["vuln_medium"],
+                        art["vuln_low"],
+                        art["vuln_fixable"],
+                        now,
+                    ),
                 )
             count += 1
         return count
@@ -170,19 +187,11 @@ class RegistryService:
                 mapped = {(r["project"], r["repo"]) for r in ci_repos}
 
                 # 清理已不在 ci_job_git_map 中的历史脏数据
-                all_repos = conn.execute(
-                    "SELECT id, project_name, repo_name FROM cd_registry_repositories"
-                ).fetchall()
+                all_repos = conn.execute("SELECT id, project_name, repo_name FROM cd_registry_repositories").fetchall()
                 for r in all_repos:
                     if (r["project_name"], r["repo_name"]) not in mapped:
-                        conn.execute(
-                            "DELETE FROM cd_registry_artifacts WHERE repo_id=?",
-                            (r["id"],)
-                        )
-                        conn.execute(
-                            "DELETE FROM cd_registry_repositories WHERE id=?",
-                            (r["id"],)
-                        )
+                        conn.execute("DELETE FROM cd_registry_artifacts WHERE repo_id=?", (r["id"],))
+                        conn.execute("DELETE FROM cd_registry_repositories WHERE id=?", (r["id"],))
 
                 total = 0
                 errors = []
@@ -205,7 +214,8 @@ class RegistryService:
         with self._db.conn() as conn:
             ci_repos = self._get_ci_repos(conn)
             matched = [
-                cr for cr in ci_repos
+                cr
+                for cr in ci_repos
                 if cr["project"] == project or cr["repo"] == project or cr["repo"].startswith(project + "/")
             ]
             if not matched:
@@ -222,15 +232,13 @@ class RegistryService:
     # ── 查询 ──
 
     def get_repositories(self) -> dict:
-        """获取仓库列表（来自数据库），返回 {"repositories": [...], "last_sync": "..."} """
+        """获取仓库列表（来自数据库），返回 {"repositories": [...], "last_sync": "..."}"""
         with self._db.conn() as conn:
             ci_repos = self._get_ci_repos(conn)
             mapped = {(r["project"], r["repo"]) for r in ci_repos}
 
             # 全局最后同步时间
-            sync_row = conn.execute(
-                "SELECT MAX(last_sync) AS last_sync FROM cd_registry_artifacts"
-            ).fetchone()
+            sync_row = conn.execute("SELECT MAX(last_sync) AS last_sync FROM cd_registry_artifacts").fetchone()
             last_sync = sync_row["last_sync"] or ""
 
             if not mapped:
@@ -251,21 +259,22 @@ class RegistryService:
                 key = (row["project_name"], row["repo_name"])
                 if key not in mapped:
                     continue
-                result.append({
-                    "id": row["id"],
-                    "project": row["project_name"],
-                    "repo": row["repo_name"],
-                    "tag_count": row["tag_count"] or 0,
-                    "latest_push": row["latest_push"] or "",
-                })
+                result.append(
+                    {
+                        "id": row["id"],
+                        "project": row["project_name"],
+                        "repo": row["repo_name"],
+                        "tag_count": row["tag_count"] or 0,
+                        "latest_push": row["latest_push"] or "",
+                    }
+                )
             return {"repositories": result, "last_sync": last_sync}
 
     def get_artifacts(self, repo_id: int, page: int = 1, page_size: int = 20) -> dict:
         """获取指定仓库的 artifact/tag 列表（分页）"""
         with self._db.conn() as conn:
             total = conn.execute(
-                "SELECT COUNT(*) as cnt FROM cd_registry_artifacts WHERE repo_id=?",
-                (repo_id,)
+                "SELECT COUNT(*) as cnt FROM cd_registry_artifacts WHERE repo_id=?", (repo_id,)
             ).fetchone()["cnt"]
 
             offset = (page - 1) * page_size
@@ -276,7 +285,7 @@ class RegistryService:
                 WHERE a.repo_id=?
                 ORDER BY a.push_time DESC
                 LIMIT ? OFFSET ?""",
-                (repo_id, page_size, offset)
+                (repo_id, page_size, offset),
             ).fetchall()
             items = [
                 {
@@ -337,7 +346,12 @@ class RegistryService:
             if not row:
                 return {"error": "Tag 不存在"}
 
-            c, h, m, low = (row["vuln_critical"] or 0), (row["vuln_high"] or 0), (row["vuln_medium"] or 0), (row["vuln_low"] or 0)
+            c, h, m, low = (
+                (row["vuln_critical"] or 0),
+                (row["vuln_high"] or 0),
+                (row["vuln_medium"] or 0),
+                (row["vuln_low"] or 0),
+            )
             digest = row["digest"] or ""
             # repo_name="mycode/devops-glue" → harbor_project="mycode", harbor_repo="devops-glue"
             repo_name = row["repo_name"] or ""
@@ -431,15 +445,13 @@ class RegistryService:
         with self._db.conn() as conn:
             # 获取仓库信息
             repo_row = conn.execute(
-                "SELECT project_name, repo_name FROM cd_registry_repositories WHERE id=?",
-                (repo_id,)
+                "SELECT project_name, repo_name FROM cd_registry_repositories WHERE id=?", (repo_id,)
             ).fetchone()
             if not repo_row:
                 return {"ok": False, "error": "仓库不存在"}
 
             artifact_row = conn.execute(
-                "SELECT id, digest FROM cd_registry_artifacts WHERE repo_id=? AND tag=?",
-                (repo_id, tag)
+                "SELECT id, digest FROM cd_registry_artifacts WHERE repo_id=? AND tag=?", (repo_id, tag)
             ).fetchone()
             if not artifact_row:
                 return {"ok": False, "error": "Tag 不存在"}
@@ -451,17 +463,14 @@ class RegistryService:
 
             # 安全校验 2：最近 3 个 Tag 保护
             recent = conn.execute(
-                "SELECT tag FROM cd_registry_artifacts WHERE repo_id=? ORDER BY push_time DESC LIMIT 3",
-                (repo_id,)
+                "SELECT tag FROM cd_registry_artifacts WHERE repo_id=? ORDER BY push_time DESC LIMIT 3", (repo_id,)
             ).fetchall()
             protected = {r["tag"] for r in recent}
             if tag in protected:
                 return {"ok": False, "error": "最近 3 个 Tag 受保护，禁止删除"}
 
             # 调 Harbor API 删除
-            success = self._harbor.delete_artifact(
-                repo_row["repo_name"], tag, artifact_row["digest"]
-            )
+            success = self._harbor.delete_artifact(repo_row["repo_name"], tag, artifact_row["digest"])
             if not success:
                 return {"ok": False, "error": "Harbor 删除失败，请检查权限或配置"}
 

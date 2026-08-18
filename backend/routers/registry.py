@@ -25,6 +25,7 @@ class SyncConfigRequest(BaseModel):
 
 # ── 仓库 ──
 
+
 @router.get("/repositories")
 def list_repositories(
     _user: dict = Depends(require_perm("cd.image-registry")),
@@ -36,6 +37,7 @@ def list_repositories(
 
 
 # ── Artifact / Tag ──
+
 
 @router.get("/artifacts/{repo_id}")
 def list_artifacts(
@@ -51,6 +53,7 @@ def list_artifacts(
 
 
 # ── 扫描报告 ──
+
 
 @router.get("/scan/report/{repo_id}/{tag}")
 def get_scan_report(
@@ -90,6 +93,7 @@ def trigger_scan(
 
 # ── 删除 ──
 
+
 @router.delete("/artifacts/{repo_id}")
 def delete_artifact(
     repo_id: int,
@@ -111,6 +115,7 @@ def delete_artifact(
 
 # ── 同步 ──
 
+
 @router.post("/sync")
 def trigger_sync(
     project: str = "",
@@ -129,6 +134,7 @@ def trigger_sync(
 
 
 # ── 同步配置 ──
+
 
 @router.get("/config")
 def get_sync_config(

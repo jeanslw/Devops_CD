@@ -77,9 +77,13 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                     except ValueError:
                         continue
                     if resource_type == "docker_cpu" and cpu_val >= threshold:
-                        results.append({"name": name, "value": int(cpu_val), "resource": resource_type, "sub_type": "docker"})
+                        results.append(
+                            {"name": name, "value": int(cpu_val), "resource": resource_type, "sub_type": "docker"}
+                        )
                     elif resource_type == "docker_memory" and mem_val >= threshold:
-                        results.append({"name": name, "value": int(mem_val), "resource": resource_type, "sub_type": "docker"})
+                        results.append(
+                            {"name": name, "value": int(mem_val), "resource": resource_type, "sub_type": "docker"}
+                        )
 
         elif resource_type.startswith("pod_"):
             # 采集 k8s pods
@@ -104,17 +108,31 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                     # 简化：cpu 按 mCore 判断 > threshold*10（100m=10% 1core），内存按 node 32Gi 估算
                     if resource_type == "pod_cpu":
                         if cpu_val > threshold * 10:
-                            results.append({"name": f"{ns}/{pod_name}", "value": int(cpu_val / 10), "resource": resource_type, "sub_type": "pod"})
+                            results.append(
+                                {
+                                    "name": f"{ns}/{pod_name}",
+                                    "value": int(cpu_val / 10),
+                                    "resource": resource_type,
+                                    "sub_type": "pod",
+                                }
+                            )
                     elif resource_type == "pod_memory":
                         limit_mi = 8 * 1024 * threshold / 100
                         if mem_val > limit_mi:
-                            results.append({"name": f"{ns}/{pod_name}", "value": int(mem_val / (8 * 1024 / 100)), "resource": resource_type, "sub_type": "pod"})
+                            results.append(
+                                {
+                                    "name": f"{ns}/{pod_name}",
+                                    "value": int(mem_val / (8 * 1024 / 100)),
+                                    "resource": resource_type,
+                                    "sub_type": "pod",
+                                }
+                            )
 
         elif resource_type.startswith("process_"):
             # 采集 top5 进程
             top_out = _ssh_cmd(
                 ssh,
-                "ps aux --sort=-%cpu --no-headers 2>/dev/null | head -10 | awk '{print $2\"|\"$3\"|\"$4\"|\"$11}'",
+                'ps aux --sort=-%cpu --no-headers 2>/dev/null | head -10 | awk \'{print $2"|"$3"|"$4"|"$11}\'',
             )
             if top_out:
                 for line in top_out.strip().split("\n"):
@@ -129,9 +147,23 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                     except ValueError:
                         continue
                     if resource_type == "process_cpu" and cpu_val >= threshold:
-                        results.append({"name": f"{cmd}({pid})", "value": int(cpu_val), "resource": resource_type, "sub_type": "process"})
+                        results.append(
+                            {
+                                "name": f"{cmd}({pid})",
+                                "value": int(cpu_val),
+                                "resource": resource_type,
+                                "sub_type": "process",
+                            }
+                        )
                     elif resource_type == "process_memory" and mem_val >= threshold:
-                        results.append({"name": f"{cmd}({pid})", "value": int(mem_val), "resource": resource_type, "sub_type": "process"})
+                        results.append(
+                            {
+                                "name": f"{cmd}({pid})",
+                                "value": int(mem_val),
+                                "resource": resource_type,
+                                "sub_type": "process",
+                            }
+                        )
 
         elif resource_type.startswith("custom_"):
             # ── 自定义监控项 ──
@@ -145,7 +177,9 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
             metric_id = int(parts[2]) if len(parts) > 2 else None
 
             with db.conn() as conn:
-                row = conn.execute("SELECT * FROM cd_custom_monitors WHERE id=? AND enabled=1", (monitor_id,)).fetchone()
+                row = conn.execute(
+                    "SELECT * FROM cd_custom_monitors WHERE id=? AND enabled=1", (monitor_id,)
+                ).fetchone()
                 if row:
                     metrics = conn.execute(
                         "SELECT * FROM cd_custom_monitor_metrics WHERE monitor_id=? ORDER BY sort_order, id",
@@ -183,16 +217,18 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                     if item.get("metric_name"):
                         display_name = f"{display_name} {item['metric_name']}"
 
-                    results.append({
-                        "name": display_name,
-                        "value": int(val),
-                        "resource": resource_type,
-                        "sub_type": "custom",
-                        "unit": item.get("unit", ""),
-                        "raw": item.get("raw_val", raw),
-                        "entity_label": entity_label,
-                        "metric_name": item.get("metric_name", ""),
-                    })
+                    results.append(
+                        {
+                            "name": display_name,
+                            "value": int(val),
+                            "resource": resource_type,
+                            "sub_type": "custom",
+                            "unit": item.get("unit", ""),
+                            "raw": item.get("raw_val", raw),
+                            "entity_label": entity_label,
+                            "metric_name": item.get("metric_name", ""),
+                        }
+                    )
 
     except Exception as e:
         logger.warning(f"Alert: metric collection failed for {server['host']}: {e}")

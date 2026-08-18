@@ -15,11 +15,13 @@ class ArgoCDDeployer(K8sSubDeployer):
     def cd_type(self) -> str:
         return "argocd"
 
-    def stop(self, req, project: str, host: str, port: int = 22,
-             user: str = "root", pwd: str = "", ssh_key: str = "") -> dict:
+    def stop(
+        self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
+    ) -> dict:
         """停止：删除 ArgoCD Application"""
         import requests
         import urllib3
+
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         token = pwd
         base = req.api_url or f"https://{host}"
@@ -39,6 +41,7 @@ class ArgoCDDeployer(K8sSubDeployer):
         """Argo CD: patch image + sync"""
         import requests
         import urllib3
+
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         import time
 
@@ -98,7 +101,13 @@ class ArgoCDDeployer(K8sSubDeployer):
             kustomize = app.get("spec", {}).get("source", {}).get("kustomize", {})
             if kustomize:
                 # 用 Application 名作为 Kustomize image name（常见约定）
-                new_images = [{"name": app_name, "newName": image.split(":")[0], "newTag": image.split(":")[1] if ":" in image else "latest"}]
+                new_images = [
+                    {
+                        "name": app_name,
+                        "newName": image.split(":")[0],
+                        "newTag": image.split(":")[1] if ":" in image else "latest",
+                    }
+                ]
                 patch = {"spec": {"source": {"kustomize": {"images": new_images}}}}
             else:
                 # Helm: set image tag parameter
@@ -113,14 +122,18 @@ class ArgoCDDeployer(K8sSubDeployer):
                 patch = {"spec": {"source": {"helm": {"parameters": params}}}}
 
             log(S("deploy_log.argocd_update"))
-            r = requests.put(f"{base}/api/v1/applications/{app_name}", json=patch, headers=headers, timeout=10, verify=False)
+            r = requests.put(
+                f"{base}/api/v1/applications/{app_name}", json=patch, headers=headers, timeout=10, verify=False
+            )
             if r.status_code != 200:
                 log(S("deploy_log.argocd_update_fail", code=r.status_code, msg=r.text[:200]))
                 return {"success": False, "output": "\n".join(output)}
             log(S("deploy_log.argocd_update_ok"))
 
             log(S("deploy_log.argocd_sync"))
-            r = requests.post(f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=False)
+            r = requests.post(
+                f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=False
+            )
             if r.status_code != 200:
                 log(S("deploy_log.argocd_sync_fail", code=r.status_code, msg=r.text[:200]))
                 return {"success": False, "output": "\n".join(output)}
@@ -135,7 +148,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 a = r.json()
                 health = a.get("status", {}).get("health", {}).get("status", "")
                 sync = a.get("status", {}).get("sync", {}).get("status", "")
-                log(S("deploy_log.argocd_wait", n=i+1, total=30, health=health or 'Unknown', sync=sync or 'Unknown'))
+                log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
                 if health == "Healthy":
                     log(S("deploy_log.argocd_healthy", sync=sync))
                     success = True
@@ -146,6 +159,6 @@ class ArgoCDDeployer(K8sSubDeployer):
             return {"success": success, "output": "\n".join(output)}
         except Exception as e:
             logger.error("ArgoCD deploy failed", exc_info=e)
-            msg = str(e)
+            msg = "ArgoCD 部署失败，请查看后端日志获取详细信息"
             log(msg)
             return {"success": False, "output": msg}

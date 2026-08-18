@@ -108,21 +108,21 @@ def _rename_deployment_in_yaml(yaml_content: str, new_name: str) -> tuple[str, s
 
     for i, line in enumerate(lines):
         stripped = line.strip()
-        indent = line[:len(line) - len(line.lstrip())]
+        indent = line[: len(line) - len(line.lstrip())]
         list_prefix = ""
         if stripped.startswith("- "):
             list_prefix = "- "
             stripped = stripped[2:]  # 去掉 "- "
         # 替换 label/name 值
         for prefix in kv_prefixes:
-            if stripped.startswith(prefix) and stripped[len(prefix):].strip() == old_name:
+            if stripped.startswith(prefix) and stripped[len(prefix) :].strip() == old_name:
                 lines[i] = f"{indent}{list_prefix}{prefix} {new_name}"
                 break
         # 替换 Service name 中 "{old_name}-svc" 模式
-        if stripped.startswith("name:") and stripped[len("name:"):].strip() == f"{old_name}-svc":
+        if stripped.startswith("name:") and stripped[len("name:") :].strip() == f"{old_name}-svc":
             lines[i] = f"{indent}{list_prefix}name: {new_name}-svc"
         # 替换 env value 引用
-        if stripped.startswith("value:") and stripped[len("value:"):].strip() == f'"{old_name}"':
+        if stripped.startswith("value:") and stripped[len("value:") :].strip() == f'"{old_name}"':
             lines[i] = f'{indent}{list_prefix}value: "{new_name}"'
 
     return "\n".join(lines), old_name
@@ -148,7 +148,7 @@ def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     full_image_name = image_parts[0]
     reg = settings.harbor_registry
     # 剥离原始 registry，只保留镜像路径（如 mycode/diagnosis-runtime）
-    image_name = full_image_name[len(reg) + 1:] if reg and full_image_name.startswith(reg + "/") else full_image_name
+    image_name = full_image_name[len(reg) + 1 :] if reg and full_image_name.startswith(reg + "/") else full_image_name
     # 统一以 .env 的 registry 拼接最终镜像地址
     final_image = f"{reg}/{image_name}:{tag}" if reg else f"{image_name}:{tag}"
     final_image_name = f"{reg}/{image_name}" if reg else image_name

@@ -102,9 +102,7 @@ class Database:
     def __init__(self, db_path: str = ""):
         self._driver = settings.db_driver
         if self._driver not in self.DRIVERS:
-            raise RuntimeError(
-                f"DB_DRIVER 必须设为 sqlite 或 mysql，当前: {self._driver or '未设置'}"
-            )
+            raise RuntimeError(f"DB_DRIVER 必须设为 sqlite 或 mysql，当前: {self._driver or '未设置'}")
         self._path = Path(db_path or settings.db_path)
         self._validate_shared_db()
 
@@ -132,19 +130,21 @@ class Database:
                     cursorclass=pymysql.cursors.DictCursor,
                 )
         except ImportError as e:
-            raise RuntimeError(
-                "MySQL 模式需要安装 dbutils: pip install dbutils"
-            ) from e
+            raise RuntimeError("MySQL 模式需要安装 dbutils: pip install dbutils") from e
 
     def _validate_shared_db(self):
         """校验数据库是否为 php_api 的共享数据库。"""
         try:
             if self._driver == "mysql":
                 import pymysql
+
                 raw = pymysql.connect(
-                    host=settings.db_host, port=settings.db_port,
-                    user=settings.db_user, password=settings.db_pass,
-                    database=settings.db_name, charset="utf8mb4",
+                    host=settings.db_host,
+                    port=settings.db_port,
+                    user=settings.db_user,
+                    password=settings.db_pass,
+                    database=settings.db_name,
+                    charset="utf8mb4",
                 )
                 cur = raw.cursor()
                 cur.execute("SHOW TABLES LIKE 'ci_pipeline_tags'")
@@ -153,15 +153,12 @@ class Database:
                 raw.close()
             else:
                 conn = sqlite3.connect(str(self._path))
-                cur = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='ci_pipeline_tags'"
-                )
+                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ci_pipeline_tags'")
                 exists = cur.fetchone() is not None
                 conn.close()
         except Exception as e:
             raise RuntimeError(
-                f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。"
-                f"当前驱动: {self._driver}，错误: {e}"
+                f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。当前驱动: {self._driver}，错误: {e}"
             ) from e
         if not exists:
             raise RuntimeError(
@@ -213,6 +210,7 @@ class Database:
 
     def _connect_mysql(self):
         import pymysql
+
         conn = pymysql.connect(
             host=settings.db_host,
             port=settings.db_port,
@@ -228,7 +226,7 @@ class Database:
 
     def _ensure_cd_tables(self, conn):
         """SQLite 模式：自动创建 CD 表 + 索引"""
-        PK  = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        PK = "INTEGER PRIMARY KEY AUTOINCREMENT"
         NOW = "datetime('now','localtime')"
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_servers (
@@ -401,23 +399,23 @@ class Database:
 
     def _ensure_indexes(self, conn):
         for name, tbl, col in [
-            ("idx_cdl_project",       "cd_deploy_logs",        "project"),
-            ("idx_cdl_created",       "cd_deploy_logs",        "created_at"),
-            ("idx_cdl_deploy_id",     "cd_deploy_logs",        "deploy_id"),
-            ("idx_cdl_project_tag_status", "cd_deploy_logs",   "project, tag, status"),
-            ("idx_cdl_status",             "cd_deploy_logs",   "status"),
-            ("idx_pt_project",        "ci_pipeline_tags",      "project"),
-            ("idx_pt_created",        "ci_pipeline_tags",      "created_at"),
-            ("idx_jgm_path",          "ci_job_git_map",        "current_path"),
-            ("idx_cdr_repo_id",       "cd_registry_artifacts", "repo_id"),
-            ("idx_cds_type",          "cd_servers",            "type"),
-            ("idx_cdr_enabled",       "cd_alert_rules",        "enabled"),
-            ("idx_cdr_created",       "cd_alert_rules",        "created_at"),
-            ("idx_cdm_enabled",       "cd_custom_monitors",    "enabled"),
-            ("idx_cdm_created",       "cd_custom_monitors",    "created_at"),
-            ("idx_cwh_enabled",       "cd_webhooks",           "enabled"),
-            ("idx_we_webhook",        "cd_webhook_events",     "webhook_id"),
-            ("idx_we_received",       "cd_webhook_events",     "received_at"),
+            ("idx_cdl_project", "cd_deploy_logs", "project"),
+            ("idx_cdl_created", "cd_deploy_logs", "created_at"),
+            ("idx_cdl_deploy_id", "cd_deploy_logs", "deploy_id"),
+            ("idx_cdl_project_tag_status", "cd_deploy_logs", "project, tag, status"),
+            ("idx_cdl_status", "cd_deploy_logs", "status"),
+            ("idx_pt_project", "ci_pipeline_tags", "project"),
+            ("idx_pt_created", "ci_pipeline_tags", "created_at"),
+            ("idx_jgm_path", "ci_job_git_map", "current_path"),
+            ("idx_cdr_repo_id", "cd_registry_artifacts", "repo_id"),
+            ("idx_cds_type", "cd_servers", "type"),
+            ("idx_cdr_enabled", "cd_alert_rules", "enabled"),
+            ("idx_cdr_created", "cd_alert_rules", "created_at"),
+            ("idx_cdm_enabled", "cd_custom_monitors", "enabled"),
+            ("idx_cdm_created", "cd_custom_monitors", "created_at"),
+            ("idx_cwh_enabled", "cd_webhooks", "enabled"),
+            ("idx_we_webhook", "cd_webhook_events", "webhook_id"),
+            ("idx_we_received", "cd_webhook_events", "received_at"),
         ]:
             with suppress(Exception):
                 conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")

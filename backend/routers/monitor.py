@@ -3,6 +3,7 @@
 import logging
 import shlex
 
+import paramiko
 from fastapi import APIRouter, Depends
 
 from backend.auth import get_db, require_perm
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 logger = logging.getLogger(__name__)
 
 # ── API ──
+
 
 @router.get("/status")
 def monitor_status():
@@ -43,9 +45,7 @@ def list_monitor_servers(
         return cached
 
     with db.conn() as conn:
-        servers = conn.execute(
-            "SELECT * FROM cd_servers ORDER BY type, name"
-        ).fetchall()
+        servers = conn.execute("SELECT * FROM cd_servers ORDER BY type, name").fetchall()
 
     result = []
     for srv in servers:
@@ -115,6 +115,18 @@ def list_monitor_servers(
                     entry["status"] = "unavailable"
                     entry["hint"] = "SSH 连接正常但缺少基础命令"
 
+        except (TimeoutError, ConnectionRefusedError, OSError) as e:
+            logger.warning("Server %s:%s unreachable: %s", entry.get("host"), entry.get("port"), e)
+            entry["status"] = "error"
+            entry["error"] = "服务器不可达，请检查地址/端口/网络"
+        except paramiko.AuthenticationException:
+            logger.warning("Server %s auth failed", entry.get("host"))
+            entry["status"] = "error"
+            entry["error"] = "认证失败，请检查用户名/密码/密钥"
+        except paramiko.SSHException as e:
+            logger.warning("Server %s SSH error: %s", entry.get("host"), e)
+            entry["status"] = "error"
+            entry["error"] = "SSH 协议错误，请检查服务端配置"
         except Exception as e:
             logger.error("Server monitor failed", exc_info=e)
             entry["status"] = "error"
@@ -131,6 +143,7 @@ def list_monitor_servers(
 
 
 # ── K8S ──
+
 
 @router.get("/nodes/{server_id}")
 def get_nodes(
@@ -172,7 +185,8 @@ def get_nodes(
                 parts = line.split()
                 if len(parts) >= 3:
                     capacities[parts[0]] = {
-                        "cpu": parts[1], "memory": parts[2],
+                        "cpu": parts[1],
+                        "memory": parts[2],
                         "max_pods": parts[3] if len(parts) > 3 else "?",
                     }
 
@@ -187,7 +201,9 @@ def get_nodes(
             "monitor_type": "k8s",
             "has_metrics": bool(nodes),
             "nodes": nodes,
-            "hint": "" if nodes else "集群未安装 metrics-server，请运行: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
+            "hint": ""
+            if nodes
+            else "集群未安装 metrics-server，请运行: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
         }
         _cache_set(cache_key, resp)
         return resp
@@ -251,10 +267,18 @@ def get_pods(
                 if len(parts) >= 4:
                     if namespace:
                         key = f"{namespace}/{parts[0]}"
-                        status_map[key] = {"status": parts[1], "restarts": parts[2].replace("[","").replace("]",""), "node": parts[3]}
+                        status_map[key] = {
+                            "status": parts[1],
+                            "restarts": parts[2].replace("[", "").replace("]", ""),
+                            "node": parts[3],
+                        }
                     else:
                         key = f"{parts[0]}/{parts[1]}"
-                        status_map[key] = {"status": parts[2], "restarts": parts[3].replace("[","").replace("]",""), "node": parts[4]}
+                        status_map[key] = {
+                            "status": parts[2],
+                            "restarts": parts[3].replace("[", "").replace("]", ""),
+                            "node": parts[4],
+                        }
 
         for pod in pods:
             key = f"{pod['namespace']}/{pod['name']}"
@@ -306,7 +330,9 @@ def get_pod_detail(
     try:
         target = _make_target(srv)
         ssh = ssh_connect(target, settings.ssh_timeout)
-        describe = _ssh_cmd(ssh, f"kubectl describe pod {shlex.quote(name)} -n {shlex.quote(namespace)} 2>/dev/null | tail -30")
+        describe = _ssh_cmd(
+            ssh, f"kubectl describe pod {shlex.quote(name)} -n {shlex.quote(namespace)} 2>/dev/null | tail -30"
+        )
         logs = _ssh_cmd(ssh, f"kubectl logs {shlex.quote(name)} -n {shlex.quote(namespace)} --tail=20 2>/dev/null")
         top = _ssh_cmd(ssh, f"kubectl top pod {shlex.quote(name)} -n {shlex.quote(namespace)} --no-headers 2>/dev/null")
         resp = {"success": True, "name": name, "namespace": namespace, "top": top, "describe": describe, "logs": logs}
@@ -320,6 +346,7 @@ def get_pod_detail(
 
 
 # ── Docker ──
+
 
 @router.get("/docker/{server_id}")
 def get_docker_containers(
@@ -355,14 +382,16 @@ def get_docker_containers(
             for line in stats_out.strip().split("\n"):
                 parts = line.split("|")
                 if len(parts) >= 4:
-                    containers.append({
-                        "name": parts[0],
-                        "cpu": parts[1],
-                        "memory": parts[2],
-                        "memory_percent": parts[3],
-                        "net_io": parts[4] if len(parts) > 4 else "?",
-                        "block_io": parts[5] if len(parts) > 5 else "?",
-                    })
+                    containers.append(
+                        {
+                            "name": parts[0],
+                            "cpu": parts[1],
+                            "memory": parts[2],
+                            "memory_percent": parts[3],
+                            "net_io": parts[4] if len(parts) > 4 else "?",
+                            "block_io": parts[5] if len(parts) > 5 else "?",
+                        }
+                    )
 
         resp = {
             "success": True,
@@ -379,6 +408,7 @@ def get_docker_containers(
 
 
 # ── 系统资源（通用：K8S / Docker / SSH 都可用）──
+
 
 @router.get("/system/{server_id}")
 def get_system_info(
@@ -408,17 +438,21 @@ def get_system_info(
 
         top_out = _ssh_cmd(
             ssh,
-            "ps aux --sort=-%cpu --no-headers 2>/dev/null | head -5 | awk '{print $2\"|\"$3\"|\"$4\"|\"$11}'",
+            'ps aux --sort=-%cpu --no-headers 2>/dev/null | head -5 | awk \'{print $2"|"$3"|"$4"|"$11}\'',
         )
         processes = []
         if top_out:
             for line in top_out.strip().split("\n"):
                 parts = line.split("|")
                 if len(parts) >= 4:
-                    processes.append({
-                        "pid": parts[0], "cpu": parts[1],
-                        "mem": parts[2], "cmd": parts[3],
-                    })
+                    processes.append(
+                        {
+                            "pid": parts[0],
+                            "cpu": parts[1],
+                            "mem": parts[2],
+                            "cmd": parts[3],
+                        }
+                    )
 
         resp = {
             "success": True,

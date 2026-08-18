@@ -88,31 +88,44 @@ def clear_cancel_checker() -> None:
 
 # ── 部署记录生命周期 ──
 
-def start_deploy_record(db, *, deploy_type: str, project: str, tag: str,
-                        image: str, triggered_by: str = "", deploy_note: str = "",
-                        target: str = "") -> tuple[int, int]:
+
+def start_deploy_record(
+    db,
+    *,
+    deploy_type: str,
+    project: str,
+    tag: str,
+    image: str,
+    triggered_by: str = "",
+    deploy_note: str = "",
+    target: str = "",
+) -> tuple[int, int]:
     """插入一条 running 记录，返回 (deploy_id, row_id)。"""
     with db.conn() as conn:
-        row = conn.execute(
-            "SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs"
-        ).fetchone()
+        row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
         deploy_id = row["next_id"] if row else 1
         cur = conn.execute(
             "INSERT INTO cd_deploy_logs "
             "(deploy_id, project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (deploy_id, project, tag, image, deploy_type, target, "running", "",
-             triggered_by or "", deploy_note or ""),
+            (deploy_id, project, tag, image, deploy_type, target, "running", "", triggered_by or "", deploy_note or ""),
         )
         row_id = getattr(cur, "lastrowid", 0) or 0
     return deploy_id, row_id
 
 
-def finish_deploy_record(db, row_id: int, *, status: str, target: str = "",
-                         output: str = "", duration_ms: int = 0,
-                         stage_times: list | None = None) -> None:
+def finish_deploy_record(
+    db,
+    row_id: int,
+    *,
+    status: str,
+    target: str = "",
+    output: str = "",
+    duration_ms: int = 0,
+    stage_times: list | None = None,
+) -> None:
     """把 running 记录更新为最终状态（ok / failed / partial / terminated）。"""
-    output_truncated = (output or "")[:settings.log_truncate_chars]
+    output_truncated = (output or "")[: settings.log_truncate_chars]
     stage_times_json = json.dumps(stage_times or [], ensure_ascii=False)
     with db.conn() as conn:
         if row_id:

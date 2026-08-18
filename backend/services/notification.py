@@ -49,6 +49,7 @@ def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
             url = f"{url}&timestamp={timestamp}&sign={sign}"
 
         import requests
+
         response = requests.post(
             url,
             json={"msgtype": "text", "text": {"content": message}},
@@ -61,13 +62,7 @@ def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
 
 # ── 默认模板（中/英文） ──
 _DEFAULT_TEMPLATES = {
-    "zh": (
-        "[{time}] {project} [部署通知]\n"
-        "版本：{tag} --> {status}\n"
-        "目标：{target}\n"
-        "模式：{mode}\n"
-        "镜像：{image}"
-    ),
+    "zh": ("[{time}] {project} [部署通知]\n版本：{tag} --> {status}\n目标：{target}\n模式：{mode}\n镜像：{image}"),
     "en": (
         "[{time}] {project} [Deploy Notification]\n"
         "Version: {tag} --> {status}\n"
@@ -81,23 +76,24 @@ _DEFAULT_TEMPLATES = {
 _LANG_MAP = {
     "zh": {
         "status": {
-            "✅ Success":               "✅ 部署成功",
-            "❌ Failed":                "❌ 部署失败",
-            "⚠️ Partial success":       "⚠️ 部分成功",
+            "✅ Success": "✅ 部署成功",
+            "❌ Failed": "❌ 部署失败",
+            "⚠️ Partial success": "⚠️ 部分成功",
         },
         "mode": {
-            "ssh":      "SSH 单机",
-            "compose":  "Docker Compose",
-            "remote":   "远程部署",
+            "ssh": "SSH 单机",
+            "compose": "Docker Compose",
+            "remote": "远程部署",
             "commands": "自定义命令",
-            "docker":   "Docker",
-            "kubectl":  "Kubectl",
-            "helm":     "Helm",
-            "argocd":   "Argo CD",
-            "fluxcd":   "Flux CD",
+            "docker": "Docker",
+            "kubectl": "Kubectl",
+            "helm": "Helm",
+            "argocd": "Argo CD",
+            "fluxcd": "Flux CD",
         },
     },
 }
+
 
 def _t(lang: str, field: str, value: str) -> str:
     """根据 lang 翻译 status/mode 值，lang 非 zh/en 则原样返回。"""
@@ -107,12 +103,21 @@ def _t(lang: str, field: str, value: str) -> str:
     if field == "status":
         for en_key, zh_val in _LANG_MAP[lang]["status"].items():
             if value.startswith(en_key):
-                return zh_val + value[len(en_key):]
+                return zh_val + value[len(en_key) :]
     return _LANG_MAP[lang][field].get(value, value)
 
 
-def notify_deploy(db, bot_id: int, tag: str, project_key: str, image: str,
-                  status: str, deploy_mode: str, targets: list, lang: str = "en"):
+def notify_deploy(
+    db,
+    bot_id: int,
+    tag: str,
+    project_key: str,
+    image: str,
+    status: str,
+    deploy_mode: str,
+    targets: list,
+    lang: str = "en",
+):
     """构造消息并发送部署通知。bot_id=0 则跳过。
     targets 如 ["k8s[192.168.1.1]"] 或 ["ssh[1.1.1.1]", "docker[2.2.2.2]"]
     lang: 前端当前语言 (en/zh)，用于选择 status/mode 的文本语言
@@ -133,7 +138,12 @@ def notify_deploy(db, bot_id: int, tag: str, project_key: str, image: str,
         tpl_raw = bot.get("template", "")
         tpl = (tpl_raw or "").strip() or _DEFAULT_TEMPLATES.get(lang, _DEFAULT_TEMPLATES["en"]).strip()
         msg = tpl.format(
-            time=now, project=project_key, tag=tag,
-            status=display_status, image=image, target=target_str, mode=display_mode,
+            time=now,
+            project=project_key,
+            tag=tag,
+            status=display_status,
+            image=image,
+            target=target_str,
+            mode=display_mode,
         )
         send_webhook(bot["webhook_url"], msg, bot.get("type", ""))

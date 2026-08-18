@@ -10,6 +10,11 @@ router = APIRouter(prefix="/api", tags=["logs"])
 
 
 @router.get("/deploy-logs")
-def deploy_logs(project: str = "", page: int = 1, page_size: int = 15,
-                db: Database = Depends(get_db), _username: str = Depends(verify_token)):
+def deploy_logs(
+    project: str = "",
+    page: int = 1,
+    page_size: int = 15,
+    db: Database = Depends(get_db),
+    _username: str = Depends(verify_token),
+):
     return DeployService(db).list_logs(project, page, page_size)

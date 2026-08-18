@@ -86,8 +86,7 @@ class CiService:
         with self._db.conn() as conn:
             self._resolve_tables(conn)
             row = conn.execute(
-                f"SELECT harbor_repository, current_path FROM {self._job_map} "
-                "WHERE job_name=? OR current_path=?",
+                f"SELECT harbor_repository, current_path FROM {self._job_map} WHERE job_name=? OR current_path=?",
                 (project, project),
             ).fetchone()
             if row and row["harbor_repository"]:
@@ -99,8 +98,7 @@ class CiService:
         with self._db.conn() as conn:
             self._resolve_tables(conn)
             row = conn.execute(
-                f"SELECT job_name FROM {self._job_map} "
-                "WHERE job_name=? OR current_path=?",
+                f"SELECT job_name FROM {self._job_map} WHERE job_name=? OR current_path=?",
                 (project, project),
             ).fetchone()
             if row:

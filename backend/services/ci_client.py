@@ -1,4 +1,5 @@
 """CI HTTP 客户端 — 对照 CI OpenAPI (/api/openapi.json) 实现"""
+
 import logging
 import threading
 import time
@@ -12,15 +13,15 @@ logger = logging.getLogger("ci_client")
 
 # ── CI API 路径（来源：CI 的 /api/openapi.json）──
 API = {
-    "login":    "/api/admin/login",              # POST {user, password} → {token}
-    "projects": "/api/build/jobs/list",          # GET → [{job_name, ci_provider, project_id, current_path}]
-    "builds":   "/api/build/{path}/pipelines",   # GET → {build_provider, project_id, pipelines: [...]}
-    "trigger":  "/api/build/{path}/trigger",     # POST {ref, variables} → trigger result
-    "log":      "/api/build/{path}/logs/{id}",   # GET → text/plain
-    "variables":"/api/build/{path}/variables",   # GET → {key: options}
-    "branches": "/api/build/{path}/branches",    # GET → ["main", "master", ...]
-    "retry":    "/api/build/{path}/pipelines/{id}/retry",   # POST → 重试 Pipeline（仅 GitLab CI）
-    "cancel":   "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline（仅 GitLab CI）
+    "login": "/api/admin/login",  # POST {user, password} → {token}
+    "projects": "/api/build/jobs/list",  # GET → [{job_name, ci_provider, project_id, current_path}]
+    "builds": "/api/build/{path}/pipelines",  # GET → {build_provider, project_id, pipelines: [...]}
+    "trigger": "/api/build/{path}/trigger",  # POST {ref, variables} → trigger result
+    "log": "/api/build/{path}/logs/{id}",  # GET → text/plain
+    "variables": "/api/build/{path}/variables",  # GET → {key: options}
+    "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
+    "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline（仅 GitLab CI）
+    "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline（仅 GitLab CI）
 }
 
 
@@ -223,6 +224,7 @@ def get_ci_client() -> CiClient:
         if _client_instance is not None:
             return _client_instance
         from backend.config import settings
+
         if not settings.ci_api_url:
             raise CiClientError("CI_API_URL 未配置，请在 .env 中设置")
         # 优先 API token；未配置时回退账号密码登录

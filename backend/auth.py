@@ -61,9 +61,7 @@ def verify_token(
     _check_cd_access(row)
 
     # 完整校验：重组 token 并比对（防止 path traversal 类攻击）
-    expected = base64.b64encode(
-        f"{username}:{row['password_hash']}".encode()
-    ).decode()
+    expected = base64.b64encode(f"{username}:{row['password_hash']}".encode()).decode()
     if not _timing_safe_compare(token, expected):
         raise HTTPException(401, "Invalid or expired token")
 
@@ -94,9 +92,7 @@ def get_current_user(
 
     _check_cd_access(row)
 
-    expected = base64.b64encode(
-        f"{username}:{row['password_hash']}".encode()
-    ).decode()
+    expected = base64.b64encode(f"{username}:{row['password_hash']}".encode()).decode()
     if not _timing_safe_compare(token, expected):
         raise HTTPException(401, "Invalid or expired token")
 
@@ -117,9 +113,7 @@ def _query_permissions(db: Database, role_name: str) -> list:
     try:
         with db.conn() as conn:
             rows = conn.execute(
-                "SELECT rp.perm_key FROM role_permissions rp "
-                "JOIN roles r ON r.id = rp.role_id "
-                "WHERE r.name=?",
+                "SELECT rp.perm_key FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.name=?",
                 (role_name,),
             ).fetchall()
             return [r["perm_key"] for r in rows]
@@ -131,12 +125,14 @@ def require_perm(perm_key: str):
     """权限依赖工厂：检查当前用户是否拥有指定权限。
     super_admin 角色隐含所有权限。
     用法: Depends(require_perm("cd.deploy.k8s"))  → 返回 user dict"""
+
     def checker(user: dict = Depends(get_current_user)):
         if user.get("role") == "super_admin":
             return user
         if perm_key not in user.get("permissions", []):
             raise HTTPException(403, f"Permission denied: {perm_key} required")
         return user
+
     return checker
 
 
@@ -200,9 +196,7 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
     if row and bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
         if not _has_system(row.get("systems"), CD_SYSTEM):
             return None  # 无权登录 CD
-        return base64.b64encode(
-            f"{user}:{row['password_hash']}".encode()
-        ).decode()
+        return base64.b64encode(f"{user}:{row['password_hash']}".encode()).decode()
     return None
 
 

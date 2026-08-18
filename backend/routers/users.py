@@ -24,9 +24,7 @@ def list_users(
 ):
     """列出所有用户（仅 admin / super_admin）"""
     with db.conn() as conn:
-        rows = conn.execute(
-            "SELECT username, role FROM admin_users ORDER BY username"
-        ).fetchall()
+        rows = conn.execute("SELECT username, role FROM admin_users ORDER BY username").fetchall()
         return [{"username": r["username"], "role": r.get("role", settings.admin_role)} for r in rows]
 
 
@@ -46,11 +44,11 @@ def create_user(
 
     pwd_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
     with db.conn() as conn:
-        existing = conn.execute(
-            "SELECT username FROM admin_users WHERE username=?", (req.username,)
-        ).fetchone()
+        existing = conn.execute("SELECT username FROM admin_users WHERE username=?", (req.username,)).fetchone()
         if existing:
-            raise ConflictError(f"用户 '{req.username}' 已存在", error_key="errors.user_exists", error_params={"username": req.username})
+            raise ConflictError(
+                f"用户 '{req.username}' 已存在", error_key="errors.user_exists", error_params={"username": req.username}
+            )
 
         conn.execute(
             f"INSERT INTO admin_users (username, password_hash, role, systems) VALUES (?, ?, ?, '{CD_SYSTEM}')",
@@ -70,13 +68,15 @@ def delete_user(
         raise ValidationError("不能删除自己的账户", error_key="errors.cannot_delete_self")
 
     with db.conn() as conn:
-        target = conn.execute(
-            "SELECT role FROM admin_users WHERE username=?", (username,)
-        ).fetchone()
+        target = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
         if target is None:
-            raise NotFoundError(f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username})
+            raise NotFoundError(
+                f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username}
+            )
         if target["role"] in (settings.admin_role, settings.super_admin_role) and user.get("role") != "super_admin":
-            raise AppException("只有 super_admin 可以删除管理员账号", status_code=403, error_key="errors.super_admin_only")
+            raise AppException(
+                "只有 super_admin 可以删除管理员账号", status_code=403, error_key="errors.super_admin_only"
+            )
 
         conn.execute("DELETE FROM admin_users WHERE username=?", (username,))
         return {"deleted": username}
@@ -99,17 +99,17 @@ def change_role(
         raise ValidationError("不能修改自己的角色", error_key="errors.cannot_change_own_role")
 
     with db.conn() as conn:
-        target = conn.execute(
-            "SELECT role FROM admin_users WHERE username=?", (username,)
-        ).fetchone()
+        target = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
         if target is None:
-            raise NotFoundError(f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username})
+            raise NotFoundError(
+                f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username}
+            )
         if target["role"] in (settings.admin_role, settings.super_admin_role) and user.get("role") != "super_admin":
-            raise AppException("只有 super_admin 可以修改管理员角色", status_code=403, error_key="errors.super_admin_only")
+            raise AppException(
+                "只有 super_admin 可以修改管理员角色", status_code=403, error_key="errors.super_admin_only"
+            )
 
-        conn.execute(
-            "UPDATE admin_users SET role=? WHERE username=?", (role, username)
-        )
+        conn.execute("UPDATE admin_users SET role=? WHERE username=?", (role, username))
         return {"username": username, "role": role}
 
 
@@ -131,10 +131,16 @@ def change_password(
             "SELECT username, role, password_hash FROM admin_users WHERE username=?", (username,)
         ).fetchone()
         if not row:
-            raise NotFoundError(f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username})
+            raise NotFoundError(
+                f"用户 '{username}' 不存在", error_key="errors.user_not_found", error_params={"username": username}
+            )
 
         # admin 不能改上级（super_admin / admin）的密码
-        if is_cd_admin and row["role"] in (settings.super_admin_role, settings.admin_role) and user["username"] != username:
+        if (
+            is_cd_admin
+            and row["role"] in (settings.super_admin_role, settings.admin_role)
+            and user["username"] != username
+        ):
             raise AppException("无权修改该用户的密码", status_code=403, error_key="errors.cannot_change_admin_pwd")
 
         # 非 admin / super_admin 需要验证旧密码
