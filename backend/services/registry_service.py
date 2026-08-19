@@ -3,7 +3,7 @@
 import logging
 import threading
 import urllib.parse
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from backend.config import settings
 from backend.database import Database
@@ -120,7 +120,7 @@ class RegistryService:
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
-        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         count = 0
         for art in raw:
             if not art.get("tag"):
