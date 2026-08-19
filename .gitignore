@@ -6,7 +6,7 @@
 
 #test
 .claude/
-.venv/
+.venv*/
 node_modules/
 tests/
 __pycache__/

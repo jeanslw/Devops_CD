@@ -3,7 +3,7 @@
 import logging
 import threading
 import urllib.parse
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from backend.config import settings
 from backend.database import Database
@@ -78,13 +78,25 @@ class RegistryService:
 
     @staticmethod
     def _to_mysql_dt(iso_str: str) -> str:
-        """ISO 8601 → MySQL DATETIME: '2026-07-17T07:17:04.737Z' → '2026-07-17 07:17:04'"""
+        """ISO 8601 时间戳 → MySQL DATETIME 字符串（统一归一化为 UTC 墙钟时间）
+
+        Harbor 返回的 push_time/pull_time 是 UTC（如 '2026-07-17T07:17:04.737Z'）。
+        优先用 fromisoformat 解析，可正确处理 Z 与数值时区偏移（如 +08:00）；
+        3.10 的 fromisoformat 只认 3/6 位小数秒，而 Harbor 用 Go RFC3339Nano
+        去尾零后小数位数不定，解析失败时回退旧的字面量截断逻辑兜底。
+        """
         if not iso_str:
             return ""
-        s = iso_str.replace("T", " ").replace("Z", "")
-        if "." in s:
-            s = s[: s.index(".")]
-        return s
+        try:
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            s = iso_str.replace("T", " ").replace("Z", "")
+            if "." in s:
+                s = s[: s.index(".")]
+            return s
 
     # ── 从 CI 映射获取待同步仓库 ──
 
@@ -120,7 +132,7 @@ class RegistryService:
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
-        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         count = 0
         for art in raw:
             if not art.get("tag"):

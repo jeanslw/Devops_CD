@@ -6,7 +6,7 @@ FastAPI 部署执行器 — SSH / docker-compose / K8s
 """
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
 # ── 创建 app ──
 app = FastAPI(title="Devops-Glue CD", version="1.4.0", lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
-_STARTED_AT = datetime.now(UTC)
+_STARTED_AT = datetime.now(timezone.utc)
 
 # 注册路由
 app.include_router(auth.router)
@@ -111,7 +111,7 @@ def api_info():
     except Exception:
         pass
 
-    uptime_seconds = int((datetime.now(UTC) - _STARTED_AT).total_seconds())
+    uptime_seconds = int((datetime.now(timezone.utc) - _STARTED_AT).total_seconds())
 
     return {
         "app": "Devops-Glue CD",
