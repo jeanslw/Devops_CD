@@ -2,12 +2,12 @@
 # 数据库推荐 MySQL / MariaDB，和 PHP 端共用 devops_glue 库
 
 services:
-  cd-service:
+  devops-cd:
     build:
       context: .
       dockerfile: Dockerfile
     image: devops-cd:latest
-    container_name: cd-service
+    container_name: devops-cd
     env_file:
       - .env
     environment:
