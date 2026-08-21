@@ -189,6 +189,18 @@ class RegistryService:
                     ),
                 )
             count += 1
+
+        # 清理 Harbor 已不存在的 tag（sync 只做 upsert，需补「删 gone」才对齐真值源）
+        # 安全守卫：list_artifacts 返回空列表既可能是「仓库确实空」也可能是「404/分页异常」，
+        # 客户端无法区分，故仅在拿到非空 tag 列表时才做差集删除，宁可保守不误删。
+        current_tags = {art["tag"] for art in raw if art.get("tag")}
+        if current_tags:
+            placeholders = ",".join("?" for _ in current_tags)
+            conn.execute(
+                f"DELETE FROM cd_registry_artifacts WHERE repo_id=? AND tag NOT IN ({placeholders})",
+                (repo_id, *current_tags),
+            )
+
         return count
 
     def sync_all(self) -> dict:
