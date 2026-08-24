@@ -57,7 +57,7 @@ DB_PATH=../Devops-Glue/config/data/data.db
 # DB_PASS=
 
 # ── Harbor Registry ──
-HARBOR_REGISTRY=hub.example.com
+HARBOR_BASE_URL=https://hub.example.com
 HARBOR_USER=admin
 HARBOR_PASSWORD=
 

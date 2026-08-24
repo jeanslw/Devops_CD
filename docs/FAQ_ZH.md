@@ -62,7 +62,7 @@ volumes:
 
 ### Q: Harbor 仓库列表为空？
 
-1. 确认 `.env` 中 `HARBOR_REGISTRY`、`HARBOR_USER`、`HARBOR_PASSWORD` 配置正确
+1. 确认 `.env` 中 `HARBOR_BASE_URL`、`HARBOR_USER`、`HARBOR_PASSWORD` 配置正确
 2. Harbor 必须开启 API 访问（Harbor v1.x 或 v2.x 均可，系统自动探测）
 3. 首次使用需在 Harbor 面板点「同步」按钮触发全量同步
 4. 检查 Harbor 网络可达性：CD 服务器上 `curl https://hub.xxx.com/api/v2.0/health`

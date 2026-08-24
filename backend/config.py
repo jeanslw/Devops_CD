@@ -1,5 +1,6 @@
 """应用配置 — 所有配置通过 .env 文件设置，不要直接修改此文件"""
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,9 +21,21 @@ class Settings(BaseSettings):
     secret_key: str = ""
 
     # ── Harbor 镜像仓库（必填）──
-    harbor_registry: str = ""
+    # 统一读 HARBOR_BASE_URL（带 scheme 的完整地址，如 https://hub.example.com）：
+    # CI(Glue) 直接使用；CD 内部剥掉 scheme 供 Docker 镜像引用，HarborClient 自动探测 https→http。
+    harbor_registry: str = Field("", validation_alias="HARBOR_BASE_URL")
     harbor_user: str = ""
     harbor_password: str = ""
+
+    @field_validator("harbor_registry", mode="after")
+    @classmethod
+    def _strip_harbor_scheme(cls, v: str) -> str:
+        """剥掉 http(s):// 与尾部斜杠，得到 scheme-less 的 registry host"""
+        v = (v or "").strip().rstrip("/")
+        for prefix in ("https://", "http://"):
+            if v.startswith(prefix):
+                return v[len(prefix):]
+        return v
 
     # ── 服务（可选）──
     host: str = "0.0.0.0"

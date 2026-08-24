@@ -61,7 +61,7 @@ MySQL is strongly recommended. SQLite experiences lock contention when CD and PH
 
 ### Q: Harbor repository list is empty?
 
-1. Verify `.env` settings: `HARBOR_REGISTRY`, `HARBOR_USER`, `HARBOR_PASSWORD`
+1. Verify `.env` settings: `HARBOR_BASE_URL`, `HARBOR_USER`, `HARBOR_PASSWORD`
 2. Harbor API must be enabled (v1.x or v2.x, auto-detected)
 3. Click "Sync" in the Harbor panel for initial full sync
 4. Check connectivity: `curl https://hub.xxx.com/api/v2.0/health`

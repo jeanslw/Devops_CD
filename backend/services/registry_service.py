@@ -68,7 +68,7 @@ class RegistryService:
                 logger.error("Harbor client initialization failed", exc_info=e)
                 raise HarborUnavailableError(
                     "Harbor 镜像仓库不可达。请检查：\n"
-                    "1. HARBOR_REGISTRY 地址是否正确\n"
+                    "1. HARBOR_BASE_URL 地址是否正确\n"
                     "2. 网络是否连通\n"
                     "3. Harbor 服务是否正常运行\n"
                 ) from e
