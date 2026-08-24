@@ -31,6 +31,18 @@ def _check_cd_access(row) -> None:
         raise HTTPException(401, "Access denied: CD system not authorized")
 
 
+def _check_disabled(row) -> None:
+    """账号已停用（status=0）则抛 401，让已登录用户的旧 token 即时失效（踢下线）。
+    401 会触发前端 useAuth.handle401 → logout，清除本地 token 并回到登录页。
+    status 列不存在时默认为 1 放行，兼容旧库。"""
+    try:
+        status = row["status"]
+    except (KeyError, IndexError):
+        status = 1
+    if status is not None and int(status) == 0:
+        raise HTTPException(401, "该账号已被停用，请联系管理员")
+
+
 def get_db() -> Database:
     """FastAPI 依赖：获取数据库实例"""
     return Database(settings.db_path)
@@ -53,12 +65,13 @@ def verify_token(
         raise HTTPException(401, "Invalid token format") from e
 
     with db.conn() as conn:
-        row = _query_user_with_systems(conn, username, "password_hash, systems")
+        row = _query_user_with_systems(conn, username, "password_hash, systems, status")
 
     if row is None:
         raise HTTPException(401, "Invalid or expired token")
 
     _check_cd_access(row)
+    _check_disabled(row)
 
     # 完整校验：重组 token 并比对（防止 path traversal 类攻击）
     expected = base64.b64encode(f"{username}:{row['password_hash']}".encode()).decode()
@@ -85,12 +98,13 @@ def get_current_user(
         raise HTTPException(401, "Invalid token format") from e
 
     with db.conn() as conn:
-        row = _query_user_with_systems(conn, username, "username, password_hash, role, systems")
+        row = _query_user_with_systems(conn, username, "username, password_hash, role, systems, status")
 
     if row is None:
         raise HTTPException(401, "Invalid or expired token")
 
     _check_cd_access(row)
+    _check_disabled(row)
 
     expected = base64.b64encode(f"{username}:{row['password_hash']}".encode()).decode()
     if not _timing_safe_compare(token, expected):
@@ -189,15 +203,32 @@ def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None
 
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据，同时检查 systems（如果存在）是否允许 CD 访问。
-    成功返回 token，失败返回 None"""
-    with db.conn() as conn:
-        row = _query_user_with_systems(conn, user, "username, password_hash, systems")
+    成功返回 token；账号已停用抛出 AppException(403) 以区别于密码错误；
+    其余失败返回 None（由调用方统一按"账号或密码错误"处理）"""
+    from backend.exceptions import AppException
 
-    if row and bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
+    with db.conn() as conn:
+        row = _query_user_with_systems(conn, user, "username, password_hash, systems, status")
+
+    if row is None:
+        return None
+
+    # status=0 表示账号已停用。必须先于密码校验判断：无论密码对错都提示「已停用」，
+    # 否则停用账号输入错误密码会落到「账号或密码错误」分支，误导用户以为只是密码忘了。
+    # （列不存在时默认为 1 放行，兼容旧库）
+    try:
+        status = row["status"]
+    except (KeyError, IndexError):
+        status = 1
+    if status is not None and int(status) == 0:
+        raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
+
+    if bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
         if not _has_system(row.get("systems"), CD_SYSTEM):
             return None  # 无权登录 CD
         return base64.b64encode(f"{user}:{row['password_hash']}".encode()).decode()
     return None
+
 
 
 def _timing_safe_compare(a: str, b: str) -> bool:
@@ -222,8 +253,10 @@ def _query_user_with_systems(conn, username: str, columns: str):
             ).fetchone()
         except Exception:
             _systems_col_ok = False
-    # 回退：不查 systems 列，返回的行不含 systems key → _has_system(None, ...) = True（放行）
-    fallback_cols = columns.replace(", systems", "").replace("systems, ", "").replace("systems", "")
+    # 回退：不查 systems/status 列，返回的行不含对应 key → 默认放行（兼容旧表）
+    fallback_cols = (columns
+                     .replace(", systems", "").replace("systems, ", "").replace("systems", "")
+                     .replace(", status", "").replace("status, ", "").replace("status", ""))
     if fallback_cols.strip():
         return conn.execute(
             f"SELECT {fallback_cols} FROM admin_users WHERE username=?",

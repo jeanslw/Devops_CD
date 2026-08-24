@@ -10,7 +10,7 @@ import shlex
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
-from backend.auth import _query_permissions, get_db, require_perm
+from backend.auth import _check_disabled, _query_permissions, _query_user_with_systems, get_db, require_perm
 from backend.config import settings
 from backend.crypto import decrypt
 from backend.database import Database
@@ -58,9 +58,11 @@ async def _ws_verify(token: str | None = None) -> str:
 
     db = get_db()
     with db.conn() as conn:
-        row = conn.execute("SELECT username, password_hash FROM admin_users WHERE username=?", (username,)).fetchone()
+        row = _query_user_with_systems(conn, username, "username, password_hash, status")
         if row is None:
             raise HTTPException(401, "token 无效")
+        # 停用账号即时踢下线：WebSocket（WebShell）是独立鉴权路径，必须与 REST 一致校验 status
+        _check_disabled(row)
         expected = base64.b64encode(f"{row['username']}:{row['password_hash']}".encode()).decode()
         if token != expected:
             raise HTTPException(401, "token 无效")
