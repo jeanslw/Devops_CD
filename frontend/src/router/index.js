@@ -156,7 +156,9 @@ const router = createRouter({
 // 导航守卫：检查认证
 router.beforeEach((to) => {
   const token = sessionStorage.getItem('cd_token')
-  if (!token && to.path !== '/login' && to.path !== '/401') {
+  // 允许未登录访问的公开路径：登录页、错误页、首页(显示介绍页)
+  const publicPaths = ['/login', '/401', '/']
+  if (!token && !publicPaths.includes(to.path)) {
     return '/401'
   }
 })
