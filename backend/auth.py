@@ -215,7 +215,7 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
 
     # status=0 表示账号已停用。必须先于密码校验判断：无论密码对错都提示「已停用」，
     # 否则停用账号输入错误密码会落到「账号或密码错误」分支，误导用户以为只是密码忘了。
-    # （列不存在时默认为 1 放行，兼容旧库）
+    # (列不存在时默认为 1 放行,兼容旧库)
     try:
         status = row["status"]
     except (KeyError, IndexError):
@@ -228,7 +228,6 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
             return None  # 无权登录 CD
         return base64.b64encode(f"{user}:{row['password_hash']}".encode()).decode()
     return None
-
 
 
 def _timing_safe_compare(a: str, b: str) -> bool:
@@ -254,9 +253,14 @@ def _query_user_with_systems(conn, username: str, columns: str):
         except Exception:
             _systems_col_ok = False
     # 回退：不查 systems/status 列，返回的行不含对应 key → 默认放行（兼容旧表）
-    fallback_cols = (columns
-                     .replace(", systems", "").replace("systems, ", "").replace("systems", "")
-                     .replace(", status", "").replace("status, ", "").replace("status", ""))
+    fallback_cols = (
+        columns.replace(", systems", "")
+        .replace("systems, ", "")
+        .replace("systems", "")
+        .replace(", status", "")
+        .replace("status, ", "")
+        .replace("status", "")
+    )
     if fallback_cols.strip():
         return conn.execute(
             f"SELECT {fallback_cols} FROM admin_users WHERE username=?",

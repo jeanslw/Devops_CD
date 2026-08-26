@@ -8,6 +8,7 @@ import pymysql
 from fastapi import APIRouter, Depends, Request
 
 from backend.auth import get_db, require_perm, verify_token
+from backend.crypto import ENCRYPT_PREFIX, decrypt, encrypt
 from backend.database import Database
 from backend.exceptions import ConflictError, DatabaseError, NotFoundError
 from backend.models import WebhookForwardRequest, WebhookRequest
@@ -20,6 +21,30 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 def _generate_token() -> str:
     """生成 32 字符随机 token"""
     return secrets.token_urlsafe(24)
+
+
+def _decrypt_webhook_token(stored: str) -> str:
+    """严格解密入库 token；非 enc: 密文按不可用处理（不兼容存量明文）。"""
+    if not stored or not stored.startswith(ENCRYPT_PREFIX):
+        return ""
+    try:
+        return decrypt(stored)
+    except Exception:
+        return ""
+
+
+def _find_enabled_webhook_by_token(conn, plain_token: str):
+    """用明文 URL token 匹配数据库中的加密 token。
+
+    Fernet 密文是随机化的，不能 WHERE 密文等值查询；这里逐行解密后常量时间比较。
+    Webhook 配置量小，且该接口为低频机器调用，可接受 O(n)。
+    """
+    rows = conn.execute("SELECT * FROM cd_webhooks WHERE enabled=1").fetchall()
+    for row in rows:
+        candidate = _decrypt_webhook_token(row["token"])
+        if candidate and secrets.compare_digest(candidate, plain_token):
+            return row
+    return None
 
 
 # ── Webhook 配置管理 ──
@@ -35,7 +60,13 @@ def list_webhooks(
         rows = conn.execute(
             "SELECT id, name, token, bot_id, enabled, created_at FROM cd_webhooks ORDER BY created_at DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            item = dict(r)
+            # 列表/前端 URL 展示仍用明文；非密文存量数据按无效置空，强制重新创建
+            item["token"] = _decrypt_webhook_token(item.get("token") or "")
+            result.append(item)
+        return result
 
 
 @router.post("")
@@ -46,12 +77,14 @@ def create_webhook(
 ):
     """创建 Webhook，自动生成 token"""
     token = _generate_token()
+    encrypted_token = encrypt(token)
     with db.conn() as conn:
         try:
             conn.execute(
                 "INSERT INTO cd_webhooks (name, token, bot_id, enabled) VALUES (?,?,?,?)",
-                (req.name, token, req.bot_id, 1),
+                (req.name, encrypted_token, req.bot_id, 1),
             )
+            # 创建响应仍返回明文一次，便于前端立即展示/复制完整 URL
             return ok(data={"token": token}, message=f"Webhook '{req.name}' 已创建")
         except pymysql.err.IntegrityError as e:
             raise ConflictError(
@@ -221,7 +254,7 @@ async def receive_webhook(
     """CI / 外部系统 POST 到此端点，靠 token 匹配 Webhook 配置。
     收到后存记录，若配了 bot_id 则自动转发。"""
     with db.conn() as conn:
-        wh = conn.execute("SELECT * FROM cd_webhooks WHERE token=? AND enabled=1", (token,)).fetchone()
+        wh = _find_enabled_webhook_by_token(conn, token)
         if not wh:
             raise NotFoundError("Webhook 不存在或已禁用", error_key="errors.webhook_not_found")
 

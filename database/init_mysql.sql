@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS cd_custom_monitor_metrics (
 CREATE TABLE IF NOT EXISTS cd_webhooks (
     id          INT AUTO_INCREMENT PRIMARY KEY,
     name        VARCHAR(255) UNIQUE,
-    token       VARCHAR(64)  UNIQUE NOT NULL,       -- 随机生成的 URL token
+    token       VARCHAR(255) UNIQUE NOT NULL,       -- 随机生成的 URL token（入库前 Fernet 加密，enc: 前缀）
     bot_id      INT          DEFAULT 0,             -- 关联 Bot，0 = 不自动转发
     enabled     TINYINT(1)   DEFAULT 1,
     created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP

@@ -368,7 +368,7 @@ class Database:
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_webhooks (
             id {PK},
             name VARCHAR(255) UNIQUE,
-            token VARCHAR(64) UNIQUE NOT NULL,
+            token VARCHAR(255) UNIQUE NOT NULL,
             bot_id INTEGER DEFAULT 0,
             enabled INTEGER DEFAULT 1,
             created_at TEXT DEFAULT ({NOW})

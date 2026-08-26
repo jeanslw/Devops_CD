@@ -1,4 +1,4 @@
-"""自定义监控项管理路由 — 支持多指标"""
+"""自定义监控项管理路由 - 支持多指标"""
 
 import csv
 import io
@@ -6,6 +6,7 @@ import json as _json
 import logging
 import re
 from contextlib import suppress
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -22,11 +23,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/custom-monitors", tags=["custom-monitors"])
 
 
+# ── 安全校验 ──
+DANGER_KEYWORDS = [
+    "rm -rf",
+    "mkfs",
+    "shutdown",
+    "reboot",
+    "dd if=",
+    "truncate -s",
+    "cat > /dev/",
+    "echo > /dev/",
+    "chmod 777 /",
+    "chown -R",
+]
+
+
+def _validate_monitor_command(command: str):
+    """拦截高危命令"""
+    cmd_lower = command.lower()
+    for kw in DANGER_KEYWORDS:
+        if kw in cmd_lower:
+            from backend.exceptions import ValidationError
+
+            raise ValidationError(
+                message=f"命令包含危险关键字 '{kw}', 禁止执行",
+                error_key="errors.dangerous_command",
+            )
+
+
 # ── 请求模型 ──
 class MetricDef(BaseModel):
     """单个指标定义"""
 
-    id: int | None = None  # 编辑时传，新建时 null
+    id: int | None = None  # 编辑时传, 新建时 null
     name: str = ""
     field_key: str = ""
     unit: str = ""
@@ -43,12 +72,12 @@ class CustomMonitorRequest(BaseModel):
     metrics: list[MetricDef] = []  # 指标列表
 
 
-# ── 工具：多格式解析 ──
+# ── 工具: 多格式解析 ──
 def parse_output(raw: str, output_format: str, metrics: list[dict]) -> list[dict]:
     """
-    按指定格式解析命令输出，返回结构化结果。
+    按指定格式解析命令输出, 返回结构化结果。
     每条结果: { metric_name, field_key, value: float|None, unit, entity: dict }
-    entity 包含行级标签（如 CSV 第一列作为实体标识）。
+    entity 包含行级标签(如 CSV 第一列作为实体标识).
     """
     if not raw or not raw.strip():
         return []
@@ -62,13 +91,13 @@ def parse_output(raw: str, output_format: str, metrics: list[dict]) -> list[dict
     elif fmt == "json":
         return _parse_json(raw, metrics)
     else:
-        # auto / 兼容旧数据：回退到单值提取
+        # auto / 兼容旧数据: 回退到单值提取
         return _parse_auto(raw, metrics)
 
 
 def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
-    """CSV/TSV/空白分隔 解析：第一行表头，后续每行是一条实体。
-    自动识别逗号/制表符/分号/竖线分隔（csv.Sniffer），不识别时回退到空白拆分（处理 free -m 等变长空白输出）。
+    """CSV/TSV/空白分隔 解析: 第一行表头, 后续每行是一条实体。
+    自动识别逗号/制表符/分号/竖线分隔(csv.Sniffer), 不识别时回退到空白拆分(处理 free -m 等变长空白输出).
     """
     results = []
     text = raw.strip()
@@ -86,14 +115,14 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
         headers = [h.strip() for h in (reader.fieldnames or [])]
         rows = list(reader)
     else:
-        # 变长空白（如 free -m）：按空白拆分
+        # 变长空白(如 free -m): 按空白拆分
         split_lines = [re.split(r"\s+", line.strip()) for line in lines if line.strip()]
         if len(split_lines) < 2:
             return results
         headers = split_lines[0]
         rows = []
         for parts in split_lines[1:]:
-            # 仿 DictReader：第一列可能是行标签
+            # 仿 DictReader: 第一列可能是行标签
             if len(parts) == len(headers) + 1:
                 row = {"": parts[0]}
                 for h, v in zip(headers, parts[1:], strict=True):
@@ -104,7 +133,7 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
 
     for row in rows:
         entity = {k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
-        # 行标签列（如果有，空字符串 key ""）作为 entity_label，否则用第一列值
+        # 行标签列(如果有, 空字符串 key "") 作为 entity_label, 否则用第一列值
         entity_label = entity.pop("", "") or (next(iter(entity.values())) if entity else "")
         for m in metrics:
             fk = m.get("field_key", "").strip()
@@ -158,7 +187,7 @@ def _parse_kv(raw: str, metrics: list[dict]) -> list[dict]:
 
 
 def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
-    """JSON 解析：支持对象或数组"""
+    """JSON 解析: 支持对象或数组"""
     results = []
     try:
         data = _json.loads(raw)
@@ -195,13 +224,13 @@ def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
 
 
 def _parse_auto(raw: str, metrics: list[dict]) -> list[dict]:
-    """auto 模式：优先 CSV，失败回退单值"""
+    """auto 模式: 优先 CSV, 失败回退单值"""
     if metrics and metrics[0].get("field_key", "").strip():
-        # 有指标定义 → 尝试 CSV
+        # 有指标定义 -> 尝试 CSV
         r = _parse_csv(raw, metrics)
         if r:
             return r
-    # 回退：单值提取（兼容旧数据）
+    # 回退: 单值提取(兼容旧数据)
     val = _parse_number(raw)
     if val is None:
         return []
@@ -220,7 +249,7 @@ def _parse_auto(raw: str, metrics: list[dict]) -> list[dict]:
 
 
 def _parse_number(raw: str) -> float | None:
-    """从命令输出中提取数值（兼容旧逻辑）"""
+    """从命令输出中提取数值(兼容旧逻辑)"""
     if not raw:
         return None
     text = raw.strip()
@@ -239,12 +268,12 @@ def _parse_number(raw: str) -> float | None:
 
 
 def _try_float(s: str) -> float | None:
-    """尝试转 float，去百分号/逗号/容量单位后缀(G/M/K/T/B)"""
+    """尝试转 float, 去百分号/逗号/容量单位后缀(G/M/K/T/B)"""
     s = (s or "").strip()
     if not s:
         return None
     s = s.rstrip("%").replace(",", "")
-    # 剥离容量单位后缀（不换算，只提取数字）：20G → 20, 1.5GiB → 1.5, 300M → 300
+    # 剥离容量单位后缀(不换算, 只提取数字): 20G -> 20, 1.5GiB -> 1.5, 300M -> 300
     s = re.sub(r"(?i)([kmgtp]i?b?|b)$", r"", s)
     try:
         return float(s)
@@ -253,7 +282,7 @@ def _try_float(s: str) -> float | None:
 
 
 def _json_get(obj: dict, path: str):
-    """简易 JSON path 取值，支持 "a.b.c" """
+    """简易 JSON path 取值, 支持 "a.b.c" """
     cur = obj
     for seg in path.split("."):
         if isinstance(cur, dict) and seg in cur:
@@ -264,7 +293,7 @@ def _json_get(obj: dict, path: str):
 
 
 def _diagnose_parse(raw: str, metrics: list[dict]) -> dict | None:
-    """当解析结果为空时，提取原始输出中的可用字段，帮助用户排查配置问题"""
+    """当解析结果为空时, 提取原始输出中的可用字段, 帮助用户排查配置问题"""
     if not metrics or not raw.strip():
         return None
 
@@ -296,9 +325,9 @@ def _diagnose_parse(raw: str, metrics: list[dict]) -> dict | None:
         "matched_headers": matched_headers,
         "unmatched_keys": unmatched_keys,
         "hint": (
-            "field_key 需与输出表头精确匹配（区分大小写）。"
-            "如果表头是中文（如'已用%'），请将 field_key 改为对应中文，"
-            "或在命令前加 LANG=C 强制英文输出（如 LANG=C df -h）。"
+            "field_key 需与输出表头精确匹配(区分大小写)."
+            "如果表头是中文(如'已用%'), 请将 field_key 改为对应中文,"
+            "或在命令前加 LANG=C 强制英文输出(如 LANG=C df -h)."
             if unmatched_keys and len(unmatched_keys) == len(configured_keys)
             else ""
         ),
@@ -319,6 +348,7 @@ def _save_metrics(conn, monitor_id: int, metrics: list[MetricDef]):
 
 
 def _load_metrics(conn, monitor_id: int) -> list[dict]:
+    """加载指标列表"""
     rows = conn.execute(
         "SELECT * FROM cd_custom_monitor_metrics WHERE monitor_id=? ORDER BY sort_order, id",
         (monitor_id,),
@@ -329,10 +359,10 @@ def _load_metrics(conn, monitor_id: int) -> list[dict]:
 # ── CRUD ──
 @router.get("")
 def list_monitors(
-    db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    db: Annotated[Database, Depends(get_db)],
+    username: Annotated[str, Depends(verify_token)],
 ):
-    """获取所有自定义监控项（含指标）"""
+    """获取所有自定义监控项 (含指标)"""
     with db.conn() as conn:
         rows = conn.execute("SELECT * FROM cd_custom_monitors ORDER BY created_at DESC").fetchall()
         result = []
@@ -346,17 +376,18 @@ def list_monitors(
 @router.post("")
 def create_monitor(
     req: CustomMonitorRequest,
-    db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.monitor.custom")),
+    db: Annotated[Database, Depends(get_db)],
+    _user: Annotated[dict, Depends(require_perm("cd.server-manage"))],
 ):
-    """创建自定义监控项"""
+    """创建自定义监控项 (需服务器管理权限)"""
+    _validate_monitor_command(req.command)
     with db.conn() as conn:
         cur = conn.execute(
             "INSERT INTO cd_custom_monitors (name, command, output_format, description, server_ids, enabled) "
             "VALUES (?,?,?,?,?,?)",
             (req.name, req.command, req.output_format, req.description, req.server_ids, 1 if req.enabled else 0),
         )
-        new_id = cur.lastrowid  # sqlite3 / pymysql 都支持
+        new_id = cur.lastrowid
         if req.metrics:
             _save_metrics(conn, new_id, req.metrics)
     return ok(message=f"监控项 '{req.name}' 已创建")
@@ -366,10 +397,11 @@ def create_monitor(
 def update_monitor(
     monitor_id: int,
     req: CustomMonitorRequest,
-    db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.monitor.custom")),
+    db: Annotated[Database, Depends(get_db)],
+    _user: Annotated[dict, Depends(require_perm("cd.server-manage"))],
 ):
-    """更新自定义监控项"""
+    """更新自定义监控项 (需服务器管理权限)"""
+    _validate_monitor_command(req.command)
     with db.conn() as conn:
         existing = conn.execute("SELECT id FROM cd_custom_monitors WHERE id=?", (monitor_id,)).fetchone()
         if not existing:
@@ -395,10 +427,10 @@ def update_monitor(
 @router.delete("/{monitor_id}")
 def delete_monitor(
     monitor_id: int,
-    db: Database = Depends(get_db),
-    _user: dict = Depends(require_perm("cd.monitor.custom")),
+    db: Annotated[Database, Depends(get_db)],
+    _user: Annotated[dict, Depends(require_perm("cd.server-manage"))],
 ):
-    """删除自定义监控项（级联删除指标）"""
+    """删除自定义监控项 (级联删除指标)"""
     with db.conn() as conn:
         conn.execute("DELETE FROM cd_custom_monitor_metrics WHERE monitor_id=?", (monitor_id,))
         conn.execute("DELETE FROM cd_custom_monitors WHERE id=?", (monitor_id,))
@@ -408,10 +440,10 @@ def delete_monitor(
 @router.post("/{monitor_id}/test")
 def test_monitor(
     monitor_id: int,
-    db: Database = Depends(get_db),
-    username: str = Depends(verify_token),
+    db: Annotated[Database, Depends(get_db)],
+    _user: Annotated[dict, Depends(require_perm("cd.server-manage"))],
 ):
-    """测试运行自定义监控命令，返回每台服务器的解析后结构化结果"""
+    """测试运行自定义监控命令, 返回每台服务器的解析后结构化结果"""
     with db.conn() as conn:
         row = conn.execute("SELECT * FROM cd_custom_monitors WHERE id=?", (monitor_id,)).fetchone()
         if not row:
@@ -422,8 +454,10 @@ def test_monitor(
         if server_ids_str:
             ids = [int(x) for x in server_ids_str.split(",") if x.strip().isdigit()]
             if ids:
-                placeholders = ",".join("?" for _ in ids)
-                servers = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
+                placeholders = ", ".join(["?"] * len(ids))
+                # 参数化查询: placeholders 仅含 ? 占位符, ids 作为参数单独传递, 无注入风险
+                query = f"SELECT * FROM cd_servers WHERE id IN ({placeholders})"
+                servers = conn.execute(query, ids).fetchall()
             else:
                 servers = []
         else:
@@ -450,7 +484,7 @@ def test_monitor(
                 "parsed": parsed,
                 "error": "",
             }
-            # 解析为空但输出非空 → 附加诊断信息
+            # 解析为空但输出非空 -> 附加诊断信息
             if (not parsed) and out.strip() and metrics:
                 diag = _diagnose_parse(out, metrics)
                 if diag:
@@ -465,7 +499,7 @@ def test_monitor(
                     "host": server.get("host", "?"),
                     "output": "",
                     "parsed": [],
-                    "error": "命令执行失败，请联系管理员",
+                    "error": "命令执行失败, 请联系管理员",
                 }
             )
 
