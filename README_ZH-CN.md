@@ -2,9 +2,12 @@
 FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/devops_glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 <p align="center">
-  <a href="https://gitee.com/jeanslw/devops_cd"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
-  <a href="https://gitee.com/jeanslw/devops_cd/stargazers"><img src="https://img.shields.io/github/stars/jeanslw/Devops_CD?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://gitee.com/jeanslw/devops_glue"><img src="https://img.shields.io/badge/依赖-Devops_Glue-green?logo=python" alt="relyon"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd/releases/tag/v1.4"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
   <a href="https://gitee.com/jeanslw/devops_cd"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
+  <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
+  <a href="https://fastapi.org.cn/"><img src="https://img.shields.io/badge/fastAPI-0.115.6+-777BB4?logo=fastAPI&logoColor=white" alt="framework"></a>
+  <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5.0+-777BB4?logo=Vue&logoColor=white" alt="framework"></a>
   <a href="https://gitee.com/jeanslw/devops_cd/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
 </p>
 
