@@ -176,7 +176,7 @@ class DeployService:
         deployer = deployer_registry.create(deploy_type)
 
         # ── 插入 running 记录 + 注册取消信号 ──
-        deploy_id, row_id = start_deploy_record(
+        deploy_id = start_deploy_record(
             self._db,
             deploy_type=deploy_type,
             project=project_key,
@@ -265,7 +265,7 @@ class DeployService:
 
             finish_deploy_record(
                 self._db,
-                row_id,
+                deploy_id,
                 status=status,
                 target=self._build_target_str(results, is_batch, total),
                 output=self._build_output(results, is_batch, total),
@@ -302,12 +302,12 @@ class DeployService:
             duration_ms = int((time.time() - started) * 1000)
             cancelled_output = self._build_output(results, is_batch, total)
             if cancelled_output:
-                cancelled_output += "\n\n━━━ 部署已被用户取消 ━━━"
+                cancelled_output += "\n\n━━━ Deployment cancelled by user ━━━"
             else:
-                cancelled_output = "部署已被用户取消"
+                cancelled_output = "Deployment cancelled by user"
             finish_deploy_record(
                 self._db,
-                row_id,
+                deploy_id,
                 status="terminated",
                 target=self._build_target_str(results, is_batch, total),
                 output=cancelled_output,
@@ -331,7 +331,7 @@ class DeployService:
                 error_output = f"部署异常中断: {e}"
             finish_deploy_record(
                 self._db,
-                row_id,
+                deploy_id,
                 status="failed",
                 target=self._build_target_str(results, is_batch, total),
                 output=error_output[: settings.log_truncate_chars],
@@ -355,13 +355,13 @@ class DeployService:
                     (project,),
                 ).fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT * FROM cd_deploy_logs WHERE project=? ORDER BY deploy_id DESC LIMIT ? OFFSET ?",
+                    "SELECT *, id AS deploy_id FROM cd_deploy_logs WHERE project=? ORDER BY id DESC LIMIT ? OFFSET ?",
                     (project, page_size, offset),
                 ).fetchall()
             else:
                 total = conn.execute("SELECT COUNT(*) AS cnt FROM cd_deploy_logs").fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT * FROM cd_deploy_logs ORDER BY deploy_id DESC LIMIT ? OFFSET ?",
+                    "SELECT *, id AS deploy_id FROM cd_deploy_logs ORDER BY id DESC LIMIT ? OFFSET ?",
                     (page_size, offset),
                 ).fetchall()
             return {

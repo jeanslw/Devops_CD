@@ -16,9 +16,22 @@ v1.3.1 新增，支撑三个能力：
 """
 
 import json
+import sqlite3
 import threading
 
 from backend.config import settings
+
+
+def _is_integrity_error(exc: BaseException) -> bool:
+    """判断是否为主键/唯一约束冲突（SQLite / MySQL 双驱动）。"""
+    if isinstance(exc, sqlite3.IntegrityError):
+        return True
+    try:
+        import pymysql
+
+        return isinstance(exc, pymysql.err.IntegrityError)
+    except ImportError:
+        return False
 
 
 class DeployCancelled(BaseException):
@@ -34,13 +47,20 @@ class DeployRunManager:
 
     def register(self, deploy_id: int) -> threading.Event:
         """注册一个进行中的部署，返回其取消事件。
-        每次注册都 clear()，确保新部署不继承历史取消信号（防御 deploy_id 复用）。"""
+
+        新事件天然未置位；已存在且已 set 的事件说明 cancel 先于 register 到达，
+        必须保留取消信号（否则 clear 会把刚发起的取消抹掉）；仅对未 set 的残留事件
+        做 clear，防御 deploy_id 复用继承历史信号。
+        """
         with self._lock:
             ev = self._events.get(deploy_id)
             if ev is None:
                 ev = threading.Event()
                 self._events[deploy_id] = ev
-            ev.clear()  # 关键：重置信号，避免复用 deploy_id 时继承旧取消状态
+                return ev
+            if ev.is_set():
+                return ev
+            ev.clear()
             return ev
 
     def cancel(self, deploy_id: int) -> bool:
@@ -99,24 +119,30 @@ def start_deploy_record(
     triggered_by: str = "",
     deploy_note: str = "",
     target: str = "",
-) -> tuple[int, int]:
-    """插入一条 running 记录，返回 (deploy_id, row_id)。"""
+) -> int:
+    """插入一条 running 记录，返回部署记录 id（自增主键，即部署编号）。
+
+    并发安全设计：lock_key=project 上唯一索引，保证同一项目至多一条 running 记录
+    （原子，不再依赖「先查后插」的非原子检查）。
+    """
     with db.conn() as conn:
-        row = conn.execute("SELECT COALESCE(MAX(deploy_id), 0) + 1 AS next_id FROM cd_deploy_logs").fetchone()
-        deploy_id = row["next_id"] if row else 1
-        cur = conn.execute(
-            "INSERT INTO cd_deploy_logs "
-            "(deploy_id, project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (deploy_id, project, tag, image, deploy_type, target, "running", "", triggered_by or "", deploy_note or ""),
-        )
-        row_id = getattr(cur, "lastrowid", 0) or 0
-    return deploy_id, row_id
+        try:
+            cur = conn.execute(
+                "INSERT INTO cd_deploy_logs "
+                "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, lock_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (project, tag, image, deploy_type, target, "running", "", triggered_by or "", deploy_note or "", project),
+            )
+        except Exception as e:
+            if _is_integrity_error(e):
+                raise ValueError(f"项目 '{project}' 已有部署进行中，请等待完成或取消后再试") from e
+            raise
+        return getattr(cur, "lastrowid", 0) or 0
 
 
 def finish_deploy_record(
     db,
-    row_id: int,
+    deploy_id: int,
     *,
     status: str,
     target: str = "",
@@ -124,19 +150,30 @@ def finish_deploy_record(
     duration_ms: int = 0,
     stage_times: list | None = None,
 ) -> None:
-    """把 running 记录更新为最终状态（ok / failed / partial / terminated）。"""
+    """把 running 记录更新为最终状态（ok / failed / partial / terminated）。
+
+    deploy_id 即部署记录的自增主键 id。
+    """
     output_truncated = (output or "")[: settings.log_truncate_chars]
     stage_times_json = json.dumps(stage_times or [], ensure_ascii=False)
+
+    # terminated 由部署线程自身检测到取消时写入：此时允许在 cancel 已置 terminated 后
+    # 补充 output/duration，故按 id 无条件更新；其余终态只终结仍为 running 的记录，
+    # 避免覆盖并发 cancel 写入的 terminated。
+    where_clause = "WHERE id=?" if status == "terminated" else "WHERE id=? AND status='running'"
+
     with db.conn() as conn:
-        if row_id:
+        if deploy_id:
             conn.execute(
-                "UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=? WHERE id=?",
-                (status, target, output_truncated, duration_ms, stage_times_json, row_id),
+                f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?, "
+                f"lock_key=NULL {where_clause}",
+                (status, target, output_truncated, duration_ms, stage_times_json, deploy_id),
             )
         else:
-            # 兜底：没有拿到 row_id 时按 running 记录更新（保证不丢）
+            # 兜底：没有拿到 deploy_id 时按 running 记录更新（保证不丢）
             conn.execute(
-                "UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=? WHERE status='running'",
+                "UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?, "
+                "lock_key=NULL WHERE status='running'",
                 (status, target, output_truncated, duration_ms, stage_times_json),
             )
 
@@ -145,7 +182,7 @@ def find_running_deploy(db, project: str) -> dict | None:
     """查找指定项目当前正在进行的部署记录，用于并发锁。"""
     with db.conn() as conn:
         return conn.execute(
-            "SELECT id, deploy_id, tag, created_at FROM cd_deploy_logs "
+            "SELECT id AS deploy_id, tag, created_at FROM cd_deploy_logs "
             "WHERE project=? AND status='running' ORDER BY id DESC LIMIT 1",
             (project,),
         ).fetchone()
@@ -156,10 +193,10 @@ def mark_deploy_cancelled(db, deploy_id: int) -> dict:
     deploy_run_manager.cancel(deploy_id)
     with db.conn() as conn:
         cur = conn.execute(
-            "UPDATE cd_deploy_logs SET status='terminated' WHERE deploy_id=? AND status='running'",
+            "UPDATE cd_deploy_logs SET status='terminated', lock_key=NULL WHERE id=? AND status='running'",
             (deploy_id,),
         )
         affected = getattr(cur, "rowcount", 0) or 0
     if affected:
-        return {"success": True, "message": "部署已取消"}
-    return {"success": False, "message": "未找到进行中的部署（可能已完成）"}
+        return {"success": True, "message": "Deployment cancelled"}
+    return {"success": False, "message": "No running deployment found (may already be finished)"}

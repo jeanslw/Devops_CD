@@ -71,19 +71,19 @@ def deploy_cancel(
     with db.conn() as conn:
         if req.deploy_id:
             row = conn.execute(
-                "SELECT deploy_id, deploy_type FROM cd_deploy_logs "
-                "WHERE deploy_id=? AND status='running' ORDER BY id DESC LIMIT 1",
+                "SELECT id AS deploy_id, deploy_type FROM cd_deploy_logs "
+                "WHERE id=? AND status='running' ORDER BY id DESC LIMIT 1",
                 (req.deploy_id,),
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT deploy_id, deploy_type FROM cd_deploy_logs "
+                "SELECT id AS deploy_id, deploy_type FROM cd_deploy_logs "
                 "WHERE project=? AND status='running' ORDER BY id DESC LIMIT 1",
                 (req.project,),
             ).fetchone()
 
     if not row:
-        return {"success": False, "message": "未找到进行中的部署（可能已完成）"}
+        return {"success": False, "message": "No running deployment found (may already be finished)"}
 
     # 权限校验：按该部署的 deploy_type 判断（k8s 记录形如 "k8s/kubectl"）
     deploy_type = row["deploy_type"] or "ssh"

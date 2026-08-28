@@ -253,7 +253,6 @@ class Database:
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_deploy_logs (
             id {PK},
-            deploy_id INTEGER DEFAULT 0,
             project VARCHAR(255),
             tag VARCHAR(255),
             image VARCHAR(512),
@@ -268,8 +267,6 @@ class Database:
             created_at TEXT DEFAULT ({NOW})
         )""")
         with suppress(Exception):
-            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_id INTEGER DEFAULT 0")
-        with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN triggered_by VARCHAR(64) DEFAULT ''")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN deploy_note VARCHAR(512) DEFAULT ''")
@@ -277,6 +274,15 @@ class Database:
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN duration_ms INTEGER DEFAULT 0")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN stage_times TEXT DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN lock_key VARCHAR(255)")
+        # 并发锁唯一索引：running 记录 lock_key=project，同项目至多一条 running（NULL 可重复）
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
+        # 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id）
+        with suppress(Exception):
+            conn.execute("DROP INDEX IF EXISTS idx_cdl_deploy_id")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs DROP COLUMN deploy_id")
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (
             id {PK},
@@ -401,7 +407,6 @@ class Database:
         for name, tbl, col in [
             ("idx_cdl_project", "cd_deploy_logs", "project"),
             ("idx_cdl_created", "cd_deploy_logs", "created_at"),
-            ("idx_cdl_deploy_id", "cd_deploy_logs", "deploy_id"),
             ("idx_cdl_project_tag_status", "cd_deploy_logs", "project, tag, status"),
             ("idx_cdl_status", "cd_deploy_logs", "status"),
             ("idx_pt_project", "ci_pipeline_tags", "project"),

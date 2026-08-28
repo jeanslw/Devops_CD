@@ -99,16 +99,19 @@ def _deploy_k8s_core(
         raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
 
     deploy_type = f"k8s/{req.cd_type}"
-    deploy_id, row_id = start_deploy_record(
-        db,
-        deploy_type=deploy_type,
-        project=project_key,
-        tag=req.tag,
-        image=image,
-        triggered_by=user.get("username", ""),
-        deploy_note=req.deploy_note,
-        target=host,
-    )
+    try:
+        deploy_id = start_deploy_record(
+            db,
+            deploy_type=deploy_type,
+            project=project_key,
+            tag=req.tag,
+            image=image,
+            triggered_by=user.get("username", ""),
+            deploy_note=req.deploy_note,
+            target=host,
+        )
+    except ValueError as e:
+        raise ValidationError(str(e), error_key="errors.deploy_busy") from e
     deploy_run_manager.register(deploy_id)
     set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
     started = time.time()
@@ -120,7 +123,7 @@ def _deploy_k8s_core(
         duration_ms = int((time.time() - started) * 1000)
         finish_deploy_record(
             db,
-            row_id,
+            deploy_id,
             status=status,
             target=host,
             output=result.get("output", "") or "",
@@ -132,20 +135,20 @@ def _deploy_k8s_core(
         duration_ms = int((time.time() - started) * 1000)
         finish_deploy_record(
             db,
-            row_id,
+            deploy_id,
             status="terminated",
             target=host,
-            output="部署已被用户取消",
+            output="Deployment cancelled by user",
             duration_ms=duration_ms,
             stage_times=[{"host": host, "status": "terminated", "duration_ms": duration_ms}],
         )
-        return {"success": False, "output": "部署已被用户取消", "cancelled": True}
+        return {"success": False, "output": "Deployment cancelled by user", "cancelled": True}
     except Exception as e:
         logger.error("K8s deploy core failed", exc_info=e)
         duration_ms = int((time.time() - started) * 1000)
         finish_deploy_record(
             db,
-            row_id,
+            deploy_id,
             status="failed",
             target=host,
             output=str(e)[: settings.log_truncate_chars],

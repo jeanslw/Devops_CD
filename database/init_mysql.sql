@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS cd_servers (
 
 CREATE TABLE IF NOT EXISTS cd_deploy_logs (
     id          INT AUTO_INCREMENT PRIMARY KEY,
-    deploy_id   INT          DEFAULT 0,
     project     VARCHAR(255),
     tag         VARCHAR(255),
     image       VARCHAR(512),
@@ -103,7 +102,6 @@ CALL __add_index('cd_servers', 'idx_cds_type', 'type');
 -- cd_deploy_logs 索引（表在本脚本中已创建）
 CALL __add_index('cd_deploy_logs', 'idx_cdl_project', 'project');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_created', 'created_at');
-CALL __add_index('cd_deploy_logs', 'idx_cdl_deploy_id', 'deploy_id');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_project_tag_status', 'project, tag, status');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_status', 'status');
 
@@ -145,6 +143,49 @@ DELIMITER ;
 CALL __add_column('cd_deploy_logs', 'deploy_note', "VARCHAR(512) DEFAULT ''");
 CALL __add_column('cd_deploy_logs', 'duration_ms', 'INT DEFAULT 0');
 CALL __add_column('cd_deploy_logs', 'stage_times', 'TEXT');
+CALL __add_column('cd_deploy_logs', 'lock_key', 'VARCHAR(255) DEFAULT NULL');
+
+-- 并发锁唯一索引（幂等）：lock_key=project 仅 running 记录非空，保证同项目至多一条 running
+DROP PROCEDURE IF EXISTS __add_unique_index;
+DELIMITER $$
+CREATE PROCEDURE __add_unique_index(IN tbl VARCHAR(64), IN idx VARCHAR(64), IN cols VARCHAR(256))
+BEGIN
+    DECLARE _tbl INT DEFAULT 0;
+    DECLARE _idx INT DEFAULT 0;
+    SELECT COUNT(*) INTO _tbl FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl;
+    IF _tbl = 1 THEN
+        SELECT COUNT(*) INTO _idx FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl AND INDEX_NAME = idx;
+        IF _idx = 0 THEN
+            SET @_ddl = CONCAT('CREATE UNIQUE INDEX ', idx, ' ON ', tbl, '(', cols, ')');
+            PREPARE _stmt FROM @_ddl; EXECUTE _stmt; DEALLOCATE PREPARE _stmt;
+        END IF;
+    END IF;
+END $$
+DELIMITER ;
+
+CALL __add_unique_index('cd_deploy_logs', 'idx_cdl_lock_key', 'lock_key');
+DROP PROCEDURE IF EXISTS __add_unique_index;
+
+-- 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id；DROP COLUMN 会连带删除该列上的索引）
+DROP PROCEDURE IF EXISTS __drop_column;
+DELIMITER $$
+CREATE PROCEDURE __drop_column(IN tbl VARCHAR(64), IN col VARCHAR(64))
+BEGIN
+    DECLARE _col INT DEFAULT 0;
+    SELECT COUNT(*) INTO _col FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl AND COLUMN_NAME = col;
+    IF _col = 1 THEN
+        SET @_ddl = CONCAT('ALTER TABLE ', tbl, ' DROP COLUMN ', col);
+        PREPARE _stmt FROM @_ddl; EXECUTE _stmt; DEALLOCATE PREPARE _stmt;
+    END IF;
+END $$
+DELIMITER ;
+
+CALL __drop_column('cd_deploy_logs', 'deploy_id');
+DROP PROCEDURE IF EXISTS __drop_column;
+
 DROP PROCEDURE IF EXISTS __add_column;
 
 DROP PROCEDURE IF EXISTS __add_index;
