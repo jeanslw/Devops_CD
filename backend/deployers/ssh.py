@@ -6,7 +6,7 @@ import shlex
 from backend.config import settings
 from backend.deploy_log import S
 
-from .base import Deployer, DeployResult, DeployTarget, ssh_exec_stream, ssh_session
+from .base import Deployer, DeployResult, DeployTarget, split_image_ref, ssh_exec_stream, ssh_session
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,12 @@ class SSHDeployer(Deployer):
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 self._log(callback, S("deploy_log.ssh_exec_start"))
-                output = self._ssh_exec_stream(ssh, cmd, callback)
+                output, exit_code = self._ssh_exec_stream(ssh, cmd, callback)
                 self._log(callback, S("deploy_log.ssh_exec_done"))
 
-            return DeployResult(image=image, status="ok", output=output)
+            # 命令 exit code 是 SSH/Ansible 模式下唯一的成败信号，必须以此判定
+            status = "ok" if exit_code == 0 else "failed"
+            return DeployResult(image=image, status=status, output=output)
         except Exception as e:
             logger.error("SSH deploy failed", exc_info=e)
             self._log(callback, S("deploy_log.deploy_error", error=str(e)))
@@ -49,7 +51,7 @@ class SSHDeployer(Deployer):
         template = target.options.get("commands", "")
         if not template:
             return "echo 'ERROR: Custom commands not configured' && exit 1"
-        image_name = image.split(":")[0]
+        image_name = split_image_ref(image)[0]
         return (
             template.replace("{image}", shlex.quote(image))
             .replace("{image_name}", shlex.quote(image_name))
@@ -61,14 +63,14 @@ class SSHDeployer(Deployer):
         if not target.path:
             return "echo 'ERROR: Missing Ansible playbook path' && exit 1"
         inv = target.options.get("inventory", "")
-        inv_flag = f"-i {inv}" if inv else ""
+        inv_flag = f"-i {shlex.quote(inv)}" if inv else ""
         return (
             f"ansible-playbook {inv_flag} {shlex.quote(target.path)}"
             f" -e image={shlex.quote(image)} -e tag={shlex.quote(tag)} -e project={shlex.quote(project)}"
         ).strip()
 
-    def _ssh_exec_stream(self, ssh, cmd: str, callback) -> str:
-        """实时流式执行命令（委托给共享实现）"""
+    def _ssh_exec_stream(self, ssh, cmd: str, callback) -> tuple[str, int]:
+        """实时流式执行命令（委托给共享实现），返回 (output, exit_code)"""
         return ssh_exec_stream(ssh, cmd, lambda msg: self._log(callback, msg))
 
     def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
@@ -90,7 +92,8 @@ class SSHDeployer(Deployer):
                 _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
                 out = stdout.read().decode(errors="replace").strip()
                 err = stderr.read().decode(errors="replace").strip()
-                return {"success": True, "output": (err or out)[: settings.log_truncate_chars]}
+                exit_code = stdout.channel.recv_exit_status()
+                return {"success": exit_code == 0, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("SSH stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}

@@ -14,6 +14,19 @@ from backend.deploy_run import DeployCancelled, get_cancel_checker
 logger = logging.getLogger(__name__)
 
 
+def split_image_ref(image: str) -> tuple[str, str]:
+    """把镜像引用拆成 (repo, tag)。
+
+    用 rpartition 从最后一个冒号切分，正确处理 registry 带端口 / IPv6 等
+    含多个冒号的场景（如 hub.example.com:5000/project/app:v1.0）。
+    无 tag 时返回 (image, "")。
+    """
+    repo, sep, tag = image.rpartition(":")
+    if not sep:
+        return image, ""
+    return repo, tag
+
+
 def _known_hosts_file() -> str:
     """返回 known_hosts 文件路径（固定在 ~/.cd_service/known_hosts）。"""
     cd_dir = os.path.join(os.path.expanduser("~"), ".cd_service")
@@ -275,8 +288,8 @@ def _ssh_cmd(ssh, cmd: str) -> str:
 _PROGRESS_BAR = re.compile(r"\[[=> ]+\]")
 
 
-def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
-    """实时流式执行命令，批量推送输出。
+def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
+    """实时流式执行命令，批量推送输出。返回 (output, exit_code)。
 
     有数据时全速读，没数据时才 sleep，保证高吞吐。
     log_fn 签名: log_fn(message: str)
@@ -352,8 +365,9 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
                 time.sleep(0.005)
 
         # 阻塞等待退出状态码接收完毕（确保远端已刷新所有 stdout/stderr）
+        exit_code = 0
         with suppress(Exception):
-            channel.recv_exit_status()
+            exit_code = channel.recv_exit_status()
 
         # 补读残留数据，最多重试 5 次（含短暂延时，应对网络延迟导致的数据滞后到达）
         for _ in range(5):
@@ -378,7 +392,7 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> str:
                 break
             time.sleep(0.01)
         _flush()
-        return "\n".join(all_output)
+        return "\n".join(all_output), exit_code
     finally:
         channel.close()
 

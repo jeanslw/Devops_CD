@@ -57,6 +57,7 @@ class DeployRequest(BaseModel):
     env_file: str = ""  # docker-compose --env-file 路径，空=默认 .env
     deploy_note: str = ""  # 部署说明（记录到 cd_deploy_logs.deploy_note）
     cd_type: str = "kubectl"  # K8S 子模式：kubectl | helm | argocd | fluxcd
+    api_url: str = ""  # ArgoCD API 地址（带 scheme，如 https://argocd:30443），空则回退 https://{host}
     bot_id: int = 0
     lang: str = "en"  # 前端当前语言 en/zh，用于 bot 通知消息国际化
 

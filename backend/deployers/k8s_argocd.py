@@ -3,6 +3,7 @@
 import logging
 
 from backend.deploy_log import S
+from backend.deployers.base import split_image_ref
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import check_cancelled
 
@@ -24,7 +25,7 @@ class ArgoCDDeployer(K8sSubDeployer):
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         token = pwd
-        base = req.api_url or f"https://{host}"
+        base = getattr(req, "api_url", "") or f"https://{host}"
         app_name = project.split("/")[-1]
         try:
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -46,7 +47,8 @@ class ArgoCDDeployer(K8sSubDeployer):
         import time
 
         token = pwd  # ArgoCD token 通过 password 字段传入
-        base = req.api_url or f"https://{host}"
+        base = getattr(req, "api_url", "") or f"https://{host}"
+        image_repo, image_tag = split_image_ref(image)
         output = []
         success = False
 
@@ -73,7 +75,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                     for a in apps:
                         name = a.get("metadata", {}).get("name", "")
                         spec_str = str(a.get("spec", {}))
-                        if image.split(":")[0] in spec_str or project in spec_str:
+                        if image_repo in spec_str or project in spec_str:
                             found = name
                             break
                     if found:
@@ -104,8 +106,8 @@ class ArgoCDDeployer(K8sSubDeployer):
                 new_images = [
                     {
                         "name": app_name,
-                        "newName": image.split(":")[0],
-                        "newTag": image.split(":")[1] if ":" in image else "latest",
+                        "newName": image_repo,
+                        "newTag": image_tag or "latest",
                     }
                 ]
                 patch = {"spec": {"source": {"kustomize": {"images": new_images}}}}
@@ -114,11 +116,11 @@ class ArgoCDDeployer(K8sSubDeployer):
                 found = False
                 for p in params:
                     if p.get("name") == "image.tag":
-                        p["value"] = image.split(":")[-1] if ":" in image else "latest"
+                        p["value"] = image_tag or "latest"
                         found = True
                         break
                 if not found:
-                    params.append({"name": "image.tag", "value": image.split(":")[-1] if ":" in image else "latest"})
+                    params.append({"name": "image.tag", "value": image_tag or "latest"})
                 patch = {"spec": {"source": {"helm": {"parameters": params}}}}
 
             log(S("deploy_log.argocd_update"))
@@ -145,6 +147,9 @@ class ArgoCDDeployer(K8sSubDeployer):
                 check_cancelled()
                 time.sleep(2)
                 r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                if r.status_code != 200:
+                    log(f"ArgoCD 状态轮询失败: {r.status_code} {r.text[:200]}")
+                    continue
                 a = r.json()
                 health = a.get("status", {}).get("health", {}).get("status", "")
                 sync = a.get("status", {}).get("sync", {}).get("status", "")

@@ -6,7 +6,7 @@ import shlex
 
 from backend.config import settings
 from backend.deploy_log import S
-from backend.deployers.base import DeployTarget, ssh_connect
+from backend.deployers.base import DeployTarget, split_image_ref, ssh_connect
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, _ssh_cmd, check_cancelled
 
@@ -71,7 +71,7 @@ class FluxCDDeployer(K8sSubDeployer):
 
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         tag = req.tag
-        img_name = image.split(":")[0]
+        img_name, _ = split_image_ref(image)
 
         def _check_flux_error(ssh, resource_name, resource_kind):
             """检查 Flux 资源 (HelmRelease/Kustomization) 是否报错。返回错误描述或 None"""

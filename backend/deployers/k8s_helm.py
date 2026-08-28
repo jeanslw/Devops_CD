@@ -5,7 +5,7 @@ import shlex
 
 from backend.config import settings
 from backend.deploy_log import S
-from backend.deployers.base import DeployTarget, ssh_connect
+from backend.deployers.base import DeployTarget, split_image_ref, ssh_connect
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, check_cancelled
 
@@ -50,7 +50,7 @@ class HelmDeployer(K8sSubDeployer):
         if not req.path:
             return {"success": False, "output": "Helm deploy requires a chart path or repo reference"}
         chart = req.path
-        image_repo = image.split(":")[0] if ":" in image else image
+        image_repo, _ = split_image_ref(image)
         ns = req.k8s_ns
         ns_flag = f" -n {ns}" if ns else ""
 

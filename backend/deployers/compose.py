@@ -6,7 +6,7 @@ import shlex
 from backend.config import settings
 from backend.deploy_log import S
 
-from .base import Deployer, DeployResult, DeployTarget, _exec_on, ssh_exec_stream, ssh_session
+from .base import Deployer, DeployResult, DeployTarget, _exec_on, split_image_ref, ssh_exec_stream, ssh_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class ComposeDeployer(Deployer):
             return DeployResult(image=image, status="failed", output="Missing target host")
 
         mode = target.mode or "remote"
-        image_name = image.split(":")[0]  # hub.abc.com/project/app
+        image_name = split_image_ref(image)[0]  # hub.abc.com/project/app
 
         # ── commands 模式：纯透传，不做任何 compose/docker 假设 ──
         if mode == "commands":
@@ -45,8 +45,10 @@ class ComposeDeployer(Deployer):
             try:
                 with ssh_session(target, settings.ssh_timeout) as ssh:
                     self._log(callback, S("deploy_log.starting_deploy"))
-                    output = self._ssh_exec_stream(ssh, cmd, callback)
-                    return DeployResult(image=image, status="ok", output=output)
+                    output, exit_code = self._ssh_exec_stream(ssh, cmd, callback)
+                    # commands 模式无后置校验，命令 exit code 是唯一成败信号
+                    status = "ok" if exit_code == 0 else "failed"
+                    return DeployResult(image=image, status=status, output=output)
             except Exception as e:
                 logger.error("Compose commands deploy failed", exc_info=e)
                 self._log(callback, S("deploy_log.deploy_error", error=str(e)))
@@ -61,10 +63,11 @@ class ComposeDeployer(Deployer):
 
         try:
             project_short = project.split("/")[-1]
+            path_q = shlex.quote(target.path)  # 路径含空格/特殊字符时安全
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 # 1. 校验路径
                 self._log(callback, S("deploy_log.verifying_path"))
-                path_check = self._ssh_run(ssh, f"test -d {target.path} && echo 'OK' || echo 'NOT_FOUND'", image)
+                path_check = self._ssh_run(ssh, f"test -d {path_q} && echo 'OK' || echo 'NOT_FOUND'", image)
                 if path_check.output.strip() != "OK":
                     self._log(callback, S("deploy_log.path_not_found", path=target.path))
                     return DeployResult(
@@ -90,23 +93,24 @@ class ComposeDeployer(Deployer):
                 # 3. 写入 IMAGE / TAG 到 env 文件
                 self._log(callback, S("deploy_log.writing_env", image=image_name, tag=tag))
                 if env_file:
-                    env_flag = f"--env-file {env_file}"
+                    env_flag = f"--env-file {shlex.quote(env_file)}"
                 else:
                     env_file = ".env"
                     env_flag = ""
+                env_file_q = shlex.quote(env_file)
 
                 # sed 只替换 IMAGE/TAG 行（# 分隔符避免镜像名 / 冲突），不存在则追加
                 env_update = (
-                    f"cd {target.path} && "
-                    f'sed -i "s#^IMAGE=.*#IMAGE={image_name}#" {env_file} && '
-                    f"grep -q '^IMAGE=' {env_file} || echo \"IMAGE={image_name}\" >> {env_file} && "
-                    f'sed -i "s#^TAG=.*#TAG={tag}#" {env_file} && '
-                    f"grep -q '^TAG=' {env_file} || echo \"TAG={tag}\" >> {env_file}"
+                    f"cd {path_q} && "
+                    f'sed -i "s#^IMAGE=.*#IMAGE={image_name}#" {env_file_q} && '
+                    f"grep -q '^IMAGE=' {env_file_q} || echo \"IMAGE={image_name}\" >> {env_file_q} && "
+                    f'sed -i "s#^TAG=.*#TAG={tag}#" {env_file_q} && '
+                    f"grep -q '^TAG=' {env_file_q} || echo \"TAG={tag}\" >> {env_file_q}"
                 )
                 self._ssh_run(ssh, env_update, image)
 
                 # 验证 .env 写入成功（直接看 stdout，忽略 stderr）
-                out, _, _ = _exec_on(ssh, f"cd {target.path} && cat {env_file}")
+                out, _, _ = _exec_on(ssh, f"cd {path_q} && cat {env_file_q}")
                 if image_name not in out or tag not in out:
                     self._log(callback, S("deploy_log.env_write_fail"))
                     return DeployResult(image=image, status="failed", output=f".env write failed:\n{out}")
@@ -182,9 +186,9 @@ class ComposeDeployer(Deployer):
                 # 4b. 拉取目标 service 镜像（只拉目标 service，不动其他如 mysql）
                 if _needs_pull(image_name):
                     self._log(callback, S("deploy_log.pulling_image"))
-                    pull_text = self._ssh_exec_stream(
+                    pull_text, _ = self._ssh_exec_stream(
                         ssh,
-                        f"cd {target.path} && COLUMNS=512 timeout 600 docker-compose pull {project_short} 2>&1",
+                        f"cd {path_q} && COLUMNS=512 timeout 600 docker-compose pull {project_short} 2>&1",
                         callback,
                     )
                 else:
@@ -196,14 +200,14 @@ class ComposeDeployer(Deployer):
                     self._log(callback, S("deploy_log.fallback_dockerhub", image=dh_image))
                     self._ssh_run(
                         ssh,
-                        f'cd {target.path} && sed -i "s#^IMAGE=.*#IMAGE={dh_image}#" {env_file} && grep -q \'^IMAGE=\' {env_file} || echo "IMAGE={dh_image}" >> {env_file}',
+                        f'cd {path_q} && sed -i "s#^IMAGE=.*#IMAGE={dh_image}#" {env_file_q} && grep -q \'^IMAGE=\' {env_file_q} || echo "IMAGE={dh_image}" >> {env_file_q}',
                         image,
                     )
                     if _needs_pull(dh_image):
                         self._log(callback, S("deploy_log.pulling_image"))
-                        dh_pull = self._ssh_exec_stream(
+                        dh_pull, _ = self._ssh_exec_stream(
                             ssh,
-                            f"cd {target.path} && COLUMNS=512 timeout 600 docker-compose pull {project_short} 2>&1",
+                            f"cd {path_q} && COLUMNS=512 timeout 600 docker-compose pull {project_short} 2>&1",
                             callback,
                         )
                         pull_text += "\n" + dh_pull
@@ -258,7 +262,7 @@ class ComposeDeployer(Deployer):
                 self._log(callback, S("deploy_log.checking_version"))
                 before = self._ssh_run(
                     ssh,
-                    f"cd {target.path} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
+                    f"cd {path_q} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
                     image,
                 )
                 self._log(callback, S("deploy_log.current_version"))
@@ -266,9 +270,9 @@ class ComposeDeployer(Deployer):
 
                 # 6. 执行部署
                 self._log(callback, S("deploy_log.starting_deploy"))
-                deploy_text = self._ssh_exec_stream(
+                deploy_text, _ = self._ssh_exec_stream(
                     ssh,
-                    f"cd {target.path} && docker-compose {env_flag} up -d --force-recreate {project_short} 2>&1",
+                    f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {project_short} 2>&1",
                     callback,
                 )
 
@@ -278,7 +282,7 @@ class ComposeDeployer(Deployer):
 
                 running = self._ssh_run(
                     ssh,
-                    f"cd {target.path} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
+                    f"cd {path_q} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
                     image,
                 )
                 if not running.output.strip():
@@ -336,7 +340,7 @@ class ComposeDeployer(Deployer):
     def _upload_file(self, ssh, target: DeployTarget, content: str) -> str | None:
         """SFTP 写文件。返回 None=成功，返回 str=错误信息"""
         try:
-            ssh.exec_command(f"mkdir -p {target.path}")
+            ssh.exec_command(f"mkdir -p {shlex.quote(target.path)}")
             sftp = ssh.open_sftp()
             with sftp.file(f"{target.path}/docker-compose.yml", "w") as f:
                 f.write(content)
@@ -352,14 +356,14 @@ class ComposeDeployer(Deployer):
             return DeployResult(
                 image=image,
                 status="ok",
-                output=(err or out)[: settings.log_truncate_chars],
+                output=(out or err)[: settings.log_truncate_chars],
             )
         except Exception as e:
             logger.error("Compose _ssh_run failed", exc_info=e)
             return DeployResult(image=image, status="failed", output="命令执行失败")
 
-    def _ssh_exec_stream(self, ssh, cmd: str, callback) -> str:
-        """实时流式执行命令（委托给共享实现）"""
+    def _ssh_exec_stream(self, ssh, cmd: str, callback) -> tuple[str, int]:
+        """实时流式执行命令（委托给共享实现），返回 (output, exit_code)"""
         return ssh_exec_stream(ssh, cmd, lambda msg: self._log(callback, msg))
 
     def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
@@ -367,13 +371,14 @@ class ComposeDeployer(Deployer):
         target_path = kwargs.get("target_path", "")
         if not target_path:
             return {"success": False, "output": "Compose stop: missing target_path"}
-        cmd = f"cd {target_path} && docker-compose down"
+        cmd = f"cd {shlex.quote(target_path)} && docker-compose down"
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)
                 out = stdout.read().decode(errors="replace").strip()
                 err = stderr.read().decode(errors="replace").strip()
-                return {"success": True, "output": (err or out)[: settings.log_truncate_chars]}
+                exit_code = stdout.channel.recv_exit_status()
+                return {"success": exit_code == 0, "output": (out or err)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("Compose stop failed", exc_info=ex)
             return {"success": False, "output": "停止服务失败，请联系管理员"}
