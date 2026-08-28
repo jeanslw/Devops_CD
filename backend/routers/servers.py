@@ -257,7 +257,7 @@ def trust_existing_server(
     with db.conn() as conn:
         row = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
         if not row:
-            raise NotFoundError("服务器不存在")
+            raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
         password = decrypt(row["password"]) if row.get("password") else ""
         ssh_key = decrypt(row["ssh_key"]) if row.get("ssh_key") else ""

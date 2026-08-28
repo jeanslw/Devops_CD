@@ -1,5 +1,6 @@
 """Smoke test + regression - P0 & P1 optimization verification"""
 
+import ast
 import inspect
 import os
 
@@ -89,25 +90,33 @@ print("ROUND 4: P1 error_key verification")
 print("=" * 60)
 
 # Check all raise statements in routers have error_key
-all_files = [
-    "backend/routers/monitor.py",
-    "backend/routers/ci_build.py",
-    "backend/routers/registry.py",
-    "backend/routers/bots.py",
-    "backend/routers/custom_monitors.py",
-    "backend/routers/deploy.py",
-]
+all_files = sorted(
+    os.path.join("backend", "routers", name)
+    for name in os.listdir(os.path.join(base, "backend", "routers"))
+    if name.endswith(".py")
+)
 
 missing = []
 for fpath in all_files:
     with open(os.path.join(base, fpath), encoding="utf-8") as f:
-        lines_r = f.readlines()
-    for i, line in enumerate(lines_r, 1):
-        if "raise " in line and "Error" in line and "error_key=" not in line:
-            # exceptions: re-raise (just `raise`), or raise in non-router code
-            stripped = line.strip()
-            if stripped.startswith("raise ") and "Error(" in stripped:
-                missing.append(f"  {fpath}:{i}: {stripped}")
+        src = f.read()
+    # 用 AST 定位 raise 语句，正确处理多行 raise XxxError(...)（error_key 换行也能识别）
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Raise):
+            continue
+        exc = node.exc
+        # 跳过裸 `raise` / `raise ... from e`，只检查显式抛出的 *Error 调用
+        if not isinstance(exc, ast.Call):
+            continue
+        name = (
+            exc.func.id
+            if isinstance(exc.func, ast.Name)
+            else (exc.func.attr if isinstance(exc.func, ast.Attribute) else "")
+        )
+        if not name or "Error" not in name:
+            continue
+        if not any(k.arg == "error_key" for k in exc.keywords):
+            missing.append(f"  {fpath}:{exc.lineno}: {name}(...)")
 
 if missing:
     print("  MISSING error_key:")
