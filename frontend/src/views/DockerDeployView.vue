@@ -49,6 +49,8 @@
             <label>{{ $t('dockerDeploy.envFile') }}</label>
             <input v-model="envFile" :placeholder="$t('dockerDeploy.envFilePlaceholder')">
           </div>
+        </div>
+        <div class="grid2" style="margin-bottom:8px">
           <div>
             <label>{{ $t('deploy.notify') }}</label>
             <select v-model="botId">
@@ -56,10 +58,10 @@
               <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }} ({{ b.type }})</option>
             </select>
           </div>
-        </div>
-        <div style="margin-bottom:8px">
-          <label>{{ $t('deploy.note') }}</label>
-          <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+          <div>
+            <label>{{ $t('deploy.note') }}</label>
+            <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+          </div>
         </div>
         <div v-if="mode === 'remote'" style="margin-bottom:8px">
           <label @click="yamlExpanded = !yamlExpanded" style="cursor:pointer;user-select:none">

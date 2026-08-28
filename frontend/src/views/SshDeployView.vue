@@ -49,6 +49,8 @@
             <label>{{ $t('sshDeploy.inventory') }}</label>
             <input v-model="inventory" :placeholder="$t('sshDeploy.inventoryPlaceholder')">
           </div>
+        </div>
+        <div class="grid2" style="margin-bottom:8px">
           <div>
             <label>{{ $t('deploy.notify') }}</label>
             <select v-model="botId">
@@ -56,14 +58,14 @@
               <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }}</option>
             </select>
           </div>
+          <div>
+            <label>{{ $t('deploy.note') }}</label>
+            <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+          </div>
         </div>
         <div v-if="mode === 'commands'" style="margin-bottom:8px">
           <label>{{ $t('deploy.commands') }}</label>
           <textarea v-model="commands" rows="6" :placeholder="$t('sshDeploy.commandsPlaceholder')" style="width:100%;resize:vertical;font-family:monospace"></textarea>
-        </div>
-        <div style="margin-bottom:8px">
-          <label>{{ $t('deploy.note') }}</label>
-          <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
         </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>

@@ -60,16 +60,18 @@
         <label>{{ $t('k8sDeploy.apiUrl') }}</label>
         <input v-model="apiUrl" placeholder="https://argocd:30443">
       </div>
-      <div>
-        <label>{{ $t('deploy.notify') }}</label>
-        <select v-model="botId">
-          <option :value="0">{{ $t('bots.noNotify') }}</option>
-          <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }}</option>
-        </select>
-      </div>
-      <div>
-        <label>{{ $t('deploy.note') }}</label>
-        <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+      <div class="grid2" style="margin-bottom:8px">
+        <div>
+          <label>{{ $t('deploy.notify') }}</label>
+          <select v-model="botId">
+            <option :value="0">{{ $t('bots.noNotify') }}</option>
+            <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }}</option>
+          </select>
+        </div>
+        <div>
+          <label>{{ $t('deploy.note') }}</label>
+          <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
+        </div>
       </div>
       <button class="btn btn-green" style="margin-top:8px" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
       <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
