@@ -1,6 +1,13 @@
 """CI 数据查询服务 — 读 CI DB，兼容 ci_ 前缀和旧表名"""
 
+import logging
+
 from backend.database import Database
+
+logger = logging.getLogger(__name__)
+
+# custom_push 构建记录表：由 Devops-Glue 在用户 CI 上报时写入，无旧表名回退
+CUSTOM_BUILDS = "ci_custom_builds"
 
 
 class CiService:
@@ -104,3 +111,54 @@ class CiService:
             if row:
                 return row["job_name"]
             return None
+
+    def resolve_build_provider(self, project: str) -> tuple[str, str] | None:
+        """解析项目 CI 源，返回 (job_name, build_provider)；未映射返回 None。
+
+        build_provider 取值与 CI HTTP API 的 ci_provider 一致：
+        jenkins / gitlab_ci / custom_push。
+        """
+        with self._db.conn() as conn:
+            self._resolve_tables(conn)
+            row = conn.execute(
+                f"SELECT job_name, build_provider FROM {self._job_map} "
+                f"WHERE (job_name=? OR current_path=?) AND status='active'",
+                (project, project),
+            ).fetchone()
+            if not row:
+                return None
+            return row["job_name"], row["build_provider"] or ""
+
+    def get_custom_push_builds(self, job_name: str, limit: int = 100) -> list[dict]:
+        """读 ci_custom_builds（Glue 上报的 custom_push 构建终态），映射成 pipelines。
+
+        字段映射对照 Devops-Glue CustomPushBuildProvider.getPipelines：
+          id / iid(=pipeline_iid) / status / ref / sha / web_url /
+          created_at(=triggered_at) / updated_at(=finished_at)
+        """
+        with self._db.conn() as conn:
+            try:
+                rows = conn.execute(
+                    f"SELECT id, pipeline_iid, ref, sha, status, log_url, web_url, "
+                    f"triggered_at, started_at, finished_at FROM {CUSTOM_BUILDS} "
+                    f"WHERE job_name=? ORDER BY pipeline_iid DESC LIMIT ?",
+                    (job_name, limit),
+                ).fetchall()
+            except Exception as e:
+                logger.warning("ci_custom_builds 查询失败（表可能不存在）: %s", e)
+                return []
+            return [
+                {
+                    "id": int(r["id"]),
+                    "iid": int(r["pipeline_iid"] or 0),
+                    "status": r["status"] or "unknown",
+                    "ref": r["ref"] or "",
+                    "sha": r["sha"] or "",
+                    "web_url": r["web_url"] or "",
+                    # log_url 非必报，可能为空：前端据此决定「日志无」或可点链接
+                    "log_url": r["log_url"] or "",
+                    "created_at": r["triggered_at"] or "",
+                    "updated_at": r["finished_at"] or "",
+                }
+                for r in rows
+            ]

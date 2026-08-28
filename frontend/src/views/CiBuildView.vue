@@ -42,7 +42,12 @@
               <td><span class="badge" :class="statusClass(b.status)">{{ b.status }}</span></td>
               <td class="time-cell">{{ formatTime(b.updated_at) }}</td>
               <td class="action-cell">
-                <button class="btn btn-sm btn-blue" @click="viewLog(b)">{{ $t('ciBuild.viewLog') }}</button>
+                <!-- custom_push：log_url 非必报，有则点链接，空则显示「日志无」 -->
+                <template v-if="buildProvider === 'custom_push'">
+                  <a v-if="b.log_url" :href="b.log_url" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-blue">{{ $t('ciBuild.viewLog') }}</a>
+                  <span v-else class="no-log">{{ $t('ciBuild.logEmpty') }}</span>
+                </template>
+                <button v-else class="btn btn-sm btn-blue" @click="viewLog(b)">{{ $t('ciBuild.viewLog') }}</button>
                 <template v-if="buildProvider === 'gitlab_ci' && auth.canTriggerBuild()">
                   <button class="btn btn-sm" @click="retryBuild(b)" :disabled="actionLoading === b.id">
                     🔄 {{ $t('ciBuild.retry') }}
@@ -514,4 +519,6 @@ textarea.field { resize: vertical; min-height: 50px; }
 .btn-green { background: #388e3c; color: #fff; }
 .btn-red { background: #c62828; color: #fff; }
 .btn-blue { background: #1565c0; color: #fff; }
+.no-log { color: #888; font-size: 12px; }
+.action-cell a.btn { text-decoration: none; }
 </style>
