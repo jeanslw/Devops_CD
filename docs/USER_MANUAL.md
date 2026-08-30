@@ -48,6 +48,16 @@ CD Panel (this project)
 | K8s Argo CD | REST API | PATCH image → sync → poll until Healthy |
 | K8s Flux CD | SSH kubectl | PATCH resource → wait for ready |
 
+### Rollback (回滚)
+
+When a deployment goes wrong, roll back to a previous successful version directly from the deploy page:
+
+- **K8s kubectl / helm / argocd** ("Rollback one step"): native cluster rollback — `kubectl rollout undo`, `helm rollback --wait`, or the ArgoCD `rollback` API — using the latest successful deployment as context.
+- **Rollback to a specific tag** ("Rollback to tag"): re-runs the previous successful deployment with the chosen tag (works for all modes).
+- **ssh / compose / fluxcd** (no native undo): replays the previous successful deployment (a different tag) using its stored parameter snapshot.
+
+Rollback output is streamed live (SSE). If rollback approval is enabled, the rollback is queued for approval first. Legacy deployments (before v1.5.0) have no parameter snapshot and cannot be rolled back.
+
 ## 4. Custom Resource Monitoring
 
 > Execute arbitrary commands on target servers via SSH and parse output into structured metrics. Supports CSV (header + rows), KV (key=value), and JSON formats.

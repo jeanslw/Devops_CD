@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from backend.config import settings
 from backend.database import Database
+from backend.services.ci_client import CiClientError, get_ci_client
 from backend.services.harbor_client import HarborClient, HarborUnavailableError
 
 logger = logging.getLogger("registry")
@@ -100,13 +101,14 @@ class RegistryService:
 
     # ── 从 CI 映射获取待同步仓库 ──
 
-    def _get_ci_repos(self, conn) -> list[dict]:
-        """从 ci_job_git_map 获取所有已配置 Harbor 仓库的项目"""
-        rows = conn.execute(
-            "SELECT job_name, harbor_repository FROM ci_job_git_map "
-            "WHERE status='active' AND harbor_repository IS NOT NULL AND harbor_repository!=''"
-        ).fetchall()
-        return [{"project": r["job_name"], "repo": r["harbor_repository"]} for r in rows]
+    def _get_ci_repos(self) -> list[dict]:
+        """从 CI 映射获取所有已配置 Harbor 仓库的项目（经 API，不再直读 ci_job_git_map）"""
+        projects = get_ci_client().get_projects() or []
+        return [
+            {"project": p["job_name"], "repo": p["harbor_repository"]}
+            for p in projects
+            if (p.get("harbor_repository") or "")
+        ]
 
     # ── 同步逻辑 ──
 
@@ -207,7 +209,7 @@ class RegistryService:
         """全量同步所有 CI 映射的仓库"""
         with self._db.conn() as conn:
             try:
-                ci_repos = self._get_ci_repos(conn)
+                ci_repos = self._get_ci_repos()
                 mapped = {(r["project"], r["repo"]) for r in ci_repos}
 
                 # 清理已不在 ci_job_git_map 中的历史脏数据
@@ -232,11 +234,16 @@ class RegistryService:
                 return {"ok": True, "total": total, "repos": len(ci_repos), "errors": errors}
             except HarborUnavailableError:
                 return {"ok": False, "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态"}
+            except CiClientError as e:
+                return {"ok": False, "error": f"CI 服务不可用，无法获取仓库映射: {e}"}
 
     def sync_for_project(self, project: str) -> dict:
         """增量同步指定项目/仓库的仓库（支持按 job_name 或 harbor_repository 匹配）"""
         with self._db.conn() as conn:
-            ci_repos = self._get_ci_repos(conn)
+            try:
+                ci_repos = self._get_ci_repos()
+            except CiClientError as e:
+                return {"ok": False, "error": f"CI 服务不可用，无法获取仓库映射: {e}"}
             matched = [
                 cr
                 for cr in ci_repos
@@ -258,7 +265,10 @@ class RegistryService:
     def get_repositories(self) -> dict:
         """获取仓库列表（来自数据库），返回 {"repositories": [...], "last_sync": "..."}"""
         with self._db.conn() as conn:
-            ci_repos = self._get_ci_repos(conn)
+            try:
+                ci_repos = self._get_ci_repos()
+            except CiClientError:
+                return {"repositories": [], "last_sync": ""}
             mapped = {(r["project"], r["repo"]) for r in ci_repos}
 
             # 全局最后同步时间

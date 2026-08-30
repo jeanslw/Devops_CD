@@ -11,7 +11,7 @@ class LoginRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     username: str
     password: str
-    role: str = "admin"  # admin | viewer（未来扩展）
+    role: str = "cd_admin"  # cd_admin | viewer | deployer（super_admin 不可经此接口创建）
 
 
 class ChangePasswordRequest(BaseModel):
@@ -65,6 +65,15 @@ class DeployRequest(BaseModel):
 class CancelRequest(BaseModel):
     deploy_id: int = 0  # 按部署 ID 取消（优先）
     project: str = ""  # 无 deploy_id 时按项目定位进行中部署
+
+
+class RollbackRequest(BaseModel):
+    project: str
+    deploy_id: int = 0  # 回滚到该记录之前的成功版本；0 = 回滚到最近一次成功版本的上一版
+    deploy_type: str = ""  # 限定回滚模式（如 k8s/argocd、compose、ssh），空则回滚最近成功版本的上一版（跨模式）
+    tag: str = ""  # 回滚到指定 tag（重放）；空 = 无 tag（k8s 原生回退一步 / 其余重放上一版）
+    bot_id: int = 0
+    lang: str = "en"
 
 
 class BuildTriggerRequest(BaseModel):

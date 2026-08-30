@@ -48,6 +48,16 @@ CD Panel (本项目)
 | K8s Argo CD | REST API | PATCH image → sync → 轮询 Healthy |
 | K8s Flux CD | SSH kubectl | PATCH 资源 → wait ready |
 
+### 回滚
+
+当部署出问题时，你可以直接在部署页回滚到上一版成功版本：
+
+- **K8s kubectl / helm / argocd**（「回滚一步」）：执行集群原生回退 —— `kubectl rollout undo`、`helm rollback --wait` 或 ArgoCD `rollback` API，以上一次成功部署为上下文。
+- **回滚到指定 tag**（「回滚到 tag」）：以所选 tag 重新执行上一版成功部署（所有模式通用）。
+- **ssh / compose / fluxcd**（无原生回退命令）：复用上一版不同 tag 成功部署的参数快照重放。
+
+回滚日志为 SSE 实时流式输出。若为回滚启用了审批，回滚会在执行前进入审批队列。老部署记录（v1.5.0 前）无参数快照，无法回滚。
+
 ## 4. 自定义资源监控
 
 > 通过 SSH 在目标服务器执行任意命令，将输出解析为结构化指标。支持 CSV（表头+行）、KV（key=value）、JSON 三种格式。

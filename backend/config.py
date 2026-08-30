@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     # ── 角色（仅用于 admin_users.role 字段校验，权限判断已迁移至 roles/permissions/role_permissions 表）──
     # 超级管理员角色名：唯一可以创建/删除/修改管理员账号的角色
     super_admin_role: str = "super_admin"
-    # 普通管理员角色名
-    admin_role: str = "admin"
+    # CD 管理员角色名（对应 Glue roles 表里真实存在的 cd_admin 角色）
+    admin_role: str = "cd_admin"
     # 部署者角色名
     deployer_role: str = "deployer"
     # 只读角色名

@@ -372,7 +372,31 @@ Devops-Glue CD supports four K8s deployment modes, each with different working p
 | Additional Components | None | Argo CD + Token | Flux CD + kubectl |
 | Suitable Teams | Traditional kubectl ops | Argo CD GitOps | Flux CD GitOps |
 
-## 6. Security
+## 6. Approval & Rollback
+
+### Approval Rules (审批)
+
+Deployments can be gated by an approval workflow. Rules are stored in `cd_approval_rules` and managed in the **Approvals** view (requires the `cd.deploy.approve` permission):
+
+- **Project scope**: a rule applies to a specific project (comma-separated list) or `*` as the global default.
+- **Enabled**: master switch.
+- **Target environments** (`require_envs`): comma-separated environment tags; a deployment requires approval only when its target servers carry at least one matching tag. Leave empty to require approval for all environments.
+- **Approver role** (`approver_role`, default `cd_admin`) and/or **explicit approvers** (`approvers`, comma-separated usernames — takes precedence over the role).
+- **Notification bot** (`notify_bot_id`): a bot to notify on approval request / result.
+- **Rollback approval** (`require_rollback_approval`, default on): whether rollbacks also require approval.
+
+When a deployment matches a rule, the backend creates a `cd_approvals` ticket (`pending`) and notifies approvers. The state machine is `pending → approved → deploying → deployed / failed`, plus `rejected` and `cancelled`. Approval is an atomic DB transition; execution runs in a background thread with a persistent queue, so an approved-but-not-yet-run deployment survives a restart.
+
+### Rollback (回滚)
+
+Rollback re-deploys a previous successful version. It is triggered from the deploy page and goes through the same approval gate (when enabled):
+
+- **Native rollback** (kubectl / helm / argocd): `kubectl rollout undo`, `helm rollback --wait`, or the ArgoCD `rollback` API.
+- **Replay rollback** (fluxcd / ssh / compose): reuses the previous successful deployment's stored parameter snapshot (`params_json` in `cd_deploy_logs`).
+
+Rollback streams live logs over SSE (`POST /api/deploy/rollback-stream`). Legacy deployments created before v1.5.0 lack a parameter snapshot and cannot be rolled back.
+
+## 7. Security
 
 ### Password Encryption
 
@@ -394,7 +418,7 @@ Server passwords and SSH private keys are encrypted with Fernet symmetric encryp
 - Token format: Base64 encoded, contains username
 - Protected endpoints require `Authorization: Bearer <token>` header
 
-## 7. CI Build Management Integration (optional)
+## 8. CI Build Management Integration (optional)
 
 The CD system adds a **Build Management** panel that calls the Devops-Glue (CI) API over HTTP, enabling Jenkins/GitLab CI build triggering, build history, and build logs directly from the CD dashboard.
 
@@ -420,7 +444,7 @@ The CD system adds a **Build Management** panel that calls the Devops-Glue (CI) 
 - Data ownership: CD reads **only** and never writes to CI database tables (`ci_pipeline_tags` / `ci_job_git_map`); the "Build Management" tab uses HTTP API while "Tag List/Deploy Flow" continues via direct DB reads — two layers do not interfere with each other.
 - Build history and build logs are fetched in real time via the CI API and are not persisted locally in CD.
 
-## 8. Webhook Receiver Endpoint & Security Policy
+## 9. Webhook Receiver Endpoint & Security Policy
 
 v1.2.2 introduces the **Webhook Receiver Endpoint**, used to receive external events such as "CI build complete" or "deploy success", with optional auto-forwarding to notification bots.
 

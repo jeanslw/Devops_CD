@@ -79,6 +79,11 @@ export function useAuth() {
   function canDeploySingle()  { return hasPerm('cd.deploy.single') || isSuperAdmin() }
   function canDeployDocker()  { return hasPerm('cd.deploy.docker') || isSuperAdmin() }
   function canDeployK8s()     { return hasPerm('cd.deploy.k8s') || isSuperAdmin() }
+  // 审批：审批中心菜单权限 / 审批人可见（发起部署者不放行，避免看到审批规则）
+  function canViewApprovals() { return hasPerm('cd.approval-center') || hasPerm('cd.deploy.approve') || isSuperAdmin() }
+  function canApprove()       { return hasPerm('cd.deploy.approve') || isSuperAdmin() }
+  // 审批规则管理（新增/编辑/删除审批规则）：审批人 cd.deploy.approve，不写死角色名
+  function canManageApprovalRules() { return hasPerm('cd.deploy.approve') || isSuperAdmin() }
   function canMonitorApp()    { return hasPerm('cd.monitor.app') || isSuperAdmin() }
   function canMonitorSystem() { return hasPerm('cd.monitor.system') || isSuperAdmin() }
   function canMonitorCustom() { return hasPerm('cd.monitor.custom') || isSuperAdmin() }
@@ -101,7 +106,7 @@ export function useAuth() {
     // 二级
     canDeploySingle, canDeployDocker, canDeployK8s,
     canMonitorApp, canMonitorSystem, canMonitorCustom, canMonitorAlert,
-    canTriggerBuild,
+    canTriggerBuild, canViewApprovals, canApprove, canManageApprovalRules,
     // 兼容
     canDeploy, canManage,
   }

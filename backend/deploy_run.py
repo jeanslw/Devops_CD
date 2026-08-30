@@ -119,19 +119,33 @@ def start_deploy_record(
     triggered_by: str = "",
     deploy_note: str = "",
     target: str = "",
+    params_json: str = "",
 ) -> int:
     """插入一条 running 记录，返回部署记录 id（自增主键，即部署编号）。
 
     并发安全设计：lock_key=project 上唯一索引，保证同一项目至多一条 running 记录
     （原子，不再依赖「先查后插」的非原子检查）。
+    params_json：完整部署请求快照（含 deploy_type 路由判别），供回滚重放使用。
     """
     with db.conn() as conn:
         try:
             cur = conn.execute(
                 "INSERT INTO cd_deploy_logs "
-                "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, lock_key) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (project, tag, image, deploy_type, target, "running", "", triggered_by or "", deploy_note or "", project),
+                "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, lock_key, params_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    project,
+                    tag,
+                    image,
+                    deploy_type,
+                    target,
+                    "running",
+                    "",
+                    triggered_by or "",
+                    deploy_note or "",
+                    project,
+                    params_json or "",
+                ),
             )
         except Exception as e:
             if _is_integrity_error(e):
@@ -200,3 +214,16 @@ def mark_deploy_cancelled(db, deploy_id: int) -> dict:
     if affected:
         return {"success": True, "message": "Deployment cancelled"}
     return {"success": False, "message": "No running deployment found (may already be finished)"}
+
+
+def recover_stale_running(db) -> int:
+    """进程重启恢复：把崩溃遗留的 running 部署记录标记为 interrupted 并清空 lock_key。
+
+    返回恢复的记录数。若进程在部署中途崩溃，cd_deploy_logs 会残留 status='running'
+    且 lock_key 非空，导致该项目被并发锁永久锁死。启动时调用此函数清理。
+    """
+    with db.conn() as conn:
+        cur = conn.execute(
+            "UPDATE cd_deploy_logs SET status='interrupted', lock_key=NULL WHERE status='running'"
+        )
+        return getattr(cur, "rowcount", 0) or 0

@@ -52,6 +52,11 @@ export function useSseStream() {
             const success = parts[0] === 'true'
             opts.onEnd?.(success)
             return success
+          } else if (data.startsWith('PENDING:')) {
+            // 部署已提交审批，未实际执行
+            const id = data.substring(8)
+            opts.onPending?.(id)
+            return 'pending'
           } else if (data === '.') {
             continue
           } else if (data.startsWith('STATUS:')) {

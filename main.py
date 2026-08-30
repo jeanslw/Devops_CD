@@ -18,6 +18,7 @@ from backend.database import Database
 from backend.exceptions import AppException
 from backend.routers import (
     alerts,
+    approvals,
     auth,
     bots,
     ci_build,
@@ -40,7 +41,7 @@ from backend.services.registry_service import RegistryService, start_background_
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时：定时同步 + 告警检查"""
+    """启动时：定时同步 + 告警检查 + 审批队列恢复/轮询"""
     db = Database()
     try:
         svc = RegistryService(db)
@@ -49,11 +50,21 @@ async def lifespan(app: FastAPI):
         interval = -1
     start_background_sync(lambda: Database(), interval)
     start_alert_checker()
+    # 审批：进程重启后清僵尸部署锁并重投 executing 审批单，随后启动轮询器
+    try:
+        from backend.services.approval_service import recover_on_startup, start_queue_poller
+
+        recover_on_startup(db)
+        start_queue_poller(lambda: Database())
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("approval queue bootstrap failed")
     yield
 
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="1.4.0", lifespan=lifespan)
+app = FastAPI(title="Devops-Glue CD", version="1.5.0", lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
 _STARTED_AT = datetime.now(timezone.utc)
 
@@ -62,6 +73,7 @@ app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(servers.router)
 app.include_router(deploy.router)
+app.include_router(approvals.router)
 app.include_router(logs.router)
 app.include_router(bots.router)
 app.include_router(tags.router)

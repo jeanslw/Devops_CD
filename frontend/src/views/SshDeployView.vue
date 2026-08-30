@@ -82,6 +82,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useDeploy } from '@/composables/useDeploy'
+import { useError } from '@/composables/useError'
 import { confirm } from '@/composables/useConfirm'
 import CiPipelineStatus from '@/components/CiPipelineStatus.vue'
 import TagPager from '@/components/TagPager.vue'
@@ -91,6 +92,7 @@ const route = useRoute()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
+const { showError } = useError()
 const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, loadPipeline, changeProject, changeTagPage, stream, cancelDeploy } = useDeploy()
 
 const mode = ref('commands')
@@ -147,7 +149,8 @@ async function doDeploy() {
 
   const success = await stream('/api/deploy-stream', body, {
     onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
-    onError: () => toast(t('deploy.deployFailed'), false)
+    onError: () => toast(t('deploy.deployFailed'), false),
+    onPending: () => toast(t('deploy.submitPending'), true)
   })
 }
 

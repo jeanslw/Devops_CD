@@ -1,5 +1,6 @@
 """部署编排服务 — 查映射 → 选策略 → 执行 → 记日志 → 通知"""
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -175,6 +176,28 @@ class DeployService:
 
         deployer = deployer_registry.create(deploy_type)
 
+        # ── 参数快照（含 deploy_type 路由判别），供回滚重放 ──
+        params_json = json.dumps(
+            {
+                "deploy_type": deploy_type,
+                "project": project,
+                "tag": tag,
+                "server_ids": server_ids,
+                "target_path": target_path,
+                "deploy_mode": deploy_mode,
+                "commands": commands,
+                "yaml_content": yaml_content,
+                "k8s_ns": k8s_ns,
+                "k8s_deploy": k8s_deploy,
+                "k8s_container": k8s_container,
+                "env_file": env_file,
+                "deploy_note": deploy_note,
+                "bot_id": bot_id,
+                "lang": lang,
+            },
+            ensure_ascii=False,
+        )
+
         # ── 插入 running 记录 + 注册取消信号 ──
         deploy_id = start_deploy_record(
             self._db,
@@ -184,6 +207,7 @@ class DeployService:
             image=image,
             triggered_by=triggered_by,
             deploy_note=deploy_note,
+            params_json=params_json,
         )
         deploy_run_manager.register(deploy_id)
         set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))

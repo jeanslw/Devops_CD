@@ -36,7 +36,110 @@ class ArgoCDDeployer(K8sSubDeployer):
                 return {"success": False, "output": f"Delete failed: {r.status_code} {r.text[:200]}"}
         except Exception as ex:
             logger.error("ArgoCD stop failed", exc_info=ex)
-            return {"success": False, "output": "停止服务失败，请联系管理员"}
+            return {"success": False, "output": "Stop service failed, please contact administrator"}
+
+    def rollback(self, req, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        """原生回滚：ArgoCD POST /rollback 回到上一 sync 版本（history id）。"""
+        import time
+
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        token = pwd  # ArgoCD token 通过 password 字段传入
+        base = getattr(req, "api_url", "") or f"https://{host}"
+        output = []
+        success = False
+
+        def log(msg):
+            if callable(callback):
+                callback(msg)
+            output.append(msg)
+
+        try:
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+            # ── 发现 Argo CD Application 名（与 deploy 同源，不盲猜等于项目名） ──
+            app_name = project.split("/")[-1]
+            r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+            if r.status_code != 200:
+                log(S("deploy_log.argocd_searching"))
+                r_list = requests.get(f"{base}/api/v1/applications", headers=headers, timeout=10, verify=False)
+                found = None
+                if r_list.status_code == 200:
+                    for a in r_list.json().get("items", []):
+                        name = a.get("metadata", {}).get("name", "")
+                        spec_str = str(a.get("spec", {}))
+                        if project in spec_str or app_name in spec_str:
+                            found = name
+                            break
+                if found:
+                    app_name = found
+                    log(S("deploy_log.argocd_name_diff", name=app_name))
+                else:
+                    msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
+                    log(msg)
+                    return {"success": False, "output": msg}
+                r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                if r.status_code != 200:
+                    msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
+                    log(msg)
+                    return {"success": False, "output": msg}
+
+            app = r.json()
+
+            # ── 读 history 取上一版 revision id ──
+            history = app.get("status", {}).get("history", []) or []
+            sorted_history = sorted(history, key=lambda h: h.get("id", 0))
+            if len(sorted_history) < 2:
+                msg = S("deploy_log.argocd_no_prev_version")
+                log(msg)
+                return {"success": False, "output": msg}
+            prev = sorted_history[-2]
+            prev_id = prev.get("id")
+            prev_rev = prev.get("revision", "")
+            log(S("deploy_log.argocd_rollback_to", id=prev_id, revision=prev_rev))
+
+            check_cancelled()
+            r = requests.post(
+                f"{base}/api/v1/applications/{app_name}/rollback",
+                json={"id": prev_id},
+                headers=headers,
+                timeout=10,
+                verify=False,
+            )
+            if r.status_code != 200:
+                log(S("deploy_log.argocd_rollback_failed", code=r.status_code, msg=r.text[:200]))
+                return {"success": False, "output": "\n".join(output)}
+
+            # ── 复用 health 轮询等待回滚完成 ──
+            health = ""
+            sync = ""
+            for i in range(30):
+                check_cancelled()
+                time.sleep(2)
+                r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                if r.status_code != 200:
+                    log(S("deploy_log.argocd_poll_fail", code=r.status_code, msg=r.text[:200]))
+                    continue
+                a = r.json()
+                health = a.get("status", {}).get("health", {}).get("status", "")
+                sync = a.get("status", {}).get("sync", {}).get("status", "")
+                log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
+                if health == "Healthy":
+                    log(S("deploy_log.argocd_healthy", sync=sync))
+                    success = True
+                    break
+            else:
+                log(S("deploy_log.argocd_timeout"))
+
+            return {"success": success, "output": "\n".join(output)}
+        except Exception as e:
+            logger.error("ArgoCD rollback failed", exc_info=e)
+            msg = S("deploy_log.argocd_rollback_error")
+            log(msg)
+            return {"success": False, "output": msg}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         """Argo CD: patch image + sync"""
@@ -82,17 +185,17 @@ class ArgoCDDeployer(K8sSubDeployer):
                         app_name = found
                         log(S("deploy_log.argocd_name_diff", name=app_name))
                     else:
-                        msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
+                        msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                         log(msg)
                         return {"success": False, "output": msg}
                 else:
-                    msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
+                    msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                     log(msg)
                     return {"success": False, "output": msg}
                 # 用发现的 app_name 重新获取
                 r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
                 if r.status_code != 200:
-                    msg = f"Argo CD 获取应用失败: {r.status_code} {r.text[:200]}"
+                    msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                     log(msg)
                     return {"success": False, "output": msg}
 
@@ -148,7 +251,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 time.sleep(2)
                 r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
                 if r.status_code != 200:
-                    log(f"ArgoCD 状态轮询失败: {r.status_code} {r.text[:200]}")
+                    log(S("deploy_log.argocd_poll_fail", code=r.status_code, msg=r.text[:200]))
                     continue
                 a = r.json()
                 health = a.get("status", {}).get("health", {}).get("status", "")
@@ -164,6 +267,6 @@ class ArgoCDDeployer(K8sSubDeployer):
             return {"success": success, "output": "\n".join(output)}
         except Exception as e:
             logger.error("ArgoCD deploy failed", exc_info=e)
-            msg = "ArgoCD 部署失败，请查看后端日志获取详细信息"
+            msg = S("deploy_log.argocd_deploy_error")
             log(msg)
             return {"success": False, "output": msg}

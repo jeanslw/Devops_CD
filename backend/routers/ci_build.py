@@ -6,12 +6,10 @@ import traceback
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
-from backend.auth import get_db, require_perm
-from backend.database import Database
+from backend.auth import require_perm
 from backend.exceptions import ServiceUnavailableError
 from backend.models import BuildTriggerRequest
 from backend.services.ci_client import CiClientError, get_ci_client
-from backend.services.ci_service import CiService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ci", tags=["ci-build"])
@@ -39,23 +37,12 @@ def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
 
 # ── 构建历史 ──
 @router.get("/projects/{project:path}/builds")
-def get_builds(
-    project: str,
-    _user: str = Depends(require_perm("cd.build-manage")),
-    db: Database = Depends(get_db),
-):
-    """获取项目构建历史。
+def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
+    """获取项目构建历史 → CI GET /api/build/{path}/pipelines。
 
-    custom_push 项目：构建终态由用户 CI 上报到本地 ci_custom_builds 表，直接读 DB；
-    其余项目走 CI GET /api/build/{path}/pipelines。
+    custom_push 项目也统一走该接口：Glue CustomPushBuildProvider::getPipelines
+    直读 ci_custom_builds（含 log_url），CD 不再直读该表。
     """
-    provider = CiService(db).resolve_build_provider(project)
-    if provider and provider[1] == "custom_push":
-        return {
-            "build_provider": "custom_push",
-            "project_id": provider[0],
-            "pipelines": CiService(db).get_custom_push_builds(provider[0]),
-        }
     try:
         return _client().get_builds(project)
     except CiClientError as e:

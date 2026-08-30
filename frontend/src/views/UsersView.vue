@@ -26,7 +26,7 @@
                 @change="e => changeRole(u, e.target.value)"
                 :disabled="u.username === auth.state.user?.username"
               >
-                <option v-if="isSuperAdmin" value="admin">{{ $t('users.role_admin') }}</option>
+                <option v-if="isSuperAdmin" value="cd_admin">{{ $t('users.role_cd_admin') }}</option>
                 <option value="deployer">{{ $t('users.role_deployer') }}</option>
                 <option value="viewer">{{ $t('users.role_viewer') }}</option>
               </select>

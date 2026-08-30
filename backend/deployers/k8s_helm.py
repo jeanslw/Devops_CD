@@ -42,7 +42,41 @@ class HelmDeployer(K8sSubDeployer):
             return {"success": success, "output": (out or err)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("Helm stop failed", exc_info=ex)
-            return {"success": False, "output": "停止服务失败，请联系管理员"}
+            return {"success": False, "output": "Stop service failed, please contact administrator"}
+
+    def rollback(self, req, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        """原生回滚：helm rollback <release>（回退到上一版本）。"""
+        target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+        ns = req.k8s_ns
+        ns_flag = f" -n {ns}" if ns else ""
+        release_name = project.split("/")[-1] if "/" in project else project
+
+        ssh = None
+        try:
+            _log(callback, S("deploy_log.rollback_start", name=release_name))
+            ssh = ssh_connect(target, settings.ssh_timeout)
+
+            # 先确认 release 存在（用 _exec_exit 防 helm 挂了静默失败）
+            _, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
+            if list_ec != 0:
+                return {"success": False, "output": f"helm list failed (exit {list_ec}):\n{list_err or 'no output'}"}
+
+            check_cancelled()
+            cmd = f"helm rollback {shlex.quote(release_name)}{ns_flag} --wait --timeout {settings.k8s_helm_timeout}s"
+            _log(callback, S("deploy_log.exec_cmd", n=1, cmd=cmd))
+            out, err, ec = _exec_exit(ssh, cmd, timeout=settings.k8s_helm_timeout + 10)
+
+            after = _kubectl_pods(ssh, release_name)
+            ok = ec == 0
+            output = f"Rollback command: {cmd}\n\n{out or err}\n\nPod status:\n{after or '(none)'}"
+            output += "\n\nRollback: ✅ success" if ok else "\n\nRollback: ❌ failed"
+            return {"success": ok, "output": output[: settings.log_truncate_chars]}
+        except Exception as e:
+            logger.error("Helm rollback failed", exc_info=e)
+            return {"success": False, "output": str(e)}
+        finally:
+            if ssh:
+                ssh.close()
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)

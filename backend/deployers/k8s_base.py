@@ -45,6 +45,12 @@ class K8sSubDeployer(ABC):
         """停止服务。默认抛出 NotImplementedError，子类按需覆盖。"""
         raise NotImplementedError(f"{self.name()} does not support stop")
 
+    def rollback(
+        self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = "", callback=None
+    ) -> dict:
+        """原生回滚（kubectl rollout undo / helm rollback）。默认不支持，子类按需覆盖。"""
+        raise NotImplementedError(f"{self.name()} does not support native rollback")
+
     def name(self) -> str:
         """注册名，与 registry 键对应：k8s/<cd_type>"""
         return f"k8s/{self.cd_type()}"

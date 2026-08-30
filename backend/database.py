@@ -184,7 +184,7 @@ class Database:
         if not Database._tables_ensured and self._driver == "sqlite":
             self._ensure_cd_tables(raw)
             with suppress(Exception):
-                raw.execute("ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'admin'")
+                raw.execute("ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'cd_admin'")
             raw.commit()
             Database._tables_ensured = True
 
@@ -276,6 +276,8 @@ class Database:
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN stage_times TEXT DEFAULT ''")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN lock_key VARCHAR(255)")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN params_json TEXT DEFAULT ''")
         # 并发锁唯一索引：running 记录 lock_key=project，同项目至多一条 running（NULL 可重复）
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
         # 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id）
@@ -390,6 +392,38 @@ class Database:
             forwarded_at TEXT DEFAULT ''
         )""")
 
+        # 审批单表（v1.5.0）
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_approvals (
+            id {PK},
+            project VARCHAR(255) NOT NULL,
+            tag VARCHAR(255) DEFAULT '',
+            image VARCHAR(512) DEFAULT '',
+            deploy_type VARCHAR(32) DEFAULT '',
+            envs VARCHAR(255) DEFAULT '',
+            params_json TEXT DEFAULT '',
+            status VARCHAR(16) DEFAULT 'pending',
+            requester VARCHAR(64) DEFAULT '',
+            approver VARCHAR(64) DEFAULT '',
+            approve_note VARCHAR(512) DEFAULT '',
+            deploy_id INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT ({NOW}),
+            approved_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )""")
+
+        # 审批规则表（v1.5.0）
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_approval_rules (
+            id {PK},
+            project VARCHAR(255) NOT NULL UNIQUE,
+            enabled INTEGER DEFAULT 0,
+            require_envs VARCHAR(255) DEFAULT '',
+            approver_role VARCHAR(32) DEFAULT 'cd_admin',
+            approvers VARCHAR(1024) DEFAULT '',
+            notify_bot_id INTEGER DEFAULT 0,
+            require_rollback_approval INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT ({NOW})
+        )""")
+
         # ── 自动迁移：补充已有表缺失的列 ──
         migrations = [
             ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
@@ -409,9 +443,6 @@ class Database:
             ("idx_cdl_created", "cd_deploy_logs", "created_at"),
             ("idx_cdl_project_tag_status", "cd_deploy_logs", "project, tag, status"),
             ("idx_cdl_status", "cd_deploy_logs", "status"),
-            ("idx_pt_project", "ci_pipeline_tags", "project"),
-            ("idx_pt_created", "ci_pipeline_tags", "created_at"),
-            ("idx_jgm_path", "ci_job_git_map", "current_path"),
             ("idx_cdr_repo_id", "cd_registry_artifacts", "repo_id"),
             ("idx_cds_type", "cd_servers", "type"),
             ("idx_cdr_enabled", "cd_alert_rules", "enabled"),
@@ -421,6 +452,9 @@ class Database:
             ("idx_cwh_enabled", "cd_webhooks", "enabled"),
             ("idx_we_webhook", "cd_webhook_events", "webhook_id"),
             ("idx_we_received", "cd_webhook_events", "received_at"),
+            ("idx_appr_status", "cd_approvals", "status"),
+            ("idx_appr_project", "cd_approvals", "project"),
+            ("idx_appr_created", "cd_approvals", "created_at"),
         ]:
             with suppress(Exception):
                 conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")

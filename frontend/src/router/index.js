@@ -63,6 +63,12 @@ const routes = [
     meta: { title: '部署记录' }
   },
   {
+    path: '/approvals',
+    name: 'Approvals',
+    component: () => import('@/views/ApprovalsView.vue'),
+    meta: { title: '审批中心' }
+  },
+  {
     path: '/registry',
     name: 'Registry',
     component: () => import('@/views/RegistryView.vue'),

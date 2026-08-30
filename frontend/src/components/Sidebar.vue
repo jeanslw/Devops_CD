@@ -31,6 +31,11 @@
       </div>
     </template>
 
+    <!-- 审批中心 -->
+    <div v-if="auth.canViewApprovals()" class="item" :class="{ active: isActive('/approvals') }" @click="go('/approvals')">
+      {{ $t('sidebar.approvals') }}
+    </div>
+
     <!-- 服务器管理 -->
     <div v-if="auth.canServerManage()" class="item" :class="{ active: isActive('/servers') }" @click="go('/servers')">
       {{ $t('sidebar.servers') }}
@@ -62,7 +67,7 @@
       <div v-if="auth.canMonitorSystem()" v-show="monitorOpen" class="item item-sub" :class="{ active: isActive('/monitor/system') }" @click="go('/monitor/system')">
         {{ $t('sidebar.systemResources') }}
       </div>
-      <div v-if="auth.canServerManage()" v-show="monitorOpen" class="item item-sub" :class="{ active: isActive('/custom-monitors') }" @click="go('/custom-monitors')">
+      <div v-if="auth.canMonitorCustom()" v-show="monitorOpen" class="item item-sub" :class="{ active: isActive('/custom-monitors') }" @click="go('/custom-monitors')">
         {{ $t('sidebar.customMonitor') }}
       </div>
       <div v-if="auth.canMonitorAlert()" v-show="monitorOpen" class="item item-sub" :class="{ active: isActive('/alerts') }" @click="go('/alerts')">

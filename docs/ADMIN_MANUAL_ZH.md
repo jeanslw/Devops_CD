@@ -371,7 +371,31 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 | 额外组件 | 无 | Argo CD + Token | Flux CD + kubectl |
 | 适合团队 | 传统 kubectl 运维 | Argo CD GitOps | Flux CD GitOps |
 
-## 6. 安全配置
+## 6. 审批与回滚
+
+### 审批规则
+
+部署可被审批流程管控。规则存于 `cd_approval_rules`，在「审批」视图中管理（需 `cd.deploy.approve` 权限）：
+
+- **项目范围**：规则作用于指定项目（逗号分隔多个）或 `*` 全局默认。
+- **启用**：总开关。
+- **目标环境**（`require_envs`）：逗号分隔的环境标签；仅当目标服务器命中至少一个标签时才需审批。留空表示所有环境都需审批。
+- **审批角色**（`approver_role`，默认 `cd_admin`）与/或**显式审批人**（`approvers`，逗号分隔用户名，优先于角色）。
+- **通知机器人**（`notify_bot_id`）：审批请求/结果通知的机器人。
+- **回滚审批**（`require_rollback_approval`，默认开启）：回滚是否也需审批。
+
+命中规则的部署会生成 `cd_approvals` 审批单（`pending`）并通知审批人。审批状态机为 `pending → approved → deploying → deployed / failed`，另有 `rejected`、`cancelled`。批准是原子落库迁移；执行由后台线程完成，并带持久化队列，进程重启后已批准未执行的审批单不会丢失。
+
+### 回滚
+
+回滚用于重新部署上一版成功版本。从部署页触发，同样经过审批闸门（若启用）：
+
+- **原生回滚**（kubectl / helm / argocd）：`kubectl rollout undo`、`helm rollback --wait` 或 ArgoCD `rollback` API。
+- **重放回滚**（fluxcd / ssh / compose）：复用上一版成功部署存储的参数快照（`cd_deploy_logs.params_json`）。
+
+回滚通过 SSE 实时流式输出日志（`POST /api/deploy/rollback-stream`）。v1.5.0 之前的老部署记录无参数快照，无法回滚。
+
+## 7. 安全配置
 
 ### 密码加密
 
@@ -393,7 +417,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 - Token 格式：Base64 编码，含 username 信息
 - 受保护端点需在 Header 中携带 `Authorization: Bearer <token>`
 
-## 7. CI 构建管理集成（可选）
+## 8. CI 构建管理集成（可选）
 
 CD 系统新增"构建管理"面板，通过 HTTP API 调用 Devops-Glue（CI）接口，实现在 CD 面板直接触发 Jenkins/GitLab CI 构建、查看构建历史和构建日志。
 
@@ -419,7 +443,7 @@ CD 系统新增"构建管理"面板，通过 HTTP API 调用 Devops-Glue（CI）
 - 数据归属：CD 只读不写 CI 数据库表（`ci_pipeline_tags` / `ci_job_git_map`）；"构建管理"走 HTTP API，"Tag 清单/部署流程"继续走 DB 直读，两层互不干扰。
 - 构建历史、构建日志通过 CI API 实时获取，不在 CD 本地落地。
 
-## 8. Webhook 接收端点 & 安全策略
+## 9. Webhook 接收端点 & 安全策略
 
 v1.2.2 新增 **Webhook 接收端点**，用于接收 CI 构建完成、部署成功等外部事件，并可选自动转发到通知机器人。
 

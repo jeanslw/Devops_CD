@@ -13,6 +13,8 @@ from backend.deployers import DeployTarget
 from backend.deployers.registry import deployer_registry
 from backend.exceptions import NotFoundError, ValidationError
 from backend.models import CancelRequest, DeployRequest
+from backend.services.approval_service import gate_deploy
+from backend.services.deploy_executor import ssh_params
 from backend.services.deploy_service import DeployService
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,19 @@ def deploy(
         )
     # 按具体 deploy_type 做二次权限校验（防御深度：service 层也会再查一次）
     enforce_deploy_perm(user, req.deploy_type)
+    # 审批闸门：需审批则创建审批单并返回 pending，不执行
+    gate = gate_deploy(
+        db,
+        project=req.project,
+        tag=req.tag,
+        deploy_type=req.deploy_type,
+        server_ids=req.server_ids,
+        params=ssh_params(req),
+        requester=user.get("username", ""),
+        lang=req.lang,
+    )
+    if gate:
+        return {"pending": True, "approval_id": gate["approval_id"], "message": "部署已提交审批"}
     svc = DeployService(db)
     try:
         return svc.execute(
@@ -180,6 +195,24 @@ async def deploy_stream(
 
         return StreamingResponse(_err(), media_type="text/event-stream")
     enforce_deploy_perm(user, req.deploy_type)
+    # 审批闸门：需审批则以 PENDING 事件结束流，前端引导去审批
+    gate = gate_deploy(
+        db,
+        project=req.project,
+        tag=req.tag,
+        deploy_type=req.deploy_type,
+        server_ids=req.server_ids,
+        params=ssh_params(req),
+        requester=user.get("username", ""),
+        lang=req.lang,
+    )
+    if gate:
+
+        async def _pending():
+            yield f"retry: 3000\ndata: PENDING:{gate['approval_id']}\n\n"
+
+        return StreamingResponse(_pending(), media_type="text/event-stream")
+
     import asyncio
     import queue
     import threading

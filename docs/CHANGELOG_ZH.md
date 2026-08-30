@@ -1,5 +1,32 @@
 # 更新日志
 
+## v1.5.0 (2026-08-31) — 部署审批 + 一键回滚
+
+### 新增功能
+- **部署审批**：部署前新增规则化审批闸门。管理员按项目（或 `*` 全局默认）配置 `cd_approval_rules`：启用开关、目标环境（`require_envs`，匹配服务器标签）、审批人（显式用户名或 `approver_role`，默认 `cd_admin`）、通知机器人。命中规则的部署会生成 `cd_approvals` 审批单（`pending`）并通知审批人，批准后才执行。
+- **审批状态机**：`pending → approved → deploying → deployed / failed`，另有 `rejected`、`cancelled`。批准是原子落库的状态迁移；执行由后台线程完成。
+- **审批持久化队列**：approved 记录由幂等轮询器领取执行；进程重启后 `recover_on_startup` 清理僵尸部署锁并重投 `deploying` 审批单。
+- **审批管理界面**：新增「审批」视图，含审批单列表（批准 / 驳回 / 撤销）与审批规则管理页签。
+- **一键回滚**：新增 `POST /api/deploy/rollback` 与 `POST /api/deploy/rollback-stream`（SSE）。按部署模式分两种策略：
+  - **原生回滚**（kubectl / helm / argocd）：以该模式最新成功记录为上下文，直接调集群原生回退命令（`kubectl rollout undo`、`helm rollback --wait`、ArgoCD `rollback` API）。
+  - **重放回滚**（fluxcd / ssh / compose）：复用上一版不同 tag 成功记录的参数快照（`params_json`）重新执行。
+  - 老记录（v1.5.0 前，无参数快照）不支持回滚，自动跳过。
+- **回滚流式输出**：回滚改为 SSE 实时流式日志，ArgoCD / kubectl / helm / 停止兜底等回滚文案中英双语齐全。
+
+### 变更
+- 回滚同样经过审批闸门（由 `require_rollback_approval` 控制，默认开启）。
+- 新增权限点 `cd.deploy.approve`，控制审批动作与规则管理。
+
+### 新增数据库表
+- `cd_approval_rules` — 按项目（或 `*` 全局）的审批规则。
+- `cd_approvals` — 审批单（状态、申请人、审批人、部署参数快照）。
+
+### 新增文件
+- `backend/routers/approvals.py`、`backend/services/approval_service.py`、`backend/services/rollback_service.py`、`backend/services/deploy_executor.py`、`backend/services/k8s_deploy_service.py`
+- `frontend/src/views/ApprovalsView.vue`
+
+---
+
 ## v1.4.0 (2026-08-19) — Custom_Push 项目只读展示
 
 ### 新增功能

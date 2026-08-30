@@ -64,7 +64,7 @@ class FluxCDDeployer(K8sSubDeployer):
             return {"success": ec == 0, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("FluxCD stop failed", exc_info=ex)
-            return {"success": False, "output": "停止服务失败，请联系管理员"}
+            return {"success": False, "output": "Stop service failed, please contact administrator"}
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         import time

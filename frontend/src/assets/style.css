@@ -331,6 +331,8 @@ tbody tr:last-child td { border-bottom: none; }
   box-shadow: 0 2px 8px rgba(59,130,246,0.2);
 }
 .btn-blue:hover { box-shadow: 0 4px 14px rgba(59,130,246,0.35); }
+/* ── 按钮旁提示 ── */
+.btn-tip { margin-left: 10px; font-size: 11px; color: var(--text-dim); vertical-align: middle; }
 .btn-red {
   background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: #fff;

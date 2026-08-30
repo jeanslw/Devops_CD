@@ -78,6 +78,7 @@
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
         <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
+        <button class="btn btn-blue" style="margin-left:8px" @click="doRollback" :disabled="loading || !selectedTag">{{ $t('deploy.rollbackToTag') }}</button>
         <pre class="output" v-text="output"></pre>
       </div>
     </div>
@@ -100,7 +101,7 @@ const route = useRoute()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
-const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy } = useDeploy()
+const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy, rollbackStream } = useDeploy()
 
 const mode = ref('remote')
 const selectedServers = ref([])
@@ -158,7 +159,20 @@ async function doDeploy() {
 
   const success = await stream('/api/deploy-stream', body, {
     onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
-    onError: () => toast(t('deploy.deployFailed'), false)
+    onError: () => toast(t('deploy.deployFailed'), false),
+    onPending: () => toast(t('deploy.submitPending'), true)
+  })
+}
+
+async function doRollback() {
+  if (!selectedProject.value) return toast(t('deploy.selectServerFirst'), false)
+  if (!selectedTag.value) return toast(t('deploy.noTag'), false)
+  if (!await confirm({ text: t('deploy.rollbackToTagConfirm', { project: selectedProject.value, tag: selectedTag.value }), danger: true })) return
+  await rollbackStream(selectedProject.value, locale.value, 'compose', selectedTag.value, {
+    initialMsg: '',
+    onEnd: (ok) => toast(ok ? t('deploy.rollbackSuccess') : t('deploy.rollbackFailed'), ok),
+    onError: () => toast(t('deploy.rollbackFailed'), false),
+    onPending: () => toast(t('deploy.rollbackPending'), true)
   })
 }
 

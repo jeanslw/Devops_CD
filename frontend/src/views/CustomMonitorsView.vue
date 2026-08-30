@@ -3,7 +3,7 @@
     <h3 style="margin-top:0">{{ $t('customMonitor.title') }}</h3>
 
     <!-- 新建/编辑表单 -->
-    <div style="margin-bottom:12px">
+    <div v-if="canWrite" style="margin-bottom:12px">
       <input v-model="form.name" :placeholder="$t('customMonitor.name')" style="margin-bottom:8px">
       <div style="margin-bottom:8px">
         <input v-model="form.command" :placeholder="$t('customMonitor.command')" style="margin-bottom:8px">
@@ -56,18 +56,18 @@
           <th>{{ $t('customMonitor.outputFormat') }}</th>
           <th>{{ $t('customMonitor.metrics') }}</th>
           <th>{{ $t('alerts.enabled') }}</th>
-          <th>{{ $t('common.action') }}</th>
+          <th v-if="canWrite">{{ $t('common.action') }}</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+        <tr v-if="loading"><td :colspan="canWrite ? 6 : 5" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
         <tr v-for="m in monitors" :key="m.id">
           <td><strong>{{ m.name }}</strong></td>
           <td><code style="font-size:12px;white-space:pre-wrap;word-break:break-all;max-width:280px;display:block">{{ m.command }}</code></td>
           <td>{{ m.output_format || 'auto' }}</td>
           <td>{{ (m.metrics || []).length || '—' }}</td>
           <td><span v-if="m.enabled" :style="{color:'var(--green)'}">ON</span><span v-else :style="{color:'var(--text-dim)'}">OFF</span></td>
-          <td>
+          <td v-if="canWrite">
             <button class="btn btn-sm" @click="test(m.id)">🧪 {{ $t('customMonitor.test') }}</button>
             <button class="btn btn-sm" @click="editMonitor(m)">{{ $t('common.edit') }}</button>
             <button class="btn btn-red btn-sm" @click="del(m.id)">{{ $t('common.delete') }}</button>
@@ -150,7 +150,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
@@ -161,6 +161,9 @@ const auth = useAuth()
 const { t } = useI18n()
 const { toast } = useToast()
 const { showError } = useError()
+
+// 只读用户仅查看列表，写操作（新建/编辑/删除/测试）需服务器管理权限
+const canWrite = computed(() => auth.canServerManage())
 
 const monitors = ref([])
 const loading = ref(true)

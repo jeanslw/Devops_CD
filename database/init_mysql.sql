@@ -3,7 +3,7 @@
 -- 执行: mysql -u root -p devops_glue < database/init_mysql.sql
 
 -- ⚠️ admin_users 由 php_api 管理，这里仅补充 role 列（cd_service 权限系统）
--- ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'admin';
+-- ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'cd_admin';
 
 CREATE TABLE IF NOT EXISTS cd_servers (
     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -144,6 +144,7 @@ CALL __add_column('cd_deploy_logs', 'deploy_note', "VARCHAR(512) DEFAULT ''");
 CALL __add_column('cd_deploy_logs', 'duration_ms', 'INT DEFAULT 0');
 CALL __add_column('cd_deploy_logs', 'stage_times', 'TEXT');
 CALL __add_column('cd_deploy_logs', 'lock_key', 'VARCHAR(255) DEFAULT NULL');
+CALL __add_column('cd_deploy_logs', 'params_json', 'TEXT');
 
 -- 并发锁唯一索引（幂等）：lock_key=project 仅 running 记录非空，保证同项目至多一条 running
 DROP PROCEDURE IF EXISTS __add_unique_index;
@@ -257,4 +258,45 @@ CREATE TABLE IF NOT EXISTS cd_webhook_events (
     forwarded_at  DATETIME     DEFAULT NULL,
     INDEX idx_we_webhook (webhook_id),
     INDEX idx_we_received (received_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================================
+-- 审批单（v1.5.0）
+-- status: pending/approved/deploying/deployed/failed/rejected/cancelled
+-- params_json: 完整部署请求快照（含 deploy_type 路由判别），批准后由轮询器重放执行
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS cd_approvals (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    project      VARCHAR(255) NOT NULL,
+    tag          VARCHAR(255) DEFAULT '',
+    image        VARCHAR(512) DEFAULT '',
+    deploy_type  VARCHAR(32)  DEFAULT '',
+    envs         VARCHAR(255) DEFAULT '',              -- 提交时解析的目标环境标签（逗号分隔，用于展示/审计）
+    params_json  TEXT,
+    status       VARCHAR(16)  DEFAULT 'pending',
+    requester    VARCHAR(64)  DEFAULT '',
+    approver     VARCHAR(64)  DEFAULT '',
+    approve_note VARCHAR(512) DEFAULT '',
+    deploy_id    INT          DEFAULT 0,               -- 批准执行后回填 cd_deploy_logs.id
+    created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    approved_at  DATETIME     DEFAULT NULL,
+    updated_at   DATETIME     DEFAULT NULL,
+    INDEX idx_appr_status (status),
+    INDEX idx_appr_project (project),
+    INDEX idx_appr_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 审批规则（v1.5.0）
+-- project='*' 为全局默认；require_envs 逗号分隔（空=所有部署都需审批，否则仅命中这些环境需审批）
+CREATE TABLE IF NOT EXISTS cd_approval_rules (
+    id                       INT AUTO_INCREMENT PRIMARY KEY,
+    project                  VARCHAR(255) NOT NULL,
+    enabled                  TINYINT(1)   DEFAULT 0,
+    require_envs             VARCHAR(255) DEFAULT '',  -- 需审批的环境标签，逗号分隔；空=全部
+    approver_role            VARCHAR(32)  DEFAULT 'cd_admin',
+    approvers                VARCHAR(1024) DEFAULT '', -- 逗号分隔具体审批人 username，优先于 role
+    notify_bot_id            INT          DEFAULT 0,
+    require_rollback_approval TINYINT(1)  DEFAULT 1,
+    created_at               DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_appr_project (project)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

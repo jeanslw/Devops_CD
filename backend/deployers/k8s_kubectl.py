@@ -42,7 +42,73 @@ class KubectlDeployer(K8sSubDeployer):
             return {"success": success, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("Kubectl stop failed", exc_info=ex)
-            return {"success": False, "output": "停止服务失败，请联系管理员"}
+            return {"success": False, "output": "Stop service failed, please contact administrator"}
+
+    def rollback(self, req, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        """原生回滚：kubectl rollout undo deployment/<name>（回退到上一版本）。"""
+        target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+        filter_name = project.split("/")[-1]
+
+        # 确定 deployment 名：优先读 YAML 声明的名字（与 deploy 同源），回退到项目短名
+        yaml_content = ""
+        if req.path and req.path.startswith("http"):
+            try:
+                import requests
+
+                r = requests.get(req.path, timeout=10)
+                if r.status_code == 200:
+                    yaml_content = r.text
+            except Exception:
+                yaml_content = ""
+
+        ssh = None
+        try:
+            ssh = ssh_connect(target, settings.ssh_timeout)
+
+            if req.path and not req.path.startswith("http"):
+                try:
+                    out, _, ec = _exec_exit(ssh, f"cat {shlex.quote(req.path)}")
+                    if ec == 0:
+                        yaml_content = out
+                except Exception:
+                    yaml_content = ""
+
+            deploy_name = _get_deployment_name(yaml_content) or filter_name
+
+            _log(callback, S("deploy_log.rollback_start", name=deploy_name))
+            check_cancelled()
+            cmd = f"kubectl rollout undo deployment/{shlex.quote(deploy_name)}"
+            _log(callback, S("deploy_log.exec_cmd", n=1, cmd=cmd))
+            out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
+
+            # 等待回滚完成
+            check_cancelled()
+            rollout_out, rollout_err, rollout_ec = _exec_exit(
+                ssh,
+                f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s",
+                timeout=settings.k8s_rollout_timeout + 30,
+            )
+
+            after = _kubectl_pods(ssh, deploy_name)
+            ok = ec == 0 and rollout_ec == 0
+            lines = [f"Rollback command: {cmd}"]
+            if out:
+                lines.append(out)
+            if err:
+                lines.append(err)
+            if rollout_out:
+                lines.append(rollout_out)
+            if rollout_err:
+                lines.append(rollout_err)
+            lines.append(f"\nPod status after rollback:\n{after or '(none)'}")
+            lines.append("\nRollback: ✅ success" if ok else "\nRollback: ❌ failed")
+            return {"success": ok, "output": "\n".join(lines)[: settings.log_truncate_chars]}
+        except Exception as e:
+            logger.error("Kubectl rollback failed", exc_info=e)
+            return {"success": False, "output": str(e)}
+        finally:
+            if ssh:
+                ssh.close()
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)

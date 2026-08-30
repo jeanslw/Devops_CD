@@ -189,7 +189,7 @@ class K8sDeployer(Deployer):
                 return {"success": True, "output": (err or out)[: settings.log_truncate_chars]}
         except Exception as ex:
             logger.error("K8s stop failed", exc_info=ex)
-            return {"success": False, "output": "停止服务失败，请联系管理员"}
+            return {"success": False, "output": "Stop service failed, please contact administrator"}
 
     def validate(self, target: DeployTarget) -> str | None:
         if not target.host:

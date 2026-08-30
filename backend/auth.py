@@ -240,6 +240,19 @@ def _timing_safe_compare(a: str, b: str) -> bool:
     return result == 0
 
 
+def load_user_context(db: Database, username: str) -> dict:
+    """按用户名加载执行上下文 {username, role, permissions}。
+
+    用于审批单/回滚在后台执行时重建执行身份（无 token 场景）。返回的角色与权限
+    与 get_current_user 一致，执行时仍会做部署权限二次校验（防御深度）。
+    """
+    with db.conn() as conn:
+        row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
+    role = (row["role"] if row else "") or settings.admin_role
+    permissions = _query_permissions(db, role)
+    return {"username": username, "role": role, "permissions": permissions}
+
+
 def _query_user_with_systems(conn, username: str, columns: str):
     """查询用户行，优先读取 systems 列；列不存在时回退查询并默认放行。
     使用模块级 _systems_col_ok 标志避免重复 SQL 错误。"""

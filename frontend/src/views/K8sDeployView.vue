@@ -76,6 +76,9 @@
       <button class="btn btn-green" style="margin-top:8px" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
       <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
       <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
+      <button class="btn btn-blue" style="margin-left:8px" @click="doRollbackToTag" :disabled="loading || !selectedTag" :title="$t('deploy.rollbackToTagTip')">{{ $t('deploy.rollbackToTag') }}</button>
+      <button v-if="cdType !== 'fluxcd'" class="btn btn-blue" style="margin-left:8px" @click="doRollbackOneStep" :disabled="loading" :title="$t('deploy.rollbackOneStepTip')">{{ $t('deploy.rollbackOneStep') }}</button>
+      <span class="btn-tip">{{ $t('deploy.rollbackTip') }}</span>
       <pre class="output" v-text="output"></pre>
     </div>
 
@@ -110,7 +113,7 @@ const route = useRoute()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
-const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy } = useDeploy()
+const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy, rollbackStream } = useDeploy()
 
 const cdType = ref('kubectl')
 const clusterId = ref(0)
@@ -214,7 +217,31 @@ async function doDeploy() {
   const success = await stream('/api/deploy-k8s-stream', body, {
     initialMsg: '',
     onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
-    onError: () => toast(t('deploy.deployFailed'), false)
+    onError: () => toast(t('deploy.deployFailed'), false),
+    onPending: () => toast(t('deploy.submitPending'), true)
+  })
+}
+
+async function doRollbackToTag() {
+  if (!selectedProject.value) return toast(t('deploy.selectServerFirst'), false)
+  if (!selectedTag.value) return toast(t('deploy.noTag'), false)
+  if (!await confirm({ text: t('deploy.rollbackToTagConfirm', { project: selectedProject.value, tag: selectedTag.value }), danger: true })) return
+  await rollbackStream(selectedProject.value, locale.value, 'k8s/' + cdType.value, selectedTag.value, {
+    initialMsg: '',
+    onEnd: (ok) => toast(ok ? t('deploy.rollbackSuccess') : t('deploy.rollbackFailed'), ok),
+    onError: () => toast(t('deploy.rollbackFailed'), false),
+    onPending: () => toast(t('deploy.rollbackPending'), true)
+  })
+}
+
+async function doRollbackOneStep() {
+  if (!selectedProject.value) return toast(t('deploy.selectServerFirst'), false)
+  if (!await confirm({ text: t('deploy.rollbackOneStepConfirm', { project: selectedProject.value }), danger: true })) return
+  await rollbackStream(selectedProject.value, locale.value, 'k8s/' + cdType.value, '', {
+    initialMsg: '',
+    onEnd: (ok) => toast(ok ? t('deploy.rollbackSuccess') : t('deploy.rollbackFailed'), ok),
+    onError: () => toast(t('deploy.rollbackFailed'), false),
+    onPending: () => toast(t('deploy.rollbackPending'), true)
   })
 }
 

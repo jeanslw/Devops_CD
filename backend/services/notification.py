@@ -147,3 +147,14 @@ def notify_deploy(
             mode=display_mode,
         )
         send_webhook(bot["webhook_url"], msg, bot.get("type", ""))
+
+
+def notify_approval(db, bot_id: int, message: str):
+    """发送审批通知（纯文本，消息由调用方按语言拼好），bot_id=0 跳过。"""
+    if not bot_id:
+        return
+    with db.conn() as conn:
+        bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
+        if not bot:
+            return
+        send_webhook(bot["webhook_url"], message, bot.get("type", ""))

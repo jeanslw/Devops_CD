@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.5.0 (2026-08-31) — Deployment approval workflow & one-click rollback
+
+### New Features
+- **Deployment Approval (审批)**: A rule-based approval gate now runs before deployments. Admins configure `cd_approval_rules` per project (or `*` as the global default): enable/disable, target environments (`require_envs`, matched against server tags), approvers (explicit usernames or `approver_role`, default `cd_admin`), and a notification bot. When a deployment matches a rule, a `cd_approvals` ticket (`pending`) is created and approvers are notified; the deployment runs only after approval.
+- **Approval state machine**: `pending → approved → deploying → deployed / failed`, plus `rejected` and `cancelled`. Approval is an atomic, persisted transition; execution runs in a background thread.
+- **Persistent approval queue**: Approved tickets are drained by an idempotent poller; on process restart `recover_on_startup` clears stale running deploy locks and re-queues `deploying` tickets.
+- **Approval management UI**: A new "Approvals" view provides an approval list (approve / reject / cancel) and an approval-rules management tab.
+- **One-click Rollback (回滚)**: Added `POST /api/deploy/rollback` and `POST /api/deploy/rollback-stream` (SSE). Two strategies per deployment mode:
+  - **Native rollback** (kubectl / helm / argocd): calls the cluster-native undo command (`kubectl rollout undo`, `helm rollback --wait`, ArgoCD `rollback` API) using the latest successful record as context.
+  - **Replay rollback** (fluxcd / ssh / compose): re-runs the previous successful deployment (a different tag) by reusing its stored parameter snapshot (`params_json`).
+  - Legacy records (pre-v1.5.0, no snapshot) are skipped automatically.
+- **Streaming rollback output**: Rollback now streams live logs over SSE, with fully internationalized (zh/en) rollback messages for ArgoCD, kubectl, helm, and the stop fallback.
+
+### Changes
+- Rollback goes through the same approval gate, controlled by `require_rollback_approval` (default on).
+- New permission `cd.deploy.approve` controls approval actions and rule management.
+
+### New Database Tables
+- `cd_approval_rules` — per-project (or `*` global) approval rules.
+- `cd_approvals` — approval tickets with status, requester, approver, and deploy params snapshot.
+
+### New Files
+- `backend/routers/approvals.py`, `backend/services/approval_service.py`, `backend/services/rollback_service.py`, `backend/services/deploy_executor.py`, `backend/services/k8s_deploy_service.py`
+- `frontend/src/views/ApprovalsView.vue`
+
+---
+
 ## v1.4.0 (2026-08-19) — Custom_Push project read-only display
 
 ### New Features

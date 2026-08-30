@@ -2,10 +2,11 @@
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h3 style="margin:0">{{ $t('alerts.title') }}</h3>
-      <button class="btn btn-sm" @click="refresh">{{ $t('alerts.checkNow') }}</button>
+      <button v-if="canWrite" class="btn btn-sm" @click="refresh">{{ $t('alerts.checkNow') }}</button>
     </div>
 
-    <!-- 新建/编辑表单 -->
+    <!-- 新建/编辑表单（仅写权限可见） -->
+    <div v-if="canWrite">
     <div class="grid2" style="margin-bottom:12px;gap:8px">
       <select v-model="form.target_type" @change="onTargetChange">
         <option value="system">{{ $t('alerts.systemResource') }}</option>
@@ -60,6 +61,7 @@
       <button class="btn btn-green" @click="save">{{ editingId ? $t('alerts.update') : $t('alerts.create') }}</button>
       <button v-if="editingId" class="btn" @click="cancelEdit" style="margin-left:8px">{{ $t('alerts.cancel') }}</button>
     </div>
+    </div>
 
     <!-- 规则列表 -->
     <table>
@@ -72,11 +74,11 @@
           <th>{{ $t('alerts.duration') }}</th>
           <th>{{ $t('alerts.bot') }}</th>
           <th>{{ $t('alerts.enabled') }}</th>
-          <th>{{ $t('common.action') }}</th>
+          <th v-if="canWrite">{{ $t('common.action') }}</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-if="loading"><td colspan="8" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+        <tr v-if="loading"><td :colspan="canWrite ? 8 : 7" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
         <tr v-for="r in rules" :key="r.id">
           <td>{{ r.name }}</td>
           <td>
@@ -92,7 +94,7 @@
           </td>
           <td>{{ r.bot_name || ('#' + r.bot_id) }}</td>
           <td><span v-if="r.enabled" :style="{color:'var(--green)'}">{{ $t('alerts.on') }}</span><span v-else :style="{color:'var(--text-dim)'}">{{ $t('alerts.off') }}</span></td>
-          <td>
+          <td v-if="canWrite">
             <button class="btn btn-sm" @click="edit(r)">{{ $t('common.edit') }}</button>
             <button class="btn btn-red btn-sm" @click="del(r.id)">{{ $t('common.delete') }}</button>
           </td>
@@ -112,6 +114,9 @@ import MultiSelect from '@/components/MultiSelect.vue'
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
+
+// 只读用户仅查看规则列表，写操作（新建/编辑/删除/立即检测）需告警配置权限
+const canWrite = computed(() => auth.canMonitorAlert())
 
 const rules = ref([])
 const bots = ref([])
