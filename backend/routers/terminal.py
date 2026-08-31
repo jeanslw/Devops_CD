@@ -10,7 +10,14 @@ import shlex
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
-from backend.auth import _check_disabled, _query_permissions, _query_user_with_systems, get_db, require_perm
+from backend.auth import (
+    _check_disabled,
+    _query_permissions,
+    _query_user_with_systems,
+    _timing_safe_compare,
+    get_db,
+    require_perm,
+)
 from backend.config import settings
 from backend.crypto import decrypt
 from backend.database import Database
@@ -64,7 +71,7 @@ async def _ws_verify(token: str | None = None) -> str:
         # 停用账号即时踢下线：WebSocket（WebShell）是独立鉴权路径，必须与 REST 一致校验 status
         _check_disabled(row)
         expected = base64.b64encode(f"{row['username']}:{row['password_hash']}".encode()).decode()
-        if token != expected:
+        if not _timing_safe_compare(token, expected):
             raise HTTPException(401, "token 无效")
         return row["username"]
 
@@ -85,7 +92,7 @@ async def terminal(websocket: WebSocket, server_id: int):
         row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
         if row:
             perms = _query_permissions(db, row["role"])
-            if row["role"] != "super_admin" and "cd.webshell" not in perms:
+            if row["role"] != settings.super_admin_role and "cd.webshell" not in perms:
                 await websocket.close(code=4003, reason="权限不足")
                 return
 

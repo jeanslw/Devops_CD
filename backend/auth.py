@@ -141,7 +141,7 @@ def require_perm(perm_key: str):
     用法: Depends(require_perm("cd.deploy.k8s"))  → 返回 user dict"""
 
     def checker(user: dict = Depends(get_current_user)):
-        if user.get("role") == "super_admin":
+        if user.get("role") == settings.super_admin_role:
             return user
         if perm_key not in user.get("permissions", []):
             raise HTTPException(403, f"Permission denied: {perm_key} required")
@@ -225,7 +225,12 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
 
     if bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
         if not _has_system(row.get("systems"), CD_SYSTEM):
-            return None  # 无权登录 CD
+            # 密码正确但 systems 不含 "cd"：明确提示无权限，而非误导为「账号或密码错误」
+            raise AppException(
+                "该账号无 CD 访问权限，请联系管理员",
+                status_code=403,
+                error_key="errors.no_cd_access",
+            )
         return base64.b64encode(f"{user}:{row['password_hash']}".encode()).decode()
     return None
 

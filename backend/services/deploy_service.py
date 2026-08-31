@@ -306,7 +306,7 @@ class DeployService:
                 status_label = "❌ Failed"
             notify_targets = []
             for r in results:
-                label = "docker" if deploy_mode == "docker" else "ssh"
+                label = "docker" if deploy_type == "compose" else "ssh"
                 notify_targets.append(f"{label}[{r.get('host', '?')}]")
             notify_deploy(
                 self._db,
