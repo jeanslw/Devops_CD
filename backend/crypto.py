@@ -4,9 +4,10 @@
 """
 
 import base64
+import logging
 from pathlib import Path
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
@@ -74,11 +75,25 @@ def encrypt(value: str) -> str:
 
 
 def decrypt(value: str) -> str:
-    """解密字符串。空值直接返回。"""
+    """解密字符串。
+
+    - 空值直接返回；
+    - 无 enc: 前缀的值视为历史明文 / 外部直写，原样返回（兼容旧数据）；
+    - enc: 前缀但解密失败（SECRET_KEY 已更换或数据损坏）时降级返回空字符串并记录告警，
+      避免 InvalidToken 让部署、连接测试、WebShell、文件上传全链路崩溃。
+    """
     if not value:
         return value
-    token = value.removeprefix(ENCRYPT_PREFIX).encode("utf-8")
-    return _fernet.decrypt(token).decode("utf-8")
+    if not value.startswith(ENCRYPT_PREFIX):
+        return value  # 明文历史数据，原样返回
+    token = value[len(ENCRYPT_PREFIX):].encode("utf-8")
+    try:
+        return _fernet.decrypt(token).decode("utf-8")
+    except InvalidToken:
+        logging.getLogger(__name__).warning(
+            "decrypt failed: SECRET_KEY 可能已更换或数据损坏，该字段按空值处理"
+        )
+        return ""
 
 
 def decrypt_server_row(row: dict) -> dict:

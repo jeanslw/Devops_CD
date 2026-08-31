@@ -3,6 +3,7 @@
 import concurrent.futures
 import logging
 import socket
+import sqlite3
 
 import paramiko
 import pymysql
@@ -67,7 +68,7 @@ def add_server(
             )
             clear_server_cache()
             return ok(message=f"服务器 '{req.name}' 已添加")
-        except pymysql.err.IntegrityError as e:
+        except (pymysql.err.IntegrityError, sqlite3.IntegrityError) as e:
             raise ConflictError(
                 f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}
             ) from e
@@ -109,7 +110,7 @@ def update_server(
             )
             clear_server_cache()
             return ok(message=f"服务器 '{req.name}' 已更新")
-        except pymysql.err.IntegrityError as e:
+        except (pymysql.err.IntegrityError, sqlite3.IntegrityError) as e:
             raise ConflictError(
                 f"服务器 '{req.name}' 已存在", error_key="errors.server_exists", error_params={"name": req.name}
             ) from e
