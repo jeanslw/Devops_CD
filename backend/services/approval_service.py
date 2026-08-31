@@ -133,7 +133,7 @@ def _transition(db, approval_id, from_statuses, to_status, **fields) -> bool:
     sets.append("updated_at=?")
     ph = ",".join("?" * len(from_statuses))
     sql = f"UPDATE cd_approvals SET {', '.join(sets)} WHERE id=? AND status IN ({ph})"
-    params = list(fields.values()) + [to_status, _now(), approval_id, *from_statuses]
+    params = [*fields.values(), to_status, _now(), approval_id, *from_statuses]
     with db.conn() as conn:
         cur = conn.execute(sql, params)
         return (getattr(cur, "rowcount", 0) or 0) > 0

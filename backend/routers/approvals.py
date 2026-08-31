@@ -216,7 +216,7 @@ async def rollback_deploy_stream(
     """回滚实时流式（SSE）推送，覆盖 K8S 原生/重放 与 SSH/Compose 重放。"""
     if not req.project:
         async def _err_empty():
-            yield f"retry: 3000\ndata: ERROR:请提供 project\n\n"
+            yield "retry: 3000\ndata: ERROR:请提供 project\n\n"
 
         return StreamingResponse(_err_empty(), media_type="text/event-stream")
 
