@@ -23,7 +23,7 @@ export function useError() {
     if (errorKey) {
       // 有 i18n key → 优先翻译
       const params = body?.error_params || {}
-      toast(t(`errors.${errorKey}`, params), false)
+      toast(t(errorKey, params), false)
     } else if (body?.error) {
       // 兜底：原始 error 字段
       toast(body.error, false)

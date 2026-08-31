@@ -840,5 +840,13 @@ export default {
     scan_report_error: 'Scan report error',
     scan_trigger_failed: 'Scan trigger failed',
     harbor_unavailable: 'Harbor service unavailable',
+    dangerous_command: 'Command contains a dangerous keyword and has been blocked',
+    invalid_url: 'Invalid URL',
+    no_cd_access: 'This account has no CD access. Please contact your administrator',
+    unsupported_cd_type: 'Unsupported CD type',
+    unsupported_deploy_type: 'Unsupported deploy type',
+    upload_blocked_path: 'Upload to system directory is not allowed: {path}',
+    user_disabled: 'This account has been disabled. Please contact your administrator',
+    wrong_deploy_api: 'Please use the Kubernetes-specific endpoint /api/deploy-k8s',
   },
 }

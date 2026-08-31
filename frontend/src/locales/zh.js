@@ -840,5 +840,13 @@ export default {
     scan_report_error: '扫描报告错误',
     scan_trigger_failed: '扫描触发失败',
     harbor_unavailable: 'Harbor 服务不可用',
+    dangerous_command: '命令包含危险关键字，已禁止执行',
+    invalid_url: '无效的 URL 地址',
+    no_cd_access: '该账号无 CD 访问权限，请联系管理员',
+    unsupported_cd_type: '不支持的 CD 类型',
+    unsupported_deploy_type: '不支持的部署类型',
+    upload_blocked_path: '不允许上传到系统目录: {path}',
+    user_disabled: '该账号已被停用，请联系管理员',
+    wrong_deploy_api: '请使用 K8S 专用接口 /api/deploy-k8s',
   },
 }
