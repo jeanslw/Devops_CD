@@ -1,0 +1,39 @@
+name: Security Check
+
+on: [push, pull_request]
+
+# 显式声明最小权限，避免 workflow 获得默认的 write-all 令牌
+# 此 workflow 仅做本地只读检查（lint + grep 密钥扫描），无任何写入操作
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Python Syntax Check
+        run: |
+          find . -name "*.py" \
+            -not -path "./.venv/*" -not -path "./.git/*" \
+            -not -path "./node_modules/*" | while read f; do
+            python -m py_compile "$f" || exit 1
+          done
+
+      - name: Check Hardcoded Secrets
+        run: |
+          # 检查源码中是否误提交了真实凭证（排除 .env、虚拟环境和构建产物）
+          if grep -rE "(glpat-|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----)" . \
+            --include="*.py" --include="*.json" --include="*.yml" --include="*.yaml" --include="*.sh" \
+            --exclude-dir=.venv --exclude-dir=node_modules --exclude-dir=static --exclude-dir=.git \
+            --exclude="*.env*" --exclude="*/.env"; then
+            echo "❌ 发现硬编码的敏感信息！"
+            exit 1
+          fi
+          echo "✅ 未发现敏感信息"

@@ -3,7 +3,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 
 <p align="center">
   <a href="https://gitee.com/jeanslw/devops_glue"><img src="https://img.shields.io/badge/依赖-Devops_Glue-green?logo=python" alt="relyon"></a>
-  <a href="https://gitee.com/jeanslw/devops_cd/releases/tag/v1.5"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd/releases/tag/v1.5.0"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
   <a href="https://gitee.com/jeanslw/devops_cd"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
   <a href="https://fastapi.org.cn/"><img src="https://img.shields.io/badge/fastAPI-0.115.6+-777BB4?logo=fastAPI&logoColor=white" alt="framework"></a>
@@ -32,7 +32,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 - **前端**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
 - **数据库**：无独立数据库，完全跟随 Devops-Glue API 的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+
 - **端口**：8081
-- **版本**：v1.5.0（Changelog / v1.5 tag 2026-08-31 更新）
+- **版本**：v1.5.0（Changelog / v1.5.0 tag 2026-08-31 更新）
 - **认证**：与 Devops-Glue API 共享数据库，bcrypt + Bearer token，不可单独使用
 <details>
 ## <summary>快速开始</summary>

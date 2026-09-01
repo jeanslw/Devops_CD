@@ -7,7 +7,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 
 <p align="center">
   <a href="https://github.com/jeanslw/devops-glue"><img src="https://img.shields.io/badge/relyon-Devops_Glue-green?logo=python" alt="relyon"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/releases/tag/v1.5"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/releases/tag/v1.5.0"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
   <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
   <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
@@ -29,7 +29,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Frontend**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
 - **Database**：No standalone database — shares the same database instance as Devops-Glue API (SQLite / MySQL 8.0+ / MariaDB 10.4+)
 - **Port**：8081
-- **Version**：v1.5.0 (Changelog v1.5 updated 2026-08-31)
+- **Version**：v1.5.0 (Changelog v1.5.0 updated 2026-08-31)
 - **Authentication**：Shared database with Devops-Glue API; bcrypt + Bearer token. Cannot be used independently.
 <details>
 ## <summary> Quick Start (click to expand)</summary>

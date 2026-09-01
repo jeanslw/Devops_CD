@@ -1,0 +1,110 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, 'release/**']
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'       # ✅ 正式版: v1.5.0
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'     # ✅ 预发布版: v1.5.0-beta
+      - '[0-9]+.[0-9]+.[0-9]+'        # 兼容无v前缀
+      - '[0-9]+.[0-9]+.[0-9]+-*'      # 兼容无v前缀预发布
+  pull_request:
+    branches: [main, 'release/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-py3.10-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-py3.10-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pip-audit
+
+      - name: Validate requirements.txt
+        run: pip check
+
+      - name: Ruff Lint
+        run: ruff check backend/ main.py smoke_test.py
+
+      - name: Ruff Format Check
+        run: ruff format --check backend/ main.py smoke_test.py
+
+      - name: Security Audit
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            pip-audit || echo "::warning::Known vulnerabilities found, please review"
+          else
+            pip-audit
+          fi
+
+  test:
+    name: Unit Test (Python ${{ matrix.python }})
+    needs: code-quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-py${{ matrix.python }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-py${{ matrix.python }}-pip-
+
+      - run: pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: python backend/tests/test_deployers_mock.py
+
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
