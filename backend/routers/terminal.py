@@ -187,7 +187,11 @@ async def terminal(websocket: WebSocket, server_id: int):
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
                     break
-            except TimeoutError:
+            # 注意：必须用 asyncio.TimeoutError 而非内置 TimeoutError。
+            # Python 3.11+ 两者等价，但 Python 3.10 中 asyncio.wait_for 抛的是
+            # asyncio.exceptions.TimeoutError（独立类，非 builtins.TimeoutError 子类），
+            # 用内置 TimeoutError 会捕获不到导致 WebSocket 连接中断。
+            except asyncio.TimeoutError:
                 continue
             except WebSocketDisconnect:
                 break

@@ -55,9 +55,9 @@ jobs:
       - name: Security Audit
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            pip-audit || echo "::warning::Known vulnerabilities found, please review"
+            pip-audit -r requirements.txt || echo "::warning::Known vulnerabilities found, please review"
           else
-            pip-audit
+            pip-audit -r requirements.txt
           fi
 
   test:
