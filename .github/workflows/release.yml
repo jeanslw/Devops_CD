@@ -30,7 +30,8 @@ jobs:
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v5
         with:
-          tagRegex: "^v\\d+\\.\\d+\\.\\d+(-.*)?$"
+          # v5 移除了 tagRegex 输入（v4→v5 破坏性变更），标准 semver tag 无需额外筛选
+          # 不传 fromTag：v5 会自动按 semver 取上一个 tag；首次发布则从第一个 commit 生成
           configurationJson: |
             {
               "categories": [
@@ -39,7 +40,6 @@ jobs:
                 {"title": "🔧 Maintenance", "labels": ["chore", "refactor"]}
               ]
             }
-          fromTag: ${{ github.event.before }}
           toTag: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,3 +52,5 @@ jobs:
           body: ${{ steps.changelog.outputs.changelog }}
           draft: false
           prerelease: ${{ steps.prerelease_check.outputs.is_prerelease }}
+          update_release_body: true
+          update_release_name: true
