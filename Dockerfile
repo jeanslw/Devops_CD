@@ -8,10 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /backend
 
+COPY . .
+
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
-
-COPY . .
 
 RUN useradd --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /backend

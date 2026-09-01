@@ -47,10 +47,10 @@ jobs:
         run: pip check
 
       - name: Ruff Lint
-        run: ruff check backend/ main.py smoke_test.py
+        run: ruff check backend/ main.py
 
       - name: Ruff Format Check
-        run: ruff format --check backend/ main.py smoke_test.py
+        run: ruff format --check backend/ main.py
 
       - name: Security Audit
         run: |

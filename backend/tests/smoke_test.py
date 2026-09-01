@@ -3,8 +3,11 @@
 import ast
 import inspect
 import os
+import sys
 
-base = os.path.dirname(__file__)
+base = os.path.dirname(os.path.abspath(__file__))  # backend/tests/
+ROOT = os.path.dirname(os.path.dirname(base))  # 项目根
+sys.path.insert(0, ROOT)  # 使 backend 包可导入（直接脚本方式运行时 sys.path[0] 是 backend/tests/）
 PASS = "PASS"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -61,7 +64,7 @@ print(f"  P0-1 FluxCDDeployer: {PASS}")
 
 # P0-2: helm_connecting i18n
 for _, path in [("zh", "frontend/src/locales/zh.js"), ("en", "frontend/src/locales/en.js")]:
-    with open(os.path.join(base, path), encoding="utf-8") as f:
+    with open(os.path.join(ROOT, path), encoding="utf-8") as f:
         c = f.read()
     assert "helm_connecting:" in c, f"helm_connecting missing in {path}"
     assert "flux_connecting:" in c, f"flux_connecting lost from {path}"
@@ -92,13 +95,13 @@ print("=" * 60)
 # Check all raise statements in routers have error_key
 all_files = sorted(
     os.path.join("backend", "routers", name)
-    for name in os.listdir(os.path.join(base, "backend", "routers"))
+    for name in os.listdir(os.path.join(ROOT, "backend", "routers"))
     if name.endswith(".py")
 )
 
 missing = []
 for fpath in all_files:
-    with open(os.path.join(base, fpath), encoding="utf-8") as f:
+    with open(os.path.join(ROOT, fpath), encoding="utf-8") as f:
         src = f.read()
     # 用 AST 定位 raise 语句，正确处理多行 raise XxxError(...)（error_key 换行也能识别）
     for node in ast.walk(ast.parse(src)):
@@ -149,7 +152,7 @@ all_new_keys = [
 ]
 
 for _, path in [("zh", "frontend/src/locales/zh.js"), ("en", "frontend/src/locales/en.js")]:
-    with open(os.path.join(base, path), encoding="utf-8") as f:
+    with open(os.path.join(ROOT, path), encoding="utf-8") as f:
         c = f.read()
     for key in all_new_keys:
         assert f"{key}:" in c, f"Key '{key}' missing in {path}"

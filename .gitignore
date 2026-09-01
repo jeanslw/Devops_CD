@@ -8,7 +8,7 @@
 .claude/
 .venv*/
 node_modules/
-tests/
+/tests/
 __pycache__/
 .codebuddy/
 .workflow/

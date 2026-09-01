@@ -28,10 +28,10 @@ jobs:
 
       - name: Check Hardcoded Secrets
         run: |
-          # 检查源码中是否误提交了真实凭证（排除 .env、虚拟环境和构建产物）
+          # 检查源码中是否误提交了真实凭证（排除 .env、虚拟环境、构建产物和 workflow 自身）
           if grep -rE "(glpat-|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----)" . \
             --include="*.py" --include="*.json" --include="*.yml" --include="*.yaml" --include="*.sh" \
-            --exclude-dir=.venv --exclude-dir=node_modules --exclude-dir=static --exclude-dir=.git \
+            --exclude-dir=.venv --exclude-dir=node_modules --exclude-dir=static --exclude-dir=.git --exclude-dir=.github \
             --exclude="*.env*" --exclude="*/.env"; then
             echo "❌ 发现硬编码的敏感信息！"
             exit 1
