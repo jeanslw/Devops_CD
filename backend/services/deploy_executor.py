@@ -23,14 +23,34 @@ logger = logging.getLogger(__name__)
 
 # DeployService.execute 接受的参数（与 DeployRequest 字段一一对应）
 _SSH_FIELDS = (
-    "project", "tag", "deploy_type", "server_ids", "target_path", "deploy_mode",
-    "commands", "yaml_content", "k8s_ns", "k8s_deploy", "k8s_container",
-    "env_file", "deploy_note", "bot_id", "lang",
+    "project",
+    "tag",
+    "deploy_type",
+    "server_ids",
+    "target_path",
+    "deploy_mode",
+    "commands",
+    "yaml_content",
+    "k8s_ns",
+    "k8s_deploy",
+    "k8s_container",
+    "env_file",
+    "deploy_note",
+    "bot_id",
+    "lang",
 )
 # K8sDeployRequest 字段
 _K8S_FIELDS = (
-    "project", "tag", "cd_type", "cluster_id", "path", "api_url",
-    "k8s_ns", "deploy_note", "bot_id", "lang",
+    "project",
+    "tag",
+    "cd_type",
+    "cluster_id",
+    "path",
+    "api_url",
+    "k8s_ns",
+    "deploy_note",
+    "bot_id",
+    "lang",
 )
 
 
@@ -121,7 +141,11 @@ def _execute_ssh(db, params: dict, user: dict, callback=None) -> dict:
     output = "\n".join((r.get("output") or "") for r in result.get("results", []))
     if result.get("cancelled"):
         return {"status": "cancelled", "deploy_id": result.get("deploy_id", 0), "output": output}
-    return {"status": "ok" if result.get("success") else "failed", "deploy_id": result.get("deploy_id", 0), "output": output}
+    return {
+        "status": "ok" if result.get("success") else "failed",
+        "deploy_id": result.get("deploy_id", 0),
+        "output": output,
+    }
 
 
 def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = False) -> dict:
@@ -129,8 +153,19 @@ def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = F
     image, project_key, project_short = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
     result = _deploy_k8s_core(
-        db, req, user, image, project_key, project_short, host, port, user_srv, pwd, ssh_key,
-        callback=callback, rollback=rollback,
+        db,
+        req,
+        user,
+        image,
+        project_key,
+        project_short,
+        host,
+        port,
+        user_srv,
+        pwd,
+        ssh_key,
+        callback=callback,
+        rollback=rollback,
     )
 
     if not result.get("cancelled"):
@@ -141,4 +176,8 @@ def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = F
     output = result.get("output", "") or ""
     if result.get("cancelled"):
         return {"status": "cancelled", "deploy_id": result.get("deploy_id", 0), "output": output}
-    return {"status": "ok" if result.get("success") else "failed", "deploy_id": result.get("deploy_id", 0), "output": output}
+    return {
+        "status": "ok" if result.get("success") else "failed",
+        "deploy_id": result.get("deploy_id", 0),
+        "output": output,
+    }

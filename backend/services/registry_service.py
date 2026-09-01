@@ -233,10 +233,18 @@ class RegistryService:
                         logger.error(f"同步 {cr['repo']} 失败", exc_info=e)
                 return {"ok": True, "total": total, "repos": len(ci_repos), "errors": errors}
             except HarborUnavailableError:
-                return {"ok": False, "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态", "error_key": "errors.harbor_unavailable"}
+                return {
+                    "ok": False,
+                    "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态",
+                    "error_key": "errors.harbor_unavailable",
+                }
             except CiClientError as e:
                 logger.error("CI service unavailable while fetching repository mappings", exc_info=e)
-                return {"ok": False, "error": "CI 服务不可用，无法获取仓库映射，请联系管理员", "error_key": "errors.ci_service_unavailable"}
+                return {
+                    "ok": False,
+                    "error": "CI 服务不可用，无法获取仓库映射，请联系管理员",
+                    "error_key": "errors.ci_service_unavailable",
+                }
 
     def sync_for_project(self, project: str) -> dict:
         """增量同步指定项目/仓库的仓库（支持按 job_name 或 harbor_repository 匹配）"""
@@ -245,7 +253,11 @@ class RegistryService:
                 ci_repos = self._get_ci_repos()
             except CiClientError as e:
                 logger.error("CI service unavailable while fetching repository mappings", exc_info=e)
-                return {"ok": False, "error": "CI 服务不可用，无法获取仓库映射，请联系管理员", "error_key": "errors.ci_service_unavailable"}
+                return {
+                    "ok": False,
+                    "error": "CI 服务不可用，无法获取仓库映射，请联系管理员",
+                    "error_key": "errors.ci_service_unavailable",
+                }
             matched = [
                 cr
                 for cr in ci_repos
@@ -260,7 +272,11 @@ class RegistryService:
                     total += n
                 return {"ok": True, "total": total}
             except HarborUnavailableError:
-                return {"ok": False, "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态", "error_key": "errors.harbor_unavailable"}
+                return {
+                    "ok": False,
+                    "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态",
+                    "error_key": "errors.harbor_unavailable",
+                }
 
     # ── 查询 ──
 

@@ -89,10 +89,11 @@ def delete_user(
         raise ValidationError("不能删除自己的账户", error_key="errors.cannot_delete_self")
 
     target = _get_rbac_user(username)
-    if target["role"] in (settings.admin_role, settings.super_admin_role) and user.get("role") != settings.super_admin_role:
-        raise AppException(
-            "只有 super_admin 可以删除管理员账号", status_code=403, error_key="errors.super_admin_only"
-        )
+    if (
+        target["role"] in (settings.admin_role, settings.super_admin_role)
+        and user.get("role") != settings.super_admin_role
+    ):
+        raise AppException("只有 super_admin 可以删除管理员账号", status_code=403, error_key="errors.super_admin_only")
 
     try:
         get_ci_client().delete_user(username)
@@ -117,10 +118,11 @@ def change_role(
         raise ValidationError("不能修改自己的角色", error_key="errors.cannot_change_own_role")
 
     target = _get_rbac_user(username)
-    if target["role"] in (settings.admin_role, settings.super_admin_role) and user.get("role") != settings.super_admin_role:
-        raise AppException(
-            "只有 super_admin 可以修改管理员角色", status_code=403, error_key="errors.super_admin_only"
-        )
+    if (
+        target["role"] in (settings.admin_role, settings.super_admin_role)
+        and user.get("role") != settings.super_admin_role
+    ):
+        raise AppException("只有 super_admin 可以修改管理员角色", status_code=403, error_key="errors.super_admin_only")
 
     try:
         get_ci_client().update_user(username, role=role)

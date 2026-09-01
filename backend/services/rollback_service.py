@@ -30,8 +30,7 @@ def find_rollback_source(db, project: str, before_deploy_id: int = 0, deploy_typ
     - 按 deploy_type 限定"模式"，避免跨模式回滚（如 k8s 回滚到 compose）。
     """
     base = (
-        "SELECT * FROM cd_deploy_logs "
-        "WHERE project=? AND status='ok' AND params_json IS NOT NULL AND params_json != ''"
+        "SELECT * FROM cd_deploy_logs WHERE project=? AND status='ok' AND params_json IS NOT NULL AND params_json != ''"
     )
     with db.conn() as conn:
         if before_deploy_id:
@@ -61,8 +60,7 @@ def _find_record(db, project: str, deploy_id: int) -> dict | None:
 def _find_latest_success(db, project: str, deploy_type: str = "") -> dict | None:
     """取项目（可选限定模式）最近一条成功记录（含 params_json 快照），无则 None。"""
     base = (
-        "SELECT * FROM cd_deploy_logs "
-        "WHERE project=? AND status='ok' AND params_json IS NOT NULL AND params_json != ''"
+        "SELECT * FROM cd_deploy_logs WHERE project=? AND status='ok' AND params_json IS NOT NULL AND params_json != ''"
     )
     with db.conn() as conn:
         if deploy_type:
@@ -105,10 +103,14 @@ def prepare_rollback(
 
     if tag:
         # 指定 tag → 重放：以被回滚记录为上下文（默认该模式最新成功记录），替换 tag
-        source = _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
+        source = (
+            _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
+        )
     elif native:
         # 原生回滚：以被回滚记录为上下文
-        source = _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
+        source = (
+            _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
+        )
     else:
         # 重放回滚：找上一版不同 tag 的成功记录
         source = find_rollback_source(db, project, before_deploy_id, mode)
@@ -175,8 +177,14 @@ def rollback(
     - 直接执行: {"pending": False, "status": "ok"|"failed"|"busy"|"cancelled", "deploy_id": int, "source_deploy_id": int, "output": str}
     """
     prep = prepare_rollback(
-        db, project, user,
-        before_deploy_id=before_deploy_id, deploy_type=deploy_type, tag=tag, bot_id=bot_id, lang=lang,
+        db,
+        project,
+        user,
+        before_deploy_id=before_deploy_id,
+        deploy_type=deploy_type,
+        tag=tag,
+        bot_id=bot_id,
+        lang=lang,
     )
     if prep["pending"]:
         return {"pending": True, "approval_id": prep["approval_id"], "source_deploy_id": prep["source_deploy_id"]}

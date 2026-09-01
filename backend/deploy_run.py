@@ -223,7 +223,5 @@ def recover_stale_running(db) -> int:
     且 lock_key 非空，导致该项目被并发锁永久锁死。启动时调用此函数清理。
     """
     with db.conn() as conn:
-        cur = conn.execute(
-            "UPDATE cd_deploy_logs SET status='interrupted', lock_key=NULL WHERE status='running'"
-        )
+        cur = conn.execute("UPDATE cd_deploy_logs SET status='interrupted', lock_key=NULL WHERE status='running'")
         return getattr(cur, "rowcount", 0) or 0

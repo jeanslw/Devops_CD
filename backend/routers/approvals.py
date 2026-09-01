@@ -215,6 +215,7 @@ async def rollback_deploy_stream(
 ):
     """回滚实时流式（SSE）推送，覆盖 K8S 原生/重放 与 SSH/Compose 重放。"""
     if not req.project:
+
         async def _err_empty():
             yield "retry: 3000\ndata: ERROR:请提供 project\n\n"
 
@@ -223,9 +224,14 @@ async def rollback_deploy_stream(
     # 前置校验（查找 source / 构建 params / 审批闸门）
     try:
         prep = prepare_rollback(
-            db, req.project, user,
-            before_deploy_id=req.deploy_id, deploy_type=req.deploy_type, tag=req.tag,
-            bot_id=req.bot_id, lang=req.lang,
+            db,
+            req.project,
+            user,
+            before_deploy_id=req.deploy_id,
+            deploy_type=req.deploy_type,
+            tag=req.tag,
+            bot_id=req.bot_id,
+            lang=req.lang,
         )
     except AppException as e:
         msg = e.message
@@ -236,6 +242,7 @@ async def rollback_deploy_stream(
         return StreamingResponse(_err(), media_type="text/event-stream")
 
     if prep["pending"]:
+
         async def _pending():
             yield f"retry: 3000\ndata: PENDING:{prep['approval_id']}\n\n"
 
@@ -256,7 +263,9 @@ async def rollback_deploy_stream(
             def log_callback(message):
                 log_queue.put(message)
 
-            result = execute_from_params(db, prep["params"], user, callback=log_callback, rollback=prep["rollback_flag"])
+            result = execute_from_params(
+                db, prep["params"], user, callback=log_callback, rollback=prep["rollback_flag"]
+            )
             # busy 等未进入执行器的场景 callback 不会被调用，补发 output 让日志区有提示
             if result.get("status") == "busy" and result.get("output"):
                 log_queue.put(result["output"])

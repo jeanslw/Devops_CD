@@ -86,13 +86,11 @@ def decrypt(value: str) -> str:
         return value
     if not value.startswith(ENCRYPT_PREFIX):
         return value  # 明文历史数据，原样返回
-    token = value[len(ENCRYPT_PREFIX):].encode("utf-8")
+    token = value[len(ENCRYPT_PREFIX) :].encode("utf-8")
     try:
         return _fernet.decrypt(token).decode("utf-8")
     except InvalidToken:
-        logging.getLogger(__name__).warning(
-            "decrypt failed: SECRET_KEY 可能已更换或数据损坏，该字段按空值处理"
-        )
+        logging.getLogger(__name__).warning("decrypt failed: SECRET_KEY 可能已更换或数据损坏，该字段按空值处理")
         return ""
 
 

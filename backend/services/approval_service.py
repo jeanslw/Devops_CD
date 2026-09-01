@@ -145,7 +145,9 @@ def _get(db, approval_id) -> dict | None:
     return dict(row) if row else None
 
 
-def list_approvals(db, status: str = "", project: str = "", requester: str = "", page: int = 1, page_size: int = 20) -> dict:
+def list_approvals(
+    db, status: str = "", project: str = "", requester: str = "", page: int = 1, page_size: int = 20
+) -> dict:
     page = max(page, 1)
     page_size = max(min(page_size, 100), 1)
     offset = (page - 1) * page_size
@@ -252,7 +254,9 @@ def cancel(db, approval_id, user: dict) -> dict:
 # ── 部署审批闸门（供 deploy / k8s_deploy 路由调用）──
 
 
-def gate_deploy(db, *, project, tag, deploy_type, server_ids, params, requester, lang="en", for_rollback=False) -> dict | None:
+def gate_deploy(
+    db, *, project, tag, deploy_type, server_ids, params, requester, lang="en", for_rollback=False
+) -> dict | None:
     """部署审批闸门：需要审批则创建审批单并通知，返回 {"pending": True, "approval_id"}；否则 None。
 
     for_rollback=True 时按 require_rollback_approval 规则判断（回滚是否需要审批）。
@@ -332,9 +336,7 @@ def _run_approval(db, approval_id):
 def _drain_once(db, db_factory):
     """领取一个 approved 审批单执行（每轮一个）。"""
     with db.conn() as conn:
-        row = conn.execute(
-            "SELECT id FROM cd_approvals WHERE status=? ORDER BY id LIMIT 1", (APPROVED,)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM cd_approvals WHERE status=? ORDER BY id LIMIT 1", (APPROVED,)).fetchone()
     if row:
         _claim_and_execute(db, db_factory, row["id"])
 
@@ -372,7 +374,9 @@ def recover_on_startup(db):
         )
         recovered_approvals = getattr(cur, "rowcount", 0) or 0
     if recovered_logs or recovered_approvals:
-        logger.info("startup recovery: interrupted_deploys=%s, re_queued_approvals=%s", recovered_logs, recovered_approvals)
+        logger.info(
+            "startup recovery: interrupted_deploys=%s, re_queued_approvals=%s", recovered_logs, recovered_approvals
+        )
 
 
 # ── 通知 ──

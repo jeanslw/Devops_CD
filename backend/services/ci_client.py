@@ -134,7 +134,9 @@ class CiClient:
                 return resp.json()
             status = e.response.status_code if e.response is not None else None
             remote = self._extract_error_message(e.response)
-            raise CiClientError(f"CI API GET 失败 [{url}]: {remote or e}", status_code=status, remote_message=remote) from e
+            raise CiClientError(
+                f"CI API GET 失败 [{url}]: {remote or e}", status_code=status, remote_message=remote
+            ) from e
 
     def _post(self, url: str, body: dict) -> Any:
         self._ensure_token()
@@ -160,7 +162,9 @@ class CiClient:
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 self._force_relogin()
-                resp = self._session.request(method, url, json=body, headers=self._auth_headers(), timeout=self._timeout)
+                resp = self._session.request(
+                    method, url, json=body, headers=self._auth_headers(), timeout=self._timeout
+                )
                 resp.raise_for_status()
                 return resp.json()
             status = e.response.status_code if e.response is not None else None
@@ -322,7 +326,6 @@ class CiClient:
         if isinstance(result, dict) and "roles" in result:
             return result["roles"]
         return result
-
 
 
 # ── 单例 ──
