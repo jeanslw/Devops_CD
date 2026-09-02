@@ -86,7 +86,59 @@
 
     回滚现在调用 ArgoCD rollback API，并通过 SSE 流式推送双语日志。
 
-### 5. 发起 Pull Request (PR)
+### 5. 版本管理
+
+Devops-CD 遵循语义化版本规范 (SemVer)。每个发布的版本都必须在代码库中声明版本号，并打上唯一对应的 Git Tag。
+
+#### 版本格式
+
+v<主版本>.<次版本>.<补丁>[-<预发布标识>]
+
+| 组成部分 | 说明 |
+|---------|------|
+| 主版本 | 不兼容的 API 变更 |
+| 次版本 | 向后兼容的新功能 |
+| 补丁 | 向后兼容的 Bug 修复 |
+| 预发布标识 | 可选：-alpha、-beta、-rc、-dev、-preview |
+
+#### 递增规则
+
+| 变更类型 | 版本递增 | 示例 |
+|---------|---------|------|
+| Bug 修复（向后兼容） | 补丁 | v1.5.0 -> v1.5.1 |
+| 新功能（向后兼容） | 次版本 | v1.5.0 -> v1.6.0 |
+| 破坏性 API 变更 | 主版本 | v1.5.0 -> v2.0.0 |
+| 预发布版本 | 追加预发布标识 | v1.6.0 -> v1.6.0-alpha |
+
+#### 发布步骤
+
+1. 根据上述规则，在 backend/config.py（或相应配置文件）中递增 APP_VERSION。
+2. 在 docs/CHANGELOG.md 顶部为当前版本新增条目：
+   ## vX.X.X (YYYY-MM-DD)
+   - 变更描述 1
+   - 变更描述 2
+3. 将版本号变更和 CHANGELOG 更新提交为一个 commit。
+4. 创建并推送 Tag（必须与版本号完全一致）：
+   git tag vX.X.X
+   git push origin vX.X.X
+5. GitHub Actions 自动发布：Tag 推送触发 Auto Release Workflow，自动从 docs/CHANGELOG.md 读取对应版本条目并创建 GitHub Release。
+
+#### 重要规则
+
+- 一个版本，一个 Tag：每个版本有自己唯一的 Tag。禁止多个版本共用同一个 Tag。
+- Tag 必须与代码版本一致：Git Tag 必须与代码中的 APP_VERSION 值完全匹配。
+- CHANGELOG 条目必须存在：每个版本在打 Tag 前，必须在 docs/CHANGELOG.md 中有对应条目。
+- 禁止强制推送 Tag：禁止用 git push --force 覆盖已存在的 Tag。如果发布有缺陷，应递增补丁版本并重新发布修复版本。
+
+#### 示例
+
+git add backend/config.py docs/CHANGELOG.md
+git commit -m "chore(release): 版本号升至 v1.5.1"
+git tag v1.5.1
+git push origin main
+git push origin v1.5.1
+
+### 6. 发起 Pull Request (PR)
 
 - 确保你的 PR 基于最新的 `main` 分支。
 - 在 PR 描述中，清晰说明解决了什么问题，并关联相关的 Issue（如 `Closes #123`）。

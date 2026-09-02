@@ -34,19 +34,16 @@ jobs:
             exit 0
           fi
 
-          TAG="${{ github.ref_name }}"
-          # v2.7.0 -> v2.7, v2.7.0-alpha -> v2.7 (预发布也按主版本聚合)
-          MAJOR_MINOR=$(echo "$TAG" | sed -E 's/^v([0-9]+\.[0-9]+)\.[0-9]+(-.*)?$/v\1/')
-          
-          CHANGELOG=$(awk -v mm="$MAJOR_MINOR" '
+          VERSION="${{ github.ref_name }}"
+          CHANGELOG=$(awk -v ver="$VERSION" '
             BEGIN { found=0; output="" }
             /^## v[0-9]+\.[0-9]+\.[0-9]+/ {
-              if (found && $0 !~ "^## " mm "\\.") exit
-              if ($0 ~ "^## " mm "\\.") { found=1; next }
+              if (found) exit
+              if ($0 ~ "^## " ver "($| )") { found=1; next }
             }
             found { output = output $0 "\n" }
             END {
-              if (output == "") output = "No changelog entries found for " mm
+              if (output == "") output = "No changelog entry found for " ver
               print output
             }
           ' docs/CHANGELOG.md)

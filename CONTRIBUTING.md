@@ -87,7 +87,59 @@ Please use clear, descriptive commit messages, following **Conventional Commits*
     Rollback now calls the ArgoCD rollback API and streams
     internationalized logs over SSE.
 
-### 5. Open a Pull Request (PR)
+### 5. Version Management
+
+Devops-CD follows Semantic Versioning (SemVer). Every released version MUST have a unique Git tag that exactly matches the version declared in the codebase.
+
+#### Version Format
+
+v<major>.<minor>.<patch>[-<prerelease>]
+
+| Component | Description |
+|-----------|-------------|
+| major | Incompatible API changes |
+| minor | Backward-compatible new functionality |
+| patch | Backward-compatible bug fixes |
+| prerelease | Optional: -alpha, -beta, -rc, -dev, -preview |
+
+#### Bumping Rules
+
+| Type of Change | Version Increment | Example |
+|----------------|-------------------|---------|
+| Bug fix (backward-compatible) | Patch | v1.5.0 -> v1.5.1 |
+| New feature (backward-compatible) | Minor | v1.5.0 -> v1.6.0 |
+| Breaking API change | Major | v1.5.0 -> v2.0.0 |
+| Pre-release | Append prerelease suffix | v1.6.0 -> v1.6.0-alpha |
+
+#### Release Steps
+
+1. Update APP_VERSION in backend/config.py (or the appropriate config file) according to the rules above.
+2. Add a new entry for the version at the top of docs/CHANGELOG.md:
+   ## vX.X.X (YYYY-MM-DD)
+   - Change description 1
+   - Change description 2
+3. Commit the changes with the version bump and changelog updates.
+4. Create and push the tag (MUST match the version number exactly):
+   git tag vX.X.X
+   git push origin vX.X.X
+5. GitHub Actions auto-release: The tag push triggers the Auto Release workflow, which reads the corresponding CHANGELOG.md entry and creates the GitHub Release.
+
+#### Important Rules
+
+- One version, one tag: Each version has its own unique tag. Do NOT reuse the same tag for multiple releases.
+- Tag must match code version: The Git tag MUST exactly match the APP_VERSION value in the code.
+- CHANGELOG entry required: Every version MUST have a corresponding entry in docs/CHANGELOG.md before tagging.
+- No force-pushing tags: Never force-push an existing tag to a different commit. If a release is faulty, bump the patch version and release a fix instead.
+
+#### Example
+
+git add backend/config.py docs/CHANGELOG.md
+git commit -m "chore(release): bump version to v1.5.1"
+git tag v1.5.1
+git push origin main
+git push origin v1.5.1
+
+### 6. Open a Pull Request (PR)
 
 - Ensure your PR is based on the latest `main` branch.
 - In the PR description, clearly explain what problem it solves and link the related Issue (e.g., `Closes #123`).
