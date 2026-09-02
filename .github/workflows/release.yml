@@ -26,30 +26,38 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate Changelog
-        id: changelog
-        uses: mikepenz/release-changelog-builder-action@v5
-        with:
-          # v5 移除了 tagRegex 输入（v4→v5 破坏性变更），标准 semver tag 无需额外筛选
-          # 不传 fromTag：v5 会自动按 semver 取上一个 tag；首次发布则从第一个 commit 生成
-          configurationJson: |
-            {
-              "categories": [
-                {"title": "🚀 Features", "labels": ["feature", "enhancement"]},
-                {"title": "🐛 Bug Fixes", "labels": ["bug", "fix"]},
-                {"title": "🔧 Maintenance", "labels": ["chore", "refactor"]}
-              ]
+      - name: Extract current version changelog
+        id: extract_changelog
+        run: |
+          if [ ! -f docs/CHANGELOG.md ]; then
+            echo "changelog=⚠️ CHANGELOG.md not found" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          VERSION="${{ github.ref_name }}"
+          CHANGELOG=$(awk -v ver="$VERSION" '
+            BEGIN { found=0; output="" }
+            /^## v[0-9]+\.[0-9]+\.[0-9]+/ {
+              if (found) exit
+              if ($0 ~ "^## " ver "($| )") { found=1; next }
             }
-          toTag: ${{ github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            found { output = output $0 "\n" }
+            END { 
+              if (output == "") output = "No changelog entry found for " ver
+              print output 
+            }
+          ' docs/CHANGELOG.md)
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.changelog }}
+          body: ${{ steps.extract_changelog.outputs.changelog }}
           draft: false
           prerelease: ${{ steps.prerelease_check.outputs.is_prerelease }}
           update_release_body: true
