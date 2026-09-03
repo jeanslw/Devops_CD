@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: 贡献指南 / Contribution Guide
+    url: https://github.com/jeanslw/Devops_CD/blob/main/CONTRIBUTING.md
+    about: 请先阅读贡献指南 / Please read before opening issues
+
+  - name: 讨论区 / Discussions
+    url: https://github.com/jeanslw/Devops_CD/discussions
+    about: 有问题或建议？先在讨论区提问 / For questions, use Discussions first
