@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend import __version__
 from backend.config import settings
 from backend.database import Database
 from backend.exceptions import AppException
@@ -64,7 +65,7 @@ async def lifespan(app: FastAPI):
 
 
 # ── 创建 app ──
-app = FastAPI(title="Devops-Glue CD", version="1.5.0", lifespan=lifespan)
+app = FastAPI(title="Devops-Glue CD", version=__version__, lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
 _STARTED_AT = datetime.now(timezone.utc)
 

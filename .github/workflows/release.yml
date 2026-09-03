@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -29,36 +33,81 @@ jobs:
       - name: Extract current version changelog
         id: extract_changelog
         run: |
-          if [ ! -f docs/CHANGELOG.md ]; then
-            echo "changelog=⚠️ CHANGELOG.md not found" >> $GITHUB_OUTPUT
-            exit 0
+          VERSION="${{ github.ref_name }}"
+          python3 - "$VERSION" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          ver = sys.argv[1]
+          changelog = Path("docs/CHANGELOG.md")
+          if not changelog.exists():
+              body = "⚠️ CHANGELOG.md not found"
+          else:
+              out, found = [], False
+              # 兼容标题格式：## v0.0.0 ... 与 ## [v0.0.0] ...
+              heading_re = re.compile(r"^##\s+\[?(?:v?)(\d+\.\d+\.\d+)\]?")
+              lines = changelog.read_text(encoding="utf-8-sig").splitlines()
+              for line in lines:
+                  m = heading_re.match(line)
+                  if m:
+                      if found:
+                          break
+                      if m.group(1) == ver.lstrip("v"):
+                          found = True
+                          continue
+                  if found:
+                      out.append(line)
+              body = "\n".join(out) if out else f"No changelog entry found for {ver}"
+
+          Path("release_notes.md").write_text(body + "\n", encoding="utf-8")
+          PY
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.ref_name }}"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          TITLE="Release ${VERSION}"
+          NOTES="release_notes.md"
+
+          PRERELEASE_FLAG=""
+          if [ "${{ steps.prerelease_check.outputs.is_prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
           fi
 
-          VERSION="${{ github.ref_name }}"
-          CHANGELOG=$(awk -v ver="$VERSION" '
-            BEGIN { found=0; output="" }
-            /^## v[0-9]+\.[0-9]+\.[0-9]+/ {
-              if (found) exit
-              if ($0 ~ "^## " ver "($| )") { found=1; next }
-            }
-            found { output = output $0 "\n" }
-            END {
-              if (output == "") output = "No changelog entry found for " ver
-              print output
-            }
-          ' docs/CHANGELOG.md)
+          create_release() {
+            echo "Creating release ${VERSION} @ ${HEAD_SHA}"
+            gh release create "$VERSION" --title "$TITLE" --notes-file "$NOTES" --draft=false $PRERELEASE_FLAG
+          }
 
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            TARGET="$(gh release view "$VERSION" --json targetCommitish --jq .targetCommitish)"
+            echo "Existing release ${VERSION} (target=${TARGET}, HEAD=${HEAD_SHA})"
+            if [ "$TARGET" != "$HEAD_SHA" ]; then
+              # 旧 release 指向过期 commit（如 tag 被 force-push / 重建后残留）
+              echo "Target mismatch -> deleting stale release and recreating"
+              gh release delete "$VERSION" --yes
+              for i in $(seq 1 30); do
+                if ! gh release view "$VERSION" >/dev/null 2>&1; then break; fi
+                echo "Waiting for release deletion to propagate ($i)..."
+                sleep 2
+              done
+              create_release
+            else
+              # 同 commit：更新 title/body，并确保最终为正式发布（非 draft）
+              echo "Updating release ${VERSION} and ensuring it is published"
+              gh release edit "$VERSION" --title "$TITLE" --notes-file "$NOTES" --draft=false $PRERELEASE_FLAG
+            fi
+          else
+            create_release
+          fi
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: ${{ steps.extract_changelog.outputs.changelog }}
-          draft: false
-          prerelease: ${{ steps.prerelease_check.outputs.is_prerelease }}
-          update_release_body: true
-          update_release_name: true
+          # 最终校验：确认 release 已正式发布
+          if ! gh release view "$VERSION" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^false$'; then
+            echo "::error::Release ${VERSION} is still not published"
+            exit 1
+          fi
+          echo "Release ${VERSION} is live"

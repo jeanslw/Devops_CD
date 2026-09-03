@@ -50,6 +50,10 @@
       <a href="https://github.com/jeanslw/Devops_CD" target="_blank" rel="noopener">DevOps-CD</a>
       <span class="divider">|</span>
       <a href="mailto:jeanslw@qq.com">{{ $t('landing.nav.support') }}</a>
+      <template v-if="version">
+        <span class="divider">|</span>
+        <span>v{{ version }}</span>
+      </template>
     </footer>
   </div>
 </template>
@@ -58,8 +62,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLang } from '@/locales'
+import { useAppInfo } from '@/composables/useAppInfo'
 
 const { t, locale } = useI18n()
+const { version } = useAppInfo()
 
 const logoUrl = '/static/logo.png'
 
