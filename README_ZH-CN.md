@@ -9,6 +9,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
   <a href="https://fastapi.org.cn/"><img src="https://img.shields.io/badge/fastAPI-0.115.6+-777BB4?logo=fastAPI&logoColor=white" alt="framework"></a>
   <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5.0+-777BB4?logo=Vue&logoColor=white" alt="framework"></a>
   <a href="https://gitee.com/jeanslw/devops_cd/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
+  <a href="https://hub.docker.com/r/jeanslw/devops-cd/tags"><img src="https://img.shields.io/docker/v/jeanslw/devops-cd/latest?label=version&logo=docker" alt="docker"></a>
 </p>
 
 ✅ 一套 API, 多 Git 平台 + 双 CI 通道 + Harbor → 全搞定
