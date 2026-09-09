@@ -39,7 +39,7 @@ lscpu | grep -E '^CPU\(s\)|^Thread|^Core|^Socket'
 
 ## 数据库
 
-### Q: 启动报错 "ci_pipeline_tags 表不存在"？
+### Q: 启动报错 "ci_pipeline_artifacts 表不存在"？
 
 cd_service 必须与 Devops-Glue API 共用同一个数据库。检查 `DB_PATH`（SQLite）或 `DB_*`（MySQL）配置是否正确。
 

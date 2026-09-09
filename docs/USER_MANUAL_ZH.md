@@ -9,7 +9,7 @@ Devops-Glue CD 是持续部署服务，与 [Devops-Glue API](https://github.com/
 ```
 CI (Jenkins / GitLab CI)
   → build + push → Harbor
-  → scan-sync → ci_pipeline_tags
+  → scan-sync → ci_pipeline_artifacts
 
 CD Panel (本项目)
   → 选择项目 + Tag

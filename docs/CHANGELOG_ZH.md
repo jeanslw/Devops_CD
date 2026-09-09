@@ -1,5 +1,16 @@
 # 更新日志
 
+## v1.5.1 (2026-09-10) — 对齐 Devops-Glue v2.8.0 的共享库校验
+
+### 变更
+- **启动共享库校验**：改为校验 `ci_pipeline_artifacts` 表（Devops-Glue 的规范 pipeline-artifact 表），替代已删除的 `ci_pipeline_tags`。要求 Devops-Glue v2.8.0+。
+- **文档修正**：CI 数据（映射 / tag / pipeline / 构建）全部经 CI HTTP API 获取，CD 不再直读 CI 表；架构、管理员/用户手册、FAQ 同步更新。
+
+### 数据库
+- `database/init_mysql.sql`：CI 索引引导改为针对 `ci_pipeline_artifacts`（`project_key`、`created_at`）。
+
+---
+
 ## v1.5.0 (2026-08-31) — 部署审批 + 一键回滚
 
 ### 新增功能

@@ -9,7 +9,7 @@ Devops-Glue CD is a continuous deployment service that works alongside [Devops-G
 ```
 CI (Jenkins / GitLab CI)
   → build + push → Harbor
-  → scan-sync → ci_pipeline_tags
+  → scan-sync → ci_pipeline_artifacts
 
 CD Panel (this project)
   → Select project + tag

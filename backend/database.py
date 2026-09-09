@@ -92,7 +92,7 @@ class Database:
     """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API。
     SQLite 模式：自动建表。
     MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。使用 DBUtils 连接池。
-    启动时校验 ci_pipeline_tags 表是否存在，不存在则报错（数据库指向错误）。
+    启动时校验 ci_pipeline_artifacts 表是否存在，不存在则报错（数据库指向错误）。
     """
 
     DRIVERS = ("sqlite", "mysql")
@@ -147,13 +147,13 @@ class Database:
                     charset="utf8mb4",
                 )
                 cur = raw.cursor()
-                cur.execute("SHOW TABLES LIKE 'ci_pipeline_tags'")
+                cur.execute("SHOW TABLES LIKE 'ci_pipeline_artifacts'")
                 exists = cur.fetchone() is not None
                 cur.close()
                 raw.close()
             else:
                 conn = sqlite3.connect(str(self._path))
-                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ci_pipeline_tags'")
+                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ci_pipeline_artifacts'")
                 exists = cur.fetchone() is not None
                 conn.close()
         except Exception as e:
@@ -162,7 +162,7 @@ class Database:
             ) from e
         if not exists:
             raise RuntimeError(
-                f"未找到 ci_pipeline_tags 表。cd_service 无独立数据库，必须和 Devops-Glue共用同一数据库实例。"
+                f"未找到 ci_pipeline_artifacts 表。cd_service 无独立数据库，必须和 Devops-Glue共用同一数据库实例。"
                 f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 Devops-Glue 一致。"
             )
 

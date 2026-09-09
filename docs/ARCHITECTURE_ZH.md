@@ -19,7 +19,7 @@
 │                           ↓                                 │
 │              Build → Docker Image → Harbor Registry         │
 │                           ↓                                 │
-│              scan-sync → ci_pipeline_tags                   │
+│              scan-sync → ci_pipeline_artifacts                   │
 │                                                             │
 │              CI 构建完成事件 ─────┐                         │
 │           (project/tag/image/时间)│                         │
@@ -59,7 +59,7 @@
 │ 共享数据库 (SQLite / MySQL / MariaDB)│
 │                                      │
 │  ci_job_git_map        ← CI 只读     │
-│  ci_pipeline_tags      ← CI 写/CD 读 │
+│  ci_pipeline_artifacts      ← CI 写/CD 读 │
 │  cd_servers            ← CD 维护     │
 │  cd_deploy_logs        ← CD 写       │
 │  cd_bots               ← CD 维护     │

@@ -101,7 +101,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ## 3. Database
 
-> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API. On startup, it verifies that the `ci_pipeline_tags` table exists.
+> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API. On startup, it verifies that the `ci_pipeline_artifacts` table exists.
 
 | Driver | Use Case | Notes |
 |--------|----------|-------|
@@ -441,7 +441,7 @@ The CD system adds a **Build Management** panel that calls the Devops-Glue (CI) 
 ### How it works
 
 - `backend/services/ci_client.py` supports two auth modes: API token (fixed Bearer token, no login) and account (JWT token cache, auto-refreshing before expiry). Requests are retried with exponential backoff on failure.
-- Data ownership: CD reads **only** and never writes to CI database tables (`ci_pipeline_tags` / `ci_job_git_map`); the "Build Management" tab uses HTTP API while "Tag List/Deploy Flow" continues via direct DB reads — two layers do not interfere with each other.
+- Data ownership: CD does not read CI database tables directly (`ci_pipeline_artifacts` / `ci_job_git_map`, etc.); mappings, tags, pipelines, and build records are all fetched via the CI HTTP API. CD only maintains its own `cd_*` tables locally.
 - Build history and build logs are fetched in real time via the CI API and are not persisted locally in CD.
 
 ## 9. Webhook Receiver Endpoint & Security Policy

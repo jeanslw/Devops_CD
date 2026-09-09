@@ -38,7 +38,7 @@ Yes. Add multiple metrics under a single monitor item, each targeting a differen
 
 ## Database
 
-### Q: Startup error "ci_pipeline_tags table not found"?
+### Q: Startup error "ci_pipeline_artifacts table not found"?
 
 cd_service must share the same database as Devops-Glue API. Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) settings are correct.
 

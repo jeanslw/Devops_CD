@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.1 (2026-09-10) — Align shared-DB check with Devops-Glue v2.8.0
+
+### Changes
+- **Startup shared-DB check**: now verifies the `ci_pipeline_artifacts` table (Devops-Glue's canonical pipeline-artifact table) instead of the removed `ci_pipeline_tags`. Requires Devops-Glue v2.8.0+.
+- **Docs corrected**: CI data (mappings / tags / pipelines / builds) is fetched exclusively via the CI HTTP API; CD never reads CI tables directly. Architecture, admin/user manuals, and FAQ updated accordingly.
+
+### Database
+- `database/init_mysql.sql`: CI index bootstrap now targets `ci_pipeline_artifacts` (`project_key`, `created_at`).
+
+---
+
 ## v1.5.0 (2026-08-31) — Deployment approval workflow & one-click rollback
 
 ### New Features

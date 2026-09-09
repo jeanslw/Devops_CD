@@ -100,7 +100,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ## 3. 数据库说明
 
-> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例。启动时会校验 `ci_pipeline_tags` 表是否存在。
+> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例。启动时会校验 `ci_pipeline_artifacts` 表是否存在。
 
 | 驱动 | 适用场景 | 注意 |
 |------|----------|------|
@@ -440,7 +440,7 @@ CD 系统新增"构建管理"面板，通过 HTTP API 调用 Devops-Glue（CI）
 ### 工作原理
 
 - `backend/services/ci_client.py` 支持两种认证：API Token 模式（固定 Bearer token，免登录）与账号模式（JWT Token 缓存，过期前自动续期）。请求失败自动重试（指数退避）。
-- 数据归属：CD 只读不写 CI 数据库表（`ci_pipeline_tags` / `ci_job_git_map`）；"构建管理"走 HTTP API，"Tag 清单/部署流程"继续走 DB 直读，两层互不干扰。
+- 数据归属：CD 不直读 CI 数据库表（`ci_pipeline_artifacts` / `ci_job_git_map` 等），映射、tag、pipeline、构建记录均经 CI HTTP API 获取；CD 本地只维护自己的 `cd_*` 表。
 - 构建历史、构建日志通过 CI API 实时获取，不在 CD 本地落地。
 
 ## 9. Webhook 接收端点 & 安全策略
