@@ -154,7 +154,10 @@ class FluxCDDeployer(K8sSubDeployer):
                 )
                 path_out, path_err, path_ec = _exec_exit(ssh, path_cmd)
                 if path_ec != 0:
-                    _log(callback, S("deploy_log.flux_fail_error", error=path_err or path_out or "path patch command failed"))
+                    _log(
+                        callback,
+                        S("deploy_log.flux_fail_error", error=path_err or path_out or "path patch command failed"),
+                    )
                     ssh.close()
                     return {
                         "success": False,
@@ -171,7 +174,13 @@ class FluxCDDeployer(K8sSubDeployer):
                     f"kubectl get {shlex.quote(flux_kind)} {shlex.quote(flux_name)} -n {shlex.quote(settings.flux_namespace)} -o json 2>/dev/null",
                 )
                 if current_ec != 0 or not current_json.strip():
-                    _log(callback, S("deploy_log.flux_fail_error", error=current_err or current_json or "failed to read Flux resource"))
+                    _log(
+                        callback,
+                        S(
+                            "deploy_log.flux_fail_error",
+                            error=current_err or current_json or "failed to read Flux resource",
+                        ),
+                    )
                     ssh.close()
                     return {
                         "success": False,
