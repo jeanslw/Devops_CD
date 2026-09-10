@@ -113,7 +113,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_rollback_failed", code=r.status_code, msg=r.text[:200]))
                 return {"success": False, "output": "\n".join(output)}
 
-            # ── 复用 health 轮询等待回滚完成 ──
+            # ── 复用 health + sync 轮询等待回滚完成；必须确认 revision 已离开旧版本 ──
             health = ""
             sync = ""
             for i in range(30):
@@ -126,8 +126,19 @@ class ArgoCDDeployer(K8sSubDeployer):
                 a = r.json()
                 health = a.get("status", {}).get("health", {}).get("status", "")
                 sync = a.get("status", {}).get("sync", {}).get("status", "")
+                revision = (
+                    a.get("status", {}).get("sync", {}).get("revision")
+                    or a.get("status", {}).get("operationState", {}).get("operation", {}).get("sync", {}).get("revision")
+                    or ""
+                )
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
-                if health == "Healthy":
+                if health == "Healthy" and sync == "Synced":
+                    if prev_rev and revision and revision == prev_rev:
+                        log(
+                            f"[argocd] Rollback is Healthy/Synced but still on previous revision {prev_rev}; "
+                            f"current revision is {revision}; waiting for the app to move away"
+                        )
+                        continue
                     log(S("deploy_log.argocd_healthy", sync=sync))
                     success = True
                     break
@@ -246,6 +257,7 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             health = ""
             sync = ""
+            revision = ""
             for i in range(30):
                 check_cancelled()
                 time.sleep(2)
@@ -256,13 +268,23 @@ class ArgoCDDeployer(K8sSubDeployer):
                 a = r.json()
                 health = a.get("status", {}).get("health", {}).get("status", "")
                 sync = a.get("status", {}).get("sync", {}).get("status", "")
+                revision = (
+                    a.get("status", {}).get("sync", {}).get("revision")
+                    or a.get("status", {}).get("operationState", {}).get("operation", {}).get("sync", {}).get("revision")
+                    or ""
+                )
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
-                if health == "Healthy":
+                if health == "Healthy" and sync == "Synced":
+                    # image/tag 参数可以在不改变 Git revision 的情况下完成一次有效同步；
+                    # 因此普通部署不能要求 revision 必须变化。Healthy + Synced 才是成功条件。
                     log(S("deploy_log.argocd_healthy", sync=sync))
                     success = True
                     break
             else:
                 log(S("deploy_log.argocd_timeout"))
+
+            if not success:
+                log(f"[argocd] Sync status={sync or 'Unknown'}; health={health or 'Unknown'}; revision={revision or 'Unknown'}")
 
             return {"success": success, "output": "\n".join(output)}
         except Exception as e:

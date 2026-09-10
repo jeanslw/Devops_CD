@@ -9,6 +9,13 @@
 ### 数据库
 - `database/init_mysql.sql`：CI 索引引导改为针对 `ci_pipeline_artifacts`（`project_key`、`created_at`）。
 
+### 修复
+- **保留 partial 部署状态**：`partial` 继续作为有效终态保留，不再被吞并为 `failed`；聚合统计和前端状态徽章均保持其独立显示。
+- **保留 Kubernetes namespace 语义**：空 `k8s_ns` 继续表示“不要传 `-n`”，保持与既有设计和 YAML 中声明 namespace 的行为一致；只有显式 namespace 才会被校验并透传给集群命令。
+- **老库数据兼容**：补齐 registry artifact 缺失的 MySQL 迁移字段，避免旧安装需要手工补表。
+- **修正 ArgoCD 回滚逻辑**：回滚等待循环现在会正确检查 revision 是否仍等于 previous_revision，避免误判失败和 `NameError` 这类边界问题。
+- **前端输出兼容**：日志页继续保留蓝色 `partial` 状态徽章，CSS 的 line-clamp 兼容样式也保持对更广泛浏览器的兼容。
+
 ---
 
 ## v1.5.0 (2026-08-31) — 部署审批 + 一键回滚

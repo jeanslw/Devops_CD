@@ -246,6 +246,7 @@ export default {
     selectCluster: '— 选择 —',
     yamlPath: 'YAML 路径',
     apiUrl: 'API 地址',
+    namespace: '命名空间',
     namespaceHint: '💡 Namespace 请在 YAML 中声明，留空不传 -n',
     fluxNamespaceHint: '命名空间：flux-system（可在 .env 中修改 FLUX_NAMESPACE）',
     fluxPath: 'Kustomization 路径 (Git 仓库内)',

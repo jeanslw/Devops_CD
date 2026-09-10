@@ -3,6 +3,8 @@
 import logging
 import shlex
 
+import yaml
+
 from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.base import DeployTarget, ssh_connect
@@ -30,10 +32,12 @@ class KubectlDeployer(K8sSubDeployer):
     ) -> dict:
         """停止：kubectl delete -f <yaml> 或 kubectl delete deployment"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+        namespace = (getattr(req, "k8s_ns", "") or "").strip()
+        ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
         if req.target_path:
-            cmd = f"kubectl delete -f {shlex.quote(req.target_path)}"
+            cmd = f"kubectl delete{ns_flag} -f {shlex.quote(req.target_path)}"
         else:
-            cmd = f"kubectl delete deployment/{shlex.quote(project)}"
+            cmd = f"kubectl delete deployment/{shlex.quote(project)}{ns_flag}"
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
@@ -48,6 +52,8 @@ class KubectlDeployer(K8sSubDeployer):
         """原生回滚：kubectl rollout undo deployment/<name>（回退到上一版本）。"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         filter_name = project.split("/")[-1]
+        namespace = (getattr(req, "k8s_ns", "") or "").strip()
+        ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
 
         # 确定 deployment 名：优先读 YAML 声明的名字（与 deploy 同源），回退到项目短名
         yaml_content = ""
@@ -77,7 +83,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             _log(callback, S("deploy_log.rollback_start", name=deploy_name))
             check_cancelled()
-            cmd = f"kubectl rollout undo deployment/{shlex.quote(deploy_name)}"
+            cmd = f"kubectl rollout undo deployment/{shlex.quote(deploy_name)}{ns_flag}"
             _log(callback, S("deploy_log.exec_cmd", n=1, cmd=cmd))
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
 
@@ -85,11 +91,11 @@ class KubectlDeployer(K8sSubDeployer):
             check_cancelled()
             rollout_out, rollout_err, rollout_ec = _exec_exit(
                 ssh,
-                f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s",
+                f"kubectl rollout status deployment/{shlex.quote(deploy_name)}{ns_flag} --timeout={settings.k8s_rollout_timeout}s",
                 timeout=settings.k8s_rollout_timeout + 30,
             )
 
-            after = _kubectl_pods(ssh, deploy_name)
+            after = _kubectl_pods(ssh, deploy_name, namespace)
             ok = ec == 0 and rollout_ec == 0
             lines = [f"Rollback command: {cmd}"]
             if out:
@@ -115,6 +121,8 @@ class KubectlDeployer(K8sSubDeployer):
 
         tag = req.tag
         filter_name = project.split("/")[-1]
+        namespace = (getattr(req, "k8s_ns", "") or "").strip()
+        ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
 
         yaml_content = ""
         ssh = None
@@ -147,6 +155,38 @@ class KubectlDeployer(K8sSubDeployer):
 
             # ── 先渲染再校验：渲染后 {IMAGE}:{TAG} 已替换，YAML 可被 safe_load 解析 ──
             yaml_content = _render_k8s_yaml(yaml_content, image, tag)
+
+            # k8s_ns 是 CD 请求的执行上下文。kubectl 的 --namespace/-n 不会覆盖
+            # manifest 中显式声明的 metadata.namespace，因此如果两者冲突必须直接失败，
+            # 避免“实际部署到 A、验证却在 B”的假成功/假失败。
+            try:
+                docs = list(yaml.safe_load_all(yaml_content))
+            except yaml.YAMLError as exc:
+                return {"success": False, "output": f"Invalid Kubernetes YAML: {exc}"}
+            for doc in docs:
+                if not isinstance(doc, dict):
+                    continue
+                kind = str(doc.get("kind") or "")
+                metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+                manifest_ns = str(metadata.get("namespace") or "").strip()
+                if (
+                    namespace
+                    and manifest_ns
+                    and kind not in {
+                        "Namespace", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition",
+                        "Node", "PersistentVolume", "StorageClass", "MutatingWebhookConfiguration",
+                        "ValidatingWebhookConfiguration", "PriorityClass", "PodSecurityPolicy",
+                    }
+                    and manifest_ns != namespace
+                ):
+                    return {
+                        "success": False,
+                        "output": (
+                            f"Kubernetes namespace mismatch: request namespace [{namespace}] "
+                            f"but manifest resource [{kind or 'Unknown'}] declares [{manifest_ns}]."
+                        ),
+                    }
+
             yaml_deploy_name = _get_deployment_name(yaml_content)
             if yaml_deploy_name and yaml_deploy_name != filter_name:
                 # 前端预检弹窗已确认，这里只打警告不拦截
@@ -167,7 +207,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             _log(callback, S("deploy_log.verifying_app"))
 
-            before = _kubectl_pods(ssh, deploy_name)
+            before = _kubectl_pods(ssh, deploy_name, namespace)
             before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
             before_pods = {b.split()[0] for b in before.split("\n") if b.strip()} if before else set()
 
@@ -178,7 +218,7 @@ class KubectlDeployer(K8sSubDeployer):
                     is_first_deploy = True
                     _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
                 else:
-                    all_pods = _kubectl_pods(ssh, "")
+                    all_pods = _kubectl_pods(ssh, "", namespace)
                     running_pods = all_pods.strip()
                     if running_pods:
                         _log(callback, S("deploy_log.app_not_found", name=deploy_name, running=running_pods))
@@ -198,9 +238,9 @@ class KubectlDeployer(K8sSubDeployer):
                 _log(callback, S("deploy_log.current_version_none"))
 
             _log(callback, S("deploy_log.starting_deploy"))
-            cmds = [f"kubectl apply -f {shlex.quote(tmp)}"]
+            cmds = [f"kubectl apply -n {shlex.quote(namespace)} -f {shlex.quote(tmp)}"]
             if not is_first_deploy:
-                cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)}")
+                cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)} {ns_flag}")
             for i, c in enumerate(cmds):
                 check_cancelled()
                 _log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
@@ -218,7 +258,7 @@ class KubectlDeployer(K8sSubDeployer):
             # ── rollout status 等待部署完成 ──
             check_cancelled()
             _log(callback, S("deploy_log.waiting_pod"))
-            rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} --timeout={settings.k8s_rollout_timeout}s"
+            rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout={settings.k8s_rollout_timeout}s"
             rollout_out, rollout_err, rollout_ec = _exec_exit(
                 ssh, rollout_cmd, timeout=settings.k8s_rollout_timeout + 30
             )
@@ -230,7 +270,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             # ── 部署后：查当前 Pod，排除旧 Pod ──
             _log(callback, S("deploy_log.after_version"))
-            all_after = _kubectl_pods(ssh, deploy_name)
+            all_after = _kubectl_pods(ssh, deploy_name, namespace)
             if all_after.strip():
                 after_pods = [
                     line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods

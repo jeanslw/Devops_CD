@@ -13,6 +13,26 @@ from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, _ssh_cm
 logger = logging.getLogger(__name__)
 
 
+def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
+    """Merge patch for Flux's `spec.images`, preserving unrelated overrides.
+
+    `kubectl patch --type=merge` treats arrays as a single replacement, so we must
+    rebuild the array with the current entries and update/append the target image.
+    """
+    current = list(existing_images or [])
+    patched = []
+    updated = False
+    for item in current:
+        entry = dict(item or {})
+        if entry.get("name") == image_name:
+            entry["newTag"] = tag
+            updated = True
+        patched.append(entry)
+    if not updated:
+        patched.append({"name": image_name, "newTag": tag})
+    return {"spec": {"images": patched}}
+
+
 def _discover_flux_resource(ssh, project_fallback, image_name):
     """发现 Flux CD 资源名（HelmRelease / Kustomization），不盲猜等于项目名"""
     # 先尝试精确匹配
@@ -132,14 +152,42 @@ class FluxCDDeployer(K8sSubDeployer):
                     f"-n {shlex.quote(settings.flux_namespace)} --type=merge "
                     f"-p {shlex.quote(path_patch_data)}"
                 )
-                _exec_exit(ssh, path_cmd)
+                path_out, path_err, path_ec = _exec_exit(ssh, path_cmd)
+                if path_ec != 0:
+                    _log(callback, S("deploy_log.flux_fail_error", error=path_err or path_out or "path patch command failed"))
+                    ssh.close()
+                    return {
+                        "success": False,
+                        "output": f"Flux path patch failed:\n{path_err or path_out or f'exit code {path_ec}'}",
+                    }
 
-            # 安全构造 patch JSON，防止 tag 注入
+            # 安全构造 patch JSON，防止 tag 注入；Kustomization 的数组必须保留已有 override
             _log(callback, S("deploy_log.flux_update"))
             if flux_kind == "helmrelease":
                 patch_data = json.dumps({"spec": {"values": {"image": {"tag": tag}}}})
             else:
-                patch_data = json.dumps({"spec": {"images": [{"name": img_name, "newTag": tag}]}})
+                current_json, current_err, current_ec = _exec_exit(
+                    ssh,
+                    f"kubectl get {shlex.quote(flux_kind)} {shlex.quote(flux_name)} -n {shlex.quote(settings.flux_namespace)} -o json 2>/dev/null",
+                )
+                if current_ec != 0 or not current_json.strip():
+                    _log(callback, S("deploy_log.flux_fail_error", error=current_err or current_json or "failed to read Flux resource"))
+                    ssh.close()
+                    return {
+                        "success": False,
+                        "output": f"Unable to read Flux resource before patch; deployment stopped to avoid overwriting spec.images.\n{current_err or current_json}",
+                    }
+                try:
+                    current_spec = json.loads(current_json)
+                    existing_images = current_spec.get("spec", {}).get("images", []) or []
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    _log(callback, S("deploy_log.flux_fail_error", error=f"invalid Flux resource JSON: {exc}"))
+                    ssh.close()
+                    return {
+                        "success": False,
+                        "output": f"Invalid Flux resource JSON; deployment stopped to avoid overwriting spec.images: {exc}",
+                    }
+                patch_data = json.dumps(_build_flux_image_patch(img_name, tag, existing_images))
             patch_cmd = (
                 f"kubectl patch {shlex.quote(flux_kind)} {shlex.quote(flux_name)} "
                 f"-n {shlex.quote(settings.flux_namespace)} --type=merge "
@@ -261,15 +309,15 @@ class FluxCDDeployer(K8sSubDeployer):
                 )
                 return {"success": False, "output": result[: settings.log_truncate_chars]}
             else:
-                # 没找到 deployment，但 Flux 已 patch 触发协调，由 Flux 自己完成
+                # 没找到 Deployment 时，不能把“patch 成功”当成“部署成功”；必须要求 Flux 真正完成
                 status_text = f"当前 Pod: {running_count} 个 Running"
-                _log(callback, S("deploy_log.flux_success", status=status_text))
+                _log(callback, S("deploy_log.flux_fail_error"))
                 result = (
                     f"{before_text}\n\n开始部署:\n镜像已更新，Flux 协调已触发"
                     + f"\n\n部署后运行版本:\n{after or '(无)'}"
-                    + f"\n\n{status_text}\n\n验证部署: ⚠️ 已触发 Flux 协调，未找到对应 Deployment"
+                    + "\n\n验证部署: ❌ 未找到对应 Deployment，无法确认 Flux 已完成滚动发布"
                 )
-                return {"success": True, "output": result[: settings.log_truncate_chars]}
+                return {"success": False, "output": result[: settings.log_truncate_chars]}
         except Exception as e:
             logger.error("FluxCD deploy failed", exc_info=e)
             _log(callback, S("deploy_log.flux_fail_error", error=str(e)))
