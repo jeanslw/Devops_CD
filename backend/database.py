@@ -278,6 +278,12 @@ class Database:
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN lock_key VARCHAR(255)")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN params_json TEXT DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN rollback_type VARCHAR(32) DEFAULT 'manual'")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_id INTEGER DEFAULT 0")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_digest VARCHAR(128) DEFAULT ''")
         # 并发锁唯一索引：running 记录 lock_key=project，同项目至多一条 running（NULL 可重复）
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
         # 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id）
@@ -309,6 +315,8 @@ class Database:
             repo_id INTEGER,
             tag VARCHAR(255),
             digest VARCHAR(128),
+            artifact_id INTEGER DEFAULT 0,
+            artifact_digest VARCHAR(128) DEFAULT '',
             size_bytes BIGINT DEFAULT 0,
             push_time TEXT DEFAULT '',
             pull_time TEXT DEFAULT '',
@@ -427,6 +435,8 @@ class Database:
         # ── 自动迁移：补充已有表缺失的列 ──
         migrations = [
             ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
+            ("cd_registry_artifacts", "artifact_id", "INTEGER DEFAULT 0"),
+            ("cd_registry_artifacts", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
         ]
         for tbl, col, col_def in migrations:
             with suppress(Exception):

@@ -246,6 +246,7 @@ export default {
     selectCluster: 'Select',
     yamlPath: 'YAML Path',
     apiUrl: 'API URL',
+    namespace: 'Namespace',
     namespaceHint: 'Declare namespace in YAML, leave blank to omit -n',
     fluxNamespaceHint: 'Namespace: flux-system (change FLUX_NAMESPACE in .env)',
     fluxPath: 'Kustomization Path (in Git repo)',

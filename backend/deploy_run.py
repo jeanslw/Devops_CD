@@ -22,6 +22,56 @@ import threading
 from backend.config import settings
 
 
+def normalize_deploy_status(raw: str | None) -> str:
+    """Canonicalize a deployment status to the project-wide status set.
+
+    Legacy values such as 'success'/'succeeded' and 'cancelled'/'canceled' are
+    normalized to the DB truth values used by the runtime: ok, failed, running,
+    terminated, interrupted.
+    """
+    value = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "ok": "ok",
+        "success": "ok",
+        "succeeded": "ok",
+        "completed": "ok",
+        "failed": "failed",
+        "failure": "failed",
+        "error": "failed",
+        "running": "running",
+        "in_progress": "running",
+        "pending": "running",
+        "terminated": "terminated",
+        "cancelled": "terminated",
+        "canceled": "terminated",
+        "stopped": "terminated",
+        "interrupted": "interrupted",
+        "interrupt": "interrupted",
+        "partial": "partial",
+    }
+    return aliases.get(value, value or "failed")
+
+
+def normalize_rollback_type(raw: str | None) -> str:
+    """Canonicalize rollback semantics to native/replay/manual."""
+    value = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "native": "native",
+        "native_rollback": "native",
+        "kubectl_rollback": "native",
+        "helm_rollback": "native",
+        "argocd_rollback": "native",
+        "rollback": "native",
+        "replay": "replay",
+        "replay_rollback": "replay",
+        "tag_rollback": "replay",
+        "manual": "manual",
+        "default": "manual",
+        "": "manual",
+    }
+    return aliases.get(value, "manual")
+
+
 def _is_integrity_error(exc: BaseException) -> bool:
     """判断是否为主键/唯一约束冲突（SQLite / MySQL 双驱动）。"""
     if isinstance(exc, sqlite3.IntegrityError):
@@ -120,6 +170,7 @@ def start_deploy_record(
     deploy_note: str = "",
     target: str = "",
     params_json: str = "",
+    rollback_type: str = "manual",
 ) -> int:
     """插入一条 running 记录，返回部署记录 id（自增主键，即部署编号）。
 
@@ -131,8 +182,8 @@ def start_deploy_record(
         try:
             cur = conn.execute(
                 "INSERT INTO cd_deploy_logs "
-                "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, lock_key, params_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, lock_key, params_json, rollback_type) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     project,
                     tag,
@@ -145,6 +196,7 @@ def start_deploy_record(
                     deploy_note or "",
                     project,
                     params_json or "",
+                    normalize_rollback_type(rollback_type),
                 ),
             )
         except Exception as e:
@@ -168,27 +220,28 @@ def finish_deploy_record(
 
     deploy_id 即部署记录的自增主键 id。
     """
+    normalized_status = normalize_deploy_status(status)
     output_truncated = (output or "")[: settings.log_truncate_chars]
     stage_times_json = json.dumps(stage_times or [], ensure_ascii=False)
 
     # terminated 由部署线程自身检测到取消时写入：此时允许在 cancel 已置 terminated 后
     # 补充 output/duration，故按 id 无条件更新；其余终态只终结仍为 running 的记录，
     # 避免覆盖并发 cancel 写入的 terminated。
-    where_clause = "WHERE id=?" if status == "terminated" else "WHERE id=? AND status='running'"
+    where_clause = "WHERE id=?" if normalized_status == "terminated" else "WHERE id=? AND status='running'"
 
     with db.conn() as conn:
         if deploy_id:
             conn.execute(
                 f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?, "
                 f"lock_key=NULL {where_clause}",
-                (status, target, output_truncated, duration_ms, stage_times_json, deploy_id),
+                (normalized_status, target, output_truncated, duration_ms, stage_times_json, deploy_id),
             )
         else:
             # 兜底：没有拿到 deploy_id 时按 running 记录更新（保证不丢）
             conn.execute(
                 "UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?, "
                 "lock_key=NULL WHERE status='running'",
-                (status, target, output_truncated, duration_ms, stage_times_json),
+                (normalized_status, target, output_truncated, duration_ms, stage_times_json),
             )
 
 
@@ -214,6 +267,11 @@ def mark_deploy_cancelled(db, deploy_id: int) -> dict:
     if affected:
         return {"success": True, "message": "Deployment cancelled"}
     return {"success": False, "message": "No running deployment found (may already be finished)"}
+
+
+def normalize_db_status_for_query(status: str | None) -> str:
+    """Compatibility helper for callers that still pass legacy status strings."""
+    return normalize_deploy_status(status)
 
 
 def recover_stale_running(db) -> int:

@@ -122,6 +122,10 @@ def prepare_rollback(
     if not params.get("deploy_type"):
         raise ValidationError("该部署记录缺少回滚所需参数快照", error_key="errors.rollback_unsupported")
 
+    # 指定 tag 同样属于 replay：它会创建新的部署记录并按快照重放，只是把目标 tag 替换为用户指定值。
+    rollback_type = "native" if (native and not tag) else "replay"
+    params["rollback_type"] = rollback_type
+
     # 指定 tag → 替换目标 tag（重放到该版本）
     if tag:
         params["tag"] = tag

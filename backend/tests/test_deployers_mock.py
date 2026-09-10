@@ -21,10 +21,11 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from backend.config import settings
+from backend.deploy_run import normalize_deploy_status, normalize_rollback_type
 from backend.deployers.base import DeployTarget, split_image_ref
 from backend.deployers.compose import ComposeDeployer
 from backend.deployers.k8s_argocd import ArgoCDDeployer
-from backend.deployers.k8s_fluxcd import _discover_flux_resource
+from backend.deployers.k8s_fluxcd import _build_flux_image_patch, _discover_flux_resource
 from backend.deployers.k8s_utils import _get_deployment_name, _render_k8s_yaml
 from backend.deployers.ssh import SSHDeployer
 
@@ -263,6 +264,48 @@ class TestArgoCD(unittest.TestCase):
             ArgoCDDeployer().stop(req=req, project="group/app", host="argocd-host", pwd="token")
         self.assertIn("https://argocd-custom:1234", mock_delete.call_args.args[0])
 
+    def test_rollback_waits_until_revision_moves_off_previous_revision(self):
+        req = self._req()
+        initial = {
+            "status": {
+                "history": [{"id": 1, "revision": "old-commit"}, {"id": 2, "revision": "current-commit"}],
+                "health": {"status": "Healthy"},
+                "sync": {"status": "Synced", "revision": "current-commit"},
+            }
+        }
+        still_on_previous = {
+            "status": {
+                "health": {"status": "Healthy"},
+                "sync": {"status": "Synced", "revision": "old-commit"},
+            }
+        }
+        moved_away = {
+            "status": {
+                "health": {"status": "Healthy"},
+                "sync": {"status": "Synced", "revision": "new-commit"},
+            }
+        }
+        with (
+            patch("requests.get", side_effect=[_Resp(200, initial), _Resp(200, still_on_previous), _Resp(200, moved_away)]),
+            patch("requests.post", return_value=_Resp(200)),
+            patch("time.sleep", return_value=None),
+        ):
+            result = ArgoCDDeployer().rollback(req, "group/app", "argocd-host", pwd="token")
+        self.assertTrue(result["success"])
+
+    def test_requires_synced_status_before_marking_success(self):
+        req = self._req()
+        app = {"spec": {"source": {"kustomize": {"images": []}}}, "status": {"health": {"status": "Healthy"}, "sync": {"status": "OutOfSync"}}}
+        with (
+            patch("requests.get", MagicMock(return_value=_Resp(200, app))),
+            patch("requests.put", MagicMock(return_value=_Resp(200))),
+            patch("requests.post", MagicMock(return_value=_Resp(200))),
+            patch("time.sleep", return_value=None),
+        ):
+            result = ArgoCDDeployer().deploy(req, "hub.example.com/repo/app:v1.0", "group/app", "argocd-host", pwd="token")
+        self.assertFalse(result["success"])
+        self.assertIn("Sync status", result["output"])
+
 
 # ─────────────────────────────────────────────────────────────
 # Flux CD 部署器（k8s_fluxcd.py）
@@ -281,6 +324,17 @@ class TestFluxCD(unittest.TestCase):
         _, kind = _discover_flux_resource(FakeSSH(lambda cmd: ("", "", 0)), "myapp", "hub.example.com/app")
         self.assertEqual(kind, "")
 
+    def test_build_flux_image_patch_keeps_existing_overrides(self):
+        patch_data = _build_flux_image_patch(
+            "hub.example.com/repo/app",
+            "v2.0",
+            [{"name": "other/image", "newTag": "v9"}, {"name": "hub.example.com/repo/app", "newTag": "v1"}],
+        )
+        self.assertIn("other/image", str(patch_data))
+        self.assertIn("hub.example.com/repo/app", str(patch_data))
+        self.assertIn("newTag", str(patch_data))
+        self.assertIn("v2.0", str(patch_data))
+
 
 # ─────────────────────────────────────────────────────────────
 # 取消信号生命周期（deploy_run.py）
@@ -295,6 +349,19 @@ class TestDeployRun(unittest.TestCase):
         self.assertTrue(mgr.is_cancelled(1))
         mgr.unregister(1)
         self.assertFalse(mgr.is_cancelled(1))
+
+    def test_status_and_rollback_type_are_normalized(self):
+        self.assertEqual(normalize_deploy_status("success"), "ok")
+        self.assertEqual(normalize_deploy_status("succeeded"), "ok")
+        self.assertEqual(normalize_deploy_status("partial"), "partial")
+        self.assertEqual(normalize_deploy_status("cancelled"), "terminated")
+        self.assertEqual(normalize_deploy_status("canceled"), "terminated")
+        self.assertEqual(normalize_deploy_status("interrupted"), "interrupted")
+
+        self.assertEqual(normalize_rollback_type("native"), "native")
+        self.assertEqual(normalize_rollback_type("replay"), "replay")
+        self.assertEqual(normalize_rollback_type("rollback"), "native")
+        self.assertEqual(normalize_rollback_type(""), "manual")
 
 
 if __name__ == "__main__":

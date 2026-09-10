@@ -9,6 +9,13 @@
 ### Database
 - `database/init_mysql.sql`: CI index bootstrap now targets `ci_pipeline_artifacts` (`project_key`, `created_at`).
 
+### Fixes
+- **Partial deploy status preserved**: `partial` remains a valid terminal state instead of being folded into `failed`; aggregate counts and frontend badge mapping keep it visible as a distinct outcome.
+- **Kubernetes namespace semantics preserved**: blank `k8s_ns` still means “do not pass `-n`”, matching the existing design and YAML-defined namespace behavior; explicit namespaces are still validated and passed with the cluster command.
+- **Legacy DB compatibility**: added the missing MySQL migration for registry artifact fields so older installs continue to work without manual schema patching.
+- **ArgoCD rollback logic tightened**: the wait loop correctly checks whether the revision still matches the previous revision before continuing, avoiding false failures and `NameError`-style edge cases during rollback.
+- **Frontend output compatibility**: the log page keeps the blue `partial` badge and the CSS line-clamp styling remains compatible with broader browser prefixes.
+
 ---
 
 ## v1.5.0 (2026-08-31) — Deployment approval workflow & one-click rollback

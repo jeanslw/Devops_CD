@@ -119,6 +119,7 @@ class DeployService:
         k8s_container: str = "",
         env_file: str = "",
         deploy_note: str = "",
+        rollback_type: str = "manual",
         bot_id: int = 0,
         lang: str = "en",
         callback: Callable | None = None,
@@ -192,6 +193,7 @@ class DeployService:
                 "k8s_container": k8s_container,
                 "env_file": env_file,
                 "deploy_note": deploy_note,
+                "rollback_type": rollback_type,
                 "bot_id": bot_id,
                 "lang": lang,
             },
@@ -208,6 +210,7 @@ class DeployService:
             triggered_by=triggered_by,
             deploy_note=deploy_note,
             params_json=params_json,
+            rollback_type=rollback_type,
         )
         deploy_run_manager.register(deploy_id)
         set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))

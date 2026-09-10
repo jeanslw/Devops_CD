@@ -134,6 +134,7 @@ def _execute_ssh(db, params: dict, user: dict, callback=None) -> dict:
     kwargs.setdefault("k8s_container", "")
     kwargs.setdefault("env_file", "")
     kwargs.setdefault("deploy_note", "")
+    kwargs.setdefault("rollback_type", "manual")
     kwargs.setdefault("lang", "en")
     kwargs["bot_id"] = int(kwargs.get("bot_id") or 0)
 

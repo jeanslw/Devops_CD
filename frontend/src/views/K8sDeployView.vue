@@ -60,6 +60,10 @@
         <label>{{ $t('k8sDeploy.apiUrl') }}</label>
         <input v-model="apiUrl" placeholder="https://argocd:30443">
       </div>
+      <div v-if="cdType === 'kubectl' || cdType === 'helm' || cdType === 'argocd'" style="margin-bottom:8px">
+        <label>{{ $t('k8sDeploy.namespace') }}</label>
+        <input v-model="k8sNs" placeholder="namespace">
+      </div>
       <div class="grid2" style="margin-bottom:8px">
         <div>
           <label>{{ $t('deploy.notify') }}</label>
@@ -122,6 +126,7 @@ const bots = ref([])
 const botId = ref(0)
 const path = ref('')
 const apiUrl = ref('')
+const k8sNs = ref('default')
 const deployNote = ref('')
 
 // ── 预检弹窗 ──
@@ -205,6 +210,7 @@ async function doDeploy() {
     cluster_id: cid,
     path: path.value,
     api_url: apiUrl.value,
+    k8s_ns: k8sNs.value.trim(),
     deploy_note: deployNote.value,
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
@@ -263,6 +269,7 @@ async function doStop() {
     target_path: path.value,
     cd_type: cdType.value,
     api_url: apiUrl.value,
+    k8s_ns: k8sNs.value.trim(),
   }
   try {
     const r = await fetch('/api/stop-k8s', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth.A() }, body: JSON.stringify(body) })

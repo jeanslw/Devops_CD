@@ -90,7 +90,9 @@ function badgeClass(status) {
     case 'ok': return 'badge-ok'
     case 'failed': return 'badge-err'
     case 'running': return 'badge-running'
-    case 'terminated': return 'badge-gray'
+    case 'terminated':
+    case 'interrupted':
+    case 'cancelled': return 'badge-gray'
     case 'partial': return 'badge-blue'
     default: return 'badge-pend'
   }
@@ -155,6 +157,7 @@ onMounted(() => loadData())
   white-space: pre-wrap;
   line-height: 1.3;
   display: -webkit-box;
+  line-clamp: 3;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;

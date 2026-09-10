@@ -173,8 +173,9 @@ class K8sDeployer(Deployer):
 
     def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
         """停止服务：kubectl delete deployment"""
-        namespace = kwargs.get("k8s_ns", "default")
-        cmd = f"kubectl delete deployment/{shlex.quote(project)} -n {shlex.quote(namespace)}"
+        namespace = (kwargs.get("k8s_ns") or "").strip()
+        ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
+        cmd = f"kubectl delete deployment/{shlex.quote(project)}{ns_flag}"
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
                 _, stdout, stderr = ssh.exec_command(cmd, timeout=settings.ssh_timeout)

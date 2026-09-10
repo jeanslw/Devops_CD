@@ -39,7 +39,7 @@ class K8sDeployRequest(BaseModel):
     cluster_id: int = 0
     path: str = ""  # YAML path for kubectl mode
     api_url: str = ""  # Argo CD / Flux API base
-    k8s_ns: str = ""  # 留空不传 -n，namespace 在 YAML 中声明
+    k8s_ns: str = ""  # 留空不传 -n，namespace 以 YAML 声明为准；填写后执行/验证统一使用该 namespace
     deploy_note: str = ""  # 部署说明（记录到 cd_deploy_logs.deploy_note）
     bot_id: int = 0
     lang: str = "en"  # 前端当前语言 en/zh

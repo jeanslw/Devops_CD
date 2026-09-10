@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS cd_registry_artifacts (
     repo_id       INT,
     tag           VARCHAR(255),
     digest        VARCHAR(128),
+    artifact_id   INT           DEFAULT 0,
+    artifact_digest VARCHAR(128) DEFAULT '',
     size_bytes    BIGINT        DEFAULT 0,
     push_time     DATETIME      DEFAULT NULL,
     pull_time     DATETIME      DEFAULT NULL,
@@ -145,6 +147,9 @@ CALL __add_column('cd_deploy_logs', 'duration_ms', 'INT DEFAULT 0');
 CALL __add_column('cd_deploy_logs', 'stage_times', 'TEXT');
 CALL __add_column('cd_deploy_logs', 'lock_key', 'VARCHAR(255) DEFAULT NULL');
 CALL __add_column('cd_deploy_logs', 'params_json', 'TEXT');
+CALL __add_column('cd_deploy_logs', 'rollback_type', "VARCHAR(32) DEFAULT 'manual'");
+CALL __add_column('cd_deploy_logs', 'artifact_id', 'INT DEFAULT 0');
+CALL __add_column('cd_deploy_logs', 'artifact_digest', "VARCHAR(128) DEFAULT ''");
 
 -- 并发锁唯一索引（幂等）：lock_key=project 仅 running 记录非空，保证同项目至多一条 running
 DROP PROCEDURE IF EXISTS __add_unique_index;
