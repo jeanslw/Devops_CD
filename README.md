@@ -1,4 +1,4 @@
-# Devops-Glue CD
+# Devops-Glue CD  <img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release">
 A FastAPI-based continuous deployment service that works alongside [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) to deploy Harbor images to Docker or Kubernetes clusters. Crafted from 10+ years of real-world operations experience.
 
 > **Not an enterprise-scale control plane — a battle-tested Swiss Army knife for lean teams.**
@@ -7,7 +7,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 
 <p align="center">
   <a href="https://github.com/jeanslw/devops-glue"><img src="https://img.shields.io/badge/relyon-Devops_Glue-green?logo=python" alt="relyon"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/releases/tag/v1.5.0"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/releases/tag/v1.5.1"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
   <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
   <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
