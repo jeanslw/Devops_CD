@@ -172,10 +172,19 @@ class KubectlDeployer(K8sSubDeployer):
                 if (
                     namespace
                     and manifest_ns
-                    and kind not in {
-                        "Namespace", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition",
-                        "Node", "PersistentVolume", "StorageClass", "MutatingWebhookConfiguration",
-                        "ValidatingWebhookConfiguration", "PriorityClass", "PodSecurityPolicy",
+                    and kind
+                    not in {
+                        "Namespace",
+                        "ClusterRole",
+                        "ClusterRoleBinding",
+                        "CustomResourceDefinition",
+                        "Node",
+                        "PersistentVolume",
+                        "StorageClass",
+                        "MutatingWebhookConfiguration",
+                        "ValidatingWebhookConfiguration",
+                        "PriorityClass",
+                        "PodSecurityPolicy",
                     }
                     and manifest_ns != namespace
                 ):

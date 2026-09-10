@@ -286,7 +286,9 @@ class TestArgoCD(unittest.TestCase):
             }
         }
         with (
-            patch("requests.get", side_effect=[_Resp(200, initial), _Resp(200, still_on_previous), _Resp(200, moved_away)]),
+            patch(
+                "requests.get", side_effect=[_Resp(200, initial), _Resp(200, still_on_previous), _Resp(200, moved_away)]
+            ),
             patch("requests.post", return_value=_Resp(200)),
             patch("time.sleep", return_value=None),
         ):
@@ -295,14 +297,19 @@ class TestArgoCD(unittest.TestCase):
 
     def test_requires_synced_status_before_marking_success(self):
         req = self._req()
-        app = {"spec": {"source": {"kustomize": {"images": []}}}, "status": {"health": {"status": "Healthy"}, "sync": {"status": "OutOfSync"}}}
+        app = {
+            "spec": {"source": {"kustomize": {"images": []}}},
+            "status": {"health": {"status": "Healthy"}, "sync": {"status": "OutOfSync"}},
+        }
         with (
             patch("requests.get", MagicMock(return_value=_Resp(200, app))),
             patch("requests.put", MagicMock(return_value=_Resp(200))),
             patch("requests.post", MagicMock(return_value=_Resp(200))),
             patch("time.sleep", return_value=None),
         ):
-            result = ArgoCDDeployer().deploy(req, "hub.example.com/repo/app:v1.0", "group/app", "argocd-host", pwd="token")
+            result = ArgoCDDeployer().deploy(
+                req, "hub.example.com/repo/app:v1.0", "group/app", "argocd-host", pwd="token"
+            )
         self.assertFalse(result["success"])
         self.assertIn("Sync status", result["output"])
 

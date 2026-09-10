@@ -128,7 +128,11 @@ class ArgoCDDeployer(K8sSubDeployer):
                 sync = a.get("status", {}).get("sync", {}).get("status", "")
                 revision = (
                     a.get("status", {}).get("sync", {}).get("revision")
-                    or a.get("status", {}).get("operationState", {}).get("operation", {}).get("sync", {}).get("revision")
+                    or a.get("status", {})
+                    .get("operationState", {})
+                    .get("operation", {})
+                    .get("sync", {})
+                    .get("revision")
                     or ""
                 )
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
@@ -270,7 +274,11 @@ class ArgoCDDeployer(K8sSubDeployer):
                 sync = a.get("status", {}).get("sync", {}).get("status", "")
                 revision = (
                     a.get("status", {}).get("sync", {}).get("revision")
-                    or a.get("status", {}).get("operationState", {}).get("operation", {}).get("sync", {}).get("revision")
+                    or a.get("status", {})
+                    .get("operationState", {})
+                    .get("operation", {})
+                    .get("sync", {})
+                    .get("revision")
                     or ""
                 )
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
@@ -284,7 +292,9 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_timeout"))
 
             if not success:
-                log(f"[argocd] Sync status={sync or 'Unknown'}; health={health or 'Unknown'}; revision={revision or 'Unknown'}")
+                log(
+                    f"[argocd] Sync status={sync or 'Unknown'}; health={health or 'Unknown'}; revision={revision or 'Unknown'}"
+                )
 
             return {"success": success, "output": "\n".join(output)}
         except Exception as e:
