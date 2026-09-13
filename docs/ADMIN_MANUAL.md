@@ -70,8 +70,13 @@ CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account /
 # ── SSH Auto-Trust (dev fallback, keep false in prod) ──
 SSH_AUTO_TRUST=false
 
-# ── Encryption Key (auto-generated on first run, DO NOT modify) ──
-ENCRYPTION_KEY=
+# ── Encryption key (openssl rand -base64 32; encrypts SSH passwords/private keys) ──
+# Empty = auto-generated on first run into .cd_secret_key (do not commit or delete).
+# Public sample values devops_cd_2026 / change_me_to_secret are rejected and replaced by a random key.
+SECRET_KEY=
+
+# ── Trusted reverse-proxy hops: 0=direct (default, ignore X-Forwarded-For); 1 behind nginx, increase per extra layer ──
+TRUSTED_PROXY_HOPS=0
 
 # ── SSH ──
 SSH_TIMEOUT=30
@@ -387,6 +392,8 @@ Deployments can be gated by an approval workflow. Rules are stored in `cd_approv
 
 When a deployment matches a rule, the backend creates a `cd_approvals` ticket (`pending`) and notifies approvers. The state machine is `pending → approved → deploying → deployed / failed`, plus `rejected` and `cancelled`. Approval is an atomic DB transition; execution runs in a background thread with a persistent queue, so an approved-but-not-yet-run deployment survives a restart.
 
+> **Four-eyes principle (since v1.5.2)**: a requester cannot approve or reject their own approval ticket (`super_admin` included); another user with approval permission must handle it. After approval, the deployment still executes automatically as the requester.
+
 ### Rollback (回滚)
 
 Rollback re-deploys a previous successful version. It is triggered from the deploy page and goes through the same approval gate (when enabled):
@@ -400,7 +407,7 @@ Rollback streams live logs over SSE (`POST /api/deploy/rollback-stream`). Legacy
 
 ### Password Encryption
 
-Server passwords and SSH private keys are encrypted with Fernet symmetric encryption. `ENCRYPTION_KEY` is auto-generated on first run and written to `.env`. **Do not modify** — existing encrypted data will become unreadable.
+Server passwords and SSH private keys are encrypted with Fernet symmetric encryption using the `SECRET_KEY` in `.env` (generate with `openssl rand -base64 32`). When empty, a key is auto-generated on first run into a `.cd_secret_key` file in the application directory (do not commit or delete it). Public sample values `devops_cd_2026` / `change_me_to_secret` are rejected and replaced by a random key. **Changing the key makes existing encrypted data undecryptable — server credentials must be re-entered.**
 
 ### User Roles
 

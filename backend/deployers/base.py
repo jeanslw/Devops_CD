@@ -27,6 +27,30 @@ def split_image_ref(image: str) -> tuple[str, str]:
     return repo, tag
 
 
+# OCI Distribution / Docker tag 规范：[A-Za-z0-9_][A-Za-z0-9._-]{0,127}
+# 所有部署器都必须在把 tag 拼进 shell 命令前过此校验（防御命令注入的第一道关）。
+_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
+
+
+class InvalidTag(ValueError):
+    """镜像 tag 不符合 OCI 命名规范（可能含 shell 元字符）。"""
+
+
+def validate_tag(tag: str) -> str:
+    """校验镜像 tag，合法则原样返回，非法抛 InvalidTag。
+
+    合法字符仅字母/数字/下划线/点/连字符，长度 1-128，首字符不能是点或连字符。
+    该集合天然不含任何 shell 元字符（空格 ; | & $ ` ' " \\ 等），
+    因此通过校验的 tag 拼入 ssh 命令不会产生注入。
+    """
+    if not isinstance(tag, str) or not _TAG_RE.match(tag):
+        raise InvalidTag(
+            "非法镜像 tag：仅允许字母、数字、下划线、点、连字符（1-128 位，"
+            "须以字母/数字/下划线开头），符合 OCI/Docker tag 规范"
+        )
+    return tag
+
+
 def _known_hosts_file() -> str:
     """返回 known_hosts 文件路径（固定在 ~/.cd_service/known_hosts）。"""
     cd_dir = os.path.join(os.path.expanduser("~"), ".cd_service")

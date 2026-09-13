@@ -1,9 +1,10 @@
-# Devops-Glue CD <img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release">
+# Devops-Glue CD
+
 FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/devops_glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。
 
 <p align="center">
   <a href="https://gitee.com/jeanslw/devops_glue"><img src="https://img.shields.io/badge/依赖-Devops_Glue-green?logo=python" alt="relyon"></a>
-  <a href="https://gitee.com/jeanslw/devops_cd/releases/tag/v1.5.1"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://gitee.com/jeanslw/devops_cd/releases/latest"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
   <a href="https://gitee.com/jeanslw/devops_cd"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
   <a href="https://fastapi.org.cn/"><img src="https://img.shields.io/badge/fastAPI-0.115.6+-777BB4?logo=fastAPI&logoColor=white" alt="framework"></a>
@@ -12,8 +13,8 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
   <a href="https://hub.docker.com/r/jeanslw/devops-cd/tags"><img src="https://img.shields.io/docker/v/jeanslw/devops-cd/latest?label=version&logo=docker" alt="docker"></a>
 </p>
 
-✅ 一套 API, 多 Git 平台 + 双 CI 通道 + Harbor → 全搞定
-✅ SQLite 零配置启动, MySQL (推荐) 也可切换
+✅ 一套 API, 多 Git 平台 + 多 CI 通道 + Harbor → 全搞定
+✅ SQLite 零配置启动, MySQL (推荐)
 ✅ 10 年运维老兵的实战结晶
 ✅ 从 CI 构建到 CD 部署, 全流程覆盖
 
@@ -55,6 +56,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # DB_DRIVER=sqlite（默认，需和 Devops-Glue API 指向同一个 .db 文件，如 ../php_api/config/data/data.db）
 # 或 DB_DRIVER=mysql（推荐，需和 Devops-Glue API 共用同一个库）
+# SECRET_KEY：留空自动生成 .cd_secret_key，生产建议填 openssl rand -base64 32（见 docs/ADMIN_MANUAL_ZH.md）
 
 python main.py
 # 访问 http://localhost:8081

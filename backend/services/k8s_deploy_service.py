@@ -24,6 +24,7 @@ from backend.deploy_run import (
     set_cancel_checker,
     start_deploy_record,
 )
+from backend.deployers.base import InvalidTag, validate_tag
 from backend.deployers.registry import deployer_registry
 from backend.exceptions import NotFoundError, ValidationError
 from backend.services.ci_service import CiService
@@ -88,6 +89,12 @@ def _deploy_k8s_core(
     rollback=True 时走 deployer 原生回滚（kubectl rollout undo / helm rollback），
     而非重放旧 tag 的普通部署。
     """
+    # ── tag 白名单（同步/流式/审批重放/回滚重放的统一收口）──
+    try:
+        validate_tag(req.tag)
+    except InvalidTag as e:
+        raise ValidationError(str(e), error_key="errors.deploy_validation") from e
+
     # ── 并发锁：同一项目同时只允许一个进行中部署 ──
     running = find_running_deploy(db, project_key)
     if running:

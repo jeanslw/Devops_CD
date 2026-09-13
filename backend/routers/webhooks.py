@@ -262,12 +262,12 @@ async def receive_webhook(
         body = await request.body()
         payload_str = body.decode("utf-8") if body else "{}"
 
-        # 存事件记录
-        conn.execute(
+        # 存事件记录（lastrowid 同时兼容 SQLite 与 pymysql，不能用 MySQL 专属的 LAST_INSERT_ID()）
+        cur = conn.execute(
             "INSERT INTO cd_webhook_events (webhook_id, payload) VALUES (?,?)",
             (wh["id"], payload_str),
         )
-        event_id = conn.execute("SELECT LAST_INSERT_ID() AS id").fetchone()["id"]
+        event_id = cur.lastrowid
 
         # 自动转发
         bot_id = wh["bot_id"]

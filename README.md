@@ -1,13 +1,10 @@
-# Devops-Glue CD  <img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release">
-A FastAPI-based continuous deployment service that works alongside [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) to deploy Harbor images to Docker or Kubernetes clusters. Crafted from 10+ years of real-world operations experience.
+# Devops-Glue CD
 
-> **Not an enterprise-scale control plane — a battle-tested Swiss Army knife for lean teams.**
->
-> One unified panel for multi-Git-platform CI pipelines, Harbor artifact management, and multi-mode CD deployment — no more switching between Gitee, Jenkins, and Harbor just to align a single image tag.
+A FastAPI-based continuous deployment service that works alongside [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) to deploy Harbor images to Docker or Kubernetes clusters. Crafted from 10+ years of real-world operations experience.
 
 <p align="center">
   <a href="https://github.com/jeanslw/devops-glue"><img src="https://img.shields.io/badge/relyon-Devops_Glue-green?logo=python" alt="relyon"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/releases/tag/v1.5.1"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
+  <a href="https://github.com/jeanslw/Devops_CD/releases/latest"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
   <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
   <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
@@ -15,6 +12,9 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
   <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5.0+-777BB4?logo=Vue&logoColor=white" alt="framework"></a>
   <a href="https://hub.docker.com/r/jeanslw/devops-cd/tags"><img src="https://img.shields.io/docker/v/jeanslw/devops-cd/latest?label=version&logo=docker" alt="docker"></a>
 </p>
+
+> One unified panel for multi-Git-platform CI pipelines, Harbor artifact management, and multi-mode CD deployment — no more switching between Gitee, Jenkins, and Harbor just to align a single image tag.
+> **Not an enterprise-scale control plane — a battle-tested Swiss Army knife for lean teams.**
 
 **[Chinese](README_ZH-CN.md)**
 
@@ -51,6 +51,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # DB_DRIVER=sqlite (default; must point to the same .db file as the PHP API, e.g. ../php_api/config/data/data.db)
 # or DB_DRIVER=mysql (recommended; must share the same database with the PHP API)
+# SECRET_KEY: leave empty to auto-generate .cd_secret_key, or set openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
 
 python main.py
 # Open http://localhost:8081

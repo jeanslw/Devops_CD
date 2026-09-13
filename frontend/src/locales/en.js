@@ -779,6 +779,7 @@ export default {
     service_unavailable: 'Service unavailable',
     database: 'Database error',
     invalid_credentials: 'Invalid credentials',
+    login_locked: 'Too many failed logins, locked for 15 minutes',
     server_exists: 'Server "{name}" already exists',
     server_not_found: 'Server not found',
     select_server: 'Please select a target server',
@@ -835,6 +836,7 @@ export default {
     deploy_validation: 'Deploy parameters invalid',
     deploy_busy: 'Another deployment is in progress for this project, please wait or cancel it first',
     approval_not_found: 'Approval request not found',
+    self_approval_forbidden: 'You cannot approve or reject a deployment request submitted by yourself; please ask another approver',
     rollback_not_found: 'No version to rollback (a successful deployment record is required)',
     rollback_unsupported: 'This deployment record lacks the params snapshot required for rollback',
     // ── Registry ──

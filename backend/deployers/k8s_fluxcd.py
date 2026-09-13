@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shlex
 
 from backend.config import settings
@@ -35,9 +36,13 @@ def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
 
 def _discover_flux_resource(ssh, project_fallback, image_name):
     """发现 Flux CD 资源名（HelmRelease / Kustomization），不盲猜等于项目名"""
+    ns_q = shlex.quote(settings.flux_namespace)
     # 先尝试精确匹配
     for kind in ("helmrelease", "kustomization"):
-        r = _ssh_cmd(ssh, f"kubectl get {kind} {project_fallback} -n {settings.flux_namespace} -o name 2>/dev/null")
+        r = _ssh_cmd(
+            ssh,
+            f"kubectl get {shlex.quote(kind)} {shlex.quote(project_fallback)} -n {ns_q} -o name 2>/dev/null",
+        )
         if r:
             return project_fallback, kind
 
@@ -45,7 +50,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
     for kind in ("helmrelease", "kustomization"):
         r = _ssh_cmd(
             ssh,
-            f"kubectl get {kind} -n {settings.flux_namespace} -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null",
+            f"kubectl get {shlex.quote(kind)} -n {ns_q} -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null",
         )
         if not r:
             continue
@@ -53,7 +58,9 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
             name = name.strip()
             if not name:
                 continue
-            spec = _ssh_cmd(ssh, f"kubectl get {kind} {name} -n {settings.flux_namespace} -o yaml 2>/dev/null")
+            spec = _ssh_cmd(
+                ssh, f"kubectl get {shlex.quote(kind)} {shlex.quote(name)} -n {ns_q} -o yaml 2>/dev/null"
+            )
             if (image_name and image_name in spec) or project_fallback in spec:
                 return name, kind
 
@@ -78,7 +85,10 @@ class FluxCDDeployer(K8sSubDeployer):
             if not flux_kind:
                 ssh.close()
                 return {"success": False, "output": f"Flux resource not found: {project}"}
-            cmd = f"flux suspend {flux_kind} {flux_name} -n {settings.flux_namespace}"
+            cmd = (
+                f"flux suspend {shlex.quote(flux_kind)} {shlex.quote(flux_name)} "
+                f"-n {shlex.quote(settings.flux_namespace)}"
+            )
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
             return {"success": ec == 0, "output": (err or out)[: settings.log_truncate_chars]}
@@ -97,10 +107,15 @@ class FluxCDDeployer(K8sSubDeployer):
             """检查 Flux 资源 (HelmRelease/Kustomization) 是否报错。返回错误描述或 None"""
             if resource_kind not in ("helmrelease", "kustomization"):
                 return None
+            jsonpath = (
+                '{.status.conditions[?(@.type=="Ready")].status}|'
+                '{.status.conditions[?(@.type=="Ready")].reason}|'
+                '{.status.conditions[?(@.type=="Ready")].message}'
+            )
             raw = _ssh_cmd(
                 ssh,
-                f"kubectl get {resource_kind} {resource_name} -n {settings.flux_namespace} "
-                f'-o jsonpath=\'{{.status.conditions[?(@.type=="Ready")].status}}|{{.status.conditions[?(@.type=="Ready")].reason}}|{{.status.conditions[?(@.type=="Ready")].message}}\' 2>/dev/null',
+                f"kubectl get {shlex.quote(resource_kind)} {shlex.quote(resource_name)} "
+                f"-n {shlex.quote(settings.flux_namespace)} -o jsonpath={shlex.quote(jsonpath)} 2>/dev/null",
             )
             if not raw or "|" not in raw:
                 return None
@@ -265,10 +280,13 @@ class FluxCDDeployer(K8sSubDeployer):
 
             # 5. 用 deployment 名进行 rollout status（从集群提取，不盲猜）
             rollout_result = ""
+            # flux_name 可能来自项目名（请求参数），正则元字符与 shell 元字符都要转义
+            pat1 = shlex.quote(f"^{re.escape(flux_name)}-")
+            pat2 = shlex.quote(re.escape(flux_name))
             deploy_name = _ssh_cmd(
                 ssh,
-                f"kubectl get deploy -o name 2>/dev/null | grep -E '^{flux_name}-' | head -1 | cut -d'/' -f2 || "
-                f"kubectl get deploy -o name 2>/dev/null | grep '{flux_name}' | head -1 | cut -d'/' -f2",
+                f"kubectl get deploy -o name 2>/dev/null | grep -E {pat1} | head -1 | cut -d'/' -f2 || "
+                f"kubectl get deploy -o name 2>/dev/null | grep -E {pat2} | head -1 | cut -d'/' -f2",
             )
             if deploy_name:
                 _log(callback, S("deploy_log.flux_rollout", deploy=deploy_name))

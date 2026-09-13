@@ -20,6 +20,7 @@ from backend.deploy_run import (
     start_deploy_record,
 )
 from backend.deployers import DeployTarget, deployer_registry
+from backend.deployers.base import validate_tag
 
 from .ci_service import CiService
 from .notification import notify_deploy
@@ -140,6 +141,8 @@ class DeployService:
         # ── 部署时二次权限校验（防御深度）──
         if user is not None:
             enforce_deploy_perm(user, deploy_type)
+        # ── tag 白名单校验（必须在任何 SSH 命令拼接之前；非法 tag 直接拒绝）──
+        validate_tag(tag)
         triggered_by = (user or {}).get("username", "")
 
         harbor_repo = self._ci.resolve_harbor_repo(project)

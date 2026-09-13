@@ -12,6 +12,7 @@ node_modules/
 __pycache__/
 .codebuddy/
 .workflow/
+start.bat
 
 # IDE
 .vscode/
