@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from backend.auth import enforce_deploy_perm, get_db, require_perm
 from backend.config import settings
 from backend.database import Database
+from backend.deployers.base import InvalidTag, validate_tag
 from backend.exceptions import AppException, ValidationError
 from backend.services.approval_service import gate_deploy
 from backend.services.deploy_executor import k8s_params
@@ -263,6 +264,11 @@ def deploy_k8s(
     user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     enforce_deploy_perm(user, "k8s", req.cd_type)
+    # tag 白名单：非法 tag 直接拒绝，不创建审批单、不执行远端命令
+    try:
+        validate_tag(req.tag)
+    except InvalidTag as e:
+        raise ValidationError(str(e), error_key="errors.deploy_validation") from e
     # 审批闸门：需审批则创建审批单并返回 pending，不执行
     gate = gate_deploy(
         db,
@@ -297,6 +303,11 @@ async def deploy_k8s_stream(
 ):
     """K8S 实时部署（SSE 流式推送）"""
     enforce_deploy_perm(user, "k8s", req.cd_type)
+    # tag 白名单：非法 tag 直接拒绝，不创建审批单、不执行远端命令
+    try:
+        validate_tag(req.tag)
+    except InvalidTag as e:
+        raise ValidationError(str(e), error_key="errors.deploy_validation") from e
     # 审批闸门：需审批则以 PENDING 事件结束流，前端引导去审批
     gate = gate_deploy(
         db,

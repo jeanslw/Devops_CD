@@ -10,6 +10,7 @@ from backend.crypto import decrypt
 from backend.database import Database
 from backend.deploy_run import mark_deploy_cancelled
 from backend.deployers import DeployTarget
+from backend.deployers.base import InvalidTag, validate_tag
 from backend.deployers.registry import deployer_registry
 from backend.exceptions import NotFoundError, ValidationError
 from backend.models import CancelRequest, DeployRequest
@@ -35,6 +36,11 @@ def deploy(
         )
     # 按具体 deploy_type 做二次权限校验（防御深度：service 层也会再查一次）
     enforce_deploy_perm(user, req.deploy_type)
+    # tag 白名单：在创建审批单/执行任何远端命令之前拒绝非法 tag
+    try:
+        validate_tag(req.tag)
+    except InvalidTag as e:
+        raise ValidationError(str(e), error_key="errors.deploy_validation") from e
     # 审批闸门：需审批则创建审批单并返回 pending，不执行
     gate = gate_deploy(
         db,
@@ -195,6 +201,11 @@ async def deploy_stream(
 
         return StreamingResponse(_err(), media_type="text/event-stream")
     enforce_deploy_perm(user, req.deploy_type)
+    # tag 白名单：非法 tag 直接拒绝，不创建审批单、不执行远端命令
+    try:
+        validate_tag(req.tag)
+    except InvalidTag as e:
+        raise ValidationError(str(e), error_key="errors.deploy_validation") from e
     # 审批闸门：需审批则以 PENDING 事件结束流，前端引导去审批
     gate = gate_deploy(
         db,

@@ -2,12 +2,52 @@
 # 数据库推荐 MySQL / MariaDB，和 PHP 端共用 devops_glue 库
 
 services:
+  # 启动前环境变量预检（一次性容器，复用 devops-cd 镜像不增加额外构建）：
+  # MySQL 模式缺少连接必填项时输出中英双语指引并中止，避免 uvicorn 启动后抛英文连接堆栈。
+  env-check:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: devops-cd:latest
+    container_name: devops-cd-env-check
+    restart: "no"
+    entrypoint: ["python", "-c"]
+    environment:
+      PYTHONIOENCODING: utf-8
+      DB_DRIVER: ${DB_DRIVER:-sqlite}
+      DB_HOST: ${DB_HOST:-}
+      DB_USER: ${DB_USER:-}
+      DB_PASS: ${DB_PASS:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+    command:
+      - |
+        import os, sys
+        driver = os.getenv('DB_DRIVER', 'sqlite')
+        if driver == 'mysql':
+            missing = [n for n in ('DB_HOST', 'DB_USER', 'DB_PASS') if not os.getenv(n)]
+            if missing:
+                print('[启动中止] DB_DRIVER=mysql 时必须在 .env 配置：' + '、'.join(missing))
+                print('[ABORT] DB_DRIVER=mysql requires these .env entries: ' + ', '.join(missing))
+                print('           与 Devops-Glue 联合部署时，账号口令应与 CI 根 .env 的 DB_USER/DB_PASS 一致。')
+                print('           When deployed together with Devops-Glue, use the same DB_USER/DB_PASS as in the CI root .env.')
+                print('------------------------------------------------------------------------')
+                print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
+                sys.exit(1)
+        if not os.getenv('SECRET_KEY'):
+            print('[提示 / NOTE] SECRET_KEY 未配置：首次运行将自动生成 .cd_secret_key（容器重建会丢失）；')
+            print('       SECRET_KEY is unset: .cd_secret_key is auto-generated on first run (lost when the container is recreated);')
+            print('       生产环境建议在 .env 设置固定值 / for production set a fixed value in .env: openssl rand -base64 32')
+        print('[预检通过 / PASS] 启动配置检查完成 / Startup configuration check passed')
+
   devops-cd:
     build:
       context: .
       dockerfile: Dockerfile
     image: devops-cd:latest
     container_name: devops-cd
+    depends_on:
+      env-check:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:

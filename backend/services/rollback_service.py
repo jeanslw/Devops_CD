@@ -11,6 +11,7 @@ v1.5.0 新增。回滚分两类（按部署模式区分，均走审批闸门 + �
 import json
 import logging
 
+from backend.deployers.base import InvalidTag, validate_tag
 from backend.exceptions import NotFoundError, ValidationError
 from backend.services.approval_service import gate_deploy
 from backend.services.deploy_executor import execute_from_params
@@ -100,6 +101,13 @@ def prepare_rollback(
         mode = ref["deploy_type"] or ""
 
     native = mode in ("k8s/kubectl", "k8s/helm", "k8s/argocd")
+
+    # 用户手工指定的回滚 tag 必须过同一白名单（历史记录重放的 tag 在部署时已校验）
+    if tag:
+        try:
+            validate_tag(tag)
+        except InvalidTag as e:
+            raise ValidationError(str(e), error_key="errors.deploy_validation") from e
 
     if tag:
         # 指定 tag → 重放：以被回滚记录为上下文（默认该模式最新成功记录），替换 tag

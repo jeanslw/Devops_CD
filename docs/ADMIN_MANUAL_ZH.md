@@ -69,8 +69,13 @@ CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/�
 # ── SSH 自动信任（开发环境 fallback，生产保持 false）──
 SSH_AUTO_TRUST=false
 
-# ── 加密密钥（首次运行自动生成，勿修改）──
-ENCRYPTION_KEY=
+# ── 加密密钥（openssl rand -base64 32；用于加密 SSH 口令/私钥）──
+# 留空时首次运行自动生成并写入 .cd_secret_key 文件（勿提交、勿删除）；
+# 公开示例值 devops_cd_2026 / change_me_to_secret 会被拒绝并回退随机密钥。
+SECRET_KEY=
+
+# ── 可信反向代理跳数：0=直连（默认，忽略 X-Forwarded-For）；前置 nginx 设 1，多层递增 ──
+TRUSTED_PROXY_HOPS=0
 
 # ── SSH ──
 SSH_TIMEOUT=30
@@ -386,6 +391,8 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 命中规则的部署会生成 `cd_approvals` 审批单（`pending`）并通知审批人。审批状态机为 `pending → approved → deploying → deployed / failed`，另有 `rejected`、`cancelled`。批准是原子落库迁移；执行由后台线程完成，并带持久化队列，进程重启后已批准未执行的审批单不会丢失。
 
+> **四眼原则（v1.5.2 起）**：申请人不能批准或驳回自己发起的审批单（`super_admin` 也不例外），必须由另一位具备审批权限的用户处理；批准后仍以申请人身份自动执行部署。
+
 ### 回滚
 
 回滚用于重新部署上一版成功版本。从部署页触发，同样经过审批闸门（若启用）：
@@ -399,7 +406,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 ### 密码加密
 
-服务器密码和 SSH 私钥通过 Fernet 对称加密存储。`ENCRYPTION_KEY` 首次运行时自动生成并写入 `.env`，**请勿修改**，否则已加密数据无法解密。
+服务器密码和 SSH 私钥通过 Fernet 对称加密存储，密钥来自 `.env` 的 `SECRET_KEY`（建议 `openssl rand -base64 32`）。留空时自动生成并写入程序目录下的 `.cd_secret_key` 文件（该文件勿提交、勿删除）。公开示例值 `devops_cd_2026` / `change_me_to_secret` 会被拒绝并回退随机密钥。**密钥变更后存量加密数据将解密失败，需重新录入服务器凭据**。
 
 ### 用户角色
 

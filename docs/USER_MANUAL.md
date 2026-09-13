@@ -41,7 +41,7 @@ CD Panel (this project)
 |------|------|-------------|
 | SSH (single host) | Custom Command | Shell script with `{image}` `{tag}` `{project}` placeholders |
 | SSH (single host) | Ansible Playbook | `ansible-playbook -e image={image} -e tag={tag}` |
-| Docker Compose | Remote YAML | `cd {path} && IMAGE={image} TAG={tag} docker compose up -d` |
+| Docker Compose | Remote YAML | Rewrite `IMAGE`/`TAG` in the remote `.env` → `cd {path} && docker compose up -d` |
 | Docker Compose | Inline YAML | SFTP upload compose YAML → auto-create dir → startup |
 | K8s kubectl | SSH apply | SSH to master → `kubectl apply -f` |
 | K8s Helm | SSH kubectl | `helm upgrade --install` + version verification |

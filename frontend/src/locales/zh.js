@@ -779,6 +779,7 @@ export default {
     service_unavailable: '服务不可用',
     database: '数据库错误',
     invalid_credentials: '账号或密码错误',
+    login_locked: '登录失败次数过多，账户已锁定 15 分钟，请稍后再试',
     server_exists: '服务器 "{name}" 已存在',
     server_not_found: '服务器不存在',
     select_server: '请选择目标服务器',
@@ -835,6 +836,7 @@ export default {
     deploy_validation: '部署参数无效',
     deploy_busy: '该项目已有部署进行中，请等待完成或取消后再试',
     approval_not_found: '审批单不存在',
+    self_approval_forbidden: '申请人不能审批或驳回自己发起的部署单，请由其他审批人处理',
     rollback_not_found: '无可回滚的版本（需存在成功部署记录）',
     rollback_unsupported: '该部署记录缺少回滚所需参数快照',
     // ── 镜像仓库 ──

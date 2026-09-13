@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8081
 
+    # ── 反向代理可信跳数（可选，默认 0）──
+    # 0 = 不信任 X-Forwarded-For，客户端 IP 取 TCP 对端（直连暴露时必须保持 0）；
+    # 服务位于 nginx 等反向代理之后时设为 1（多层代理按实际层数增大），
+    # 系统会从 XFF 右端取真实客户端 IP，用于登录失败锁定（与 CI 共享计数）。
+    trusted_proxy_hops: int = 0
+
     # ── 角色（仅用于 admin_users.role 字段校验，权限判断已迁移至 roles/permissions/role_permissions 表）──
     # 超级管理员角色名：唯一可以创建/删除/修改管理员账号的角色
     super_admin_role: str = "super_admin"

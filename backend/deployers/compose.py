@@ -6,7 +6,16 @@ import shlex
 from backend.config import settings
 from backend.deploy_log import S
 
-from .base import Deployer, DeployResult, DeployTarget, _exec_on, split_image_ref, ssh_exec_stream, ssh_session
+from .base import (
+    Deployer,
+    DeployResult,
+    DeployTarget,
+    _exec_on,
+    split_image_ref,
+    ssh_exec_stream,
+    ssh_session,
+    validate_tag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,9 @@ class ComposeDeployer(Deployer):
 
         mode = target.mode or "remote"
         image_name = split_image_ref(image)[0]  # hub.abc.com/project/app
+        # 防御性再校验一次：tag 必须符合 OCI 白名单（正常路径已在 service/路由层校验，
+        # 此处兜底，保证任何调用方进入 shell 拼接前 tag 都不含元字符）
+        validate_tag(tag)
 
         # ── commands 模式：纯透传，不做任何 compose/docker 假设 ──
         if mode == "commands":
@@ -99,15 +111,19 @@ class ComposeDeployer(Deployer):
                     env_flag = ""
                 env_file_q = shlex.quote(env_file)
 
-                # sed 只替换 IMAGE/TAG 行（# 分隔符避免镜像名 / 冲突），不存在则追加
-                env_update = (
-                    f"cd {path_q} && "
-                    f'sed -i "s#^IMAGE=.*#IMAGE={image_name}#" {env_file_q} && '
-                    f"grep -q '^IMAGE=' {env_file_q} || echo \"IMAGE={image_name}\" >> {env_file_q} && "
-                    f'sed -i "s#^TAG=.*#TAG={tag}#" {env_file_q} && '
-                    f"grep -q '^TAG=' {env_file_q} || echo \"TAG={tag}\" >> {env_file_q}"
-                )
-                self._ssh_run(ssh, env_update, image)
+                # 安全重写 .env：剔除旧 IMAGE/TAG 行后用 printf 追加新值。
+                # 镜像名/tag 一律经 shlex.quote（tag 另已过 OCI 白名单），
+                # 不使用 sed/echo 插值，杜绝任意命令注入。
+                def _rewrite_env(image_ref: str) -> str:
+                    payload = shlex.quote(f"IMAGE={image_ref}\nTAG={tag}\n")
+                    return (
+                        f"cd {path_q} && touch {env_file_q} && "
+                        f"(grep -v -e '^IMAGE=' -e '^TAG=' {env_file_q} 2>/dev/null || true) > {env_file_q}.tmp && "
+                        f"printf %s {payload} >> {env_file_q}.tmp && "
+                        f"mv {env_file_q}.tmp {env_file_q}"
+                    )
+
+                self._ssh_run(ssh, _rewrite_env(image_name), image)
 
                 # 验证 .env 写入成功（直接看 stdout，忽略 stderr）
                 out, _, _ = _exec_on(ssh, f"cd {path_q} && cat {env_file_q}")
@@ -127,7 +143,8 @@ class ComposeDeployer(Deployer):
                 def _image_exists(img):
                     r = self._ssh_run(
                         ssh,
-                        f"docker image inspect {img}:{tag} > /dev/null 2>&1 && echo 'EXISTS' || echo 'NOT_FOUND'",
+                        f"docker image inspect {shlex.quote(img + ':' + tag)} > /dev/null 2>&1 "
+                        "&& echo 'EXISTS' || echo 'NOT_FOUND'",
                         img,
                     )
                     return r.output.strip() == "EXISTS"
@@ -137,7 +154,8 @@ class ComposeDeployer(Deployer):
                     # 不过滤 stderr，方便排查 manifest inspect 失败原因
                     r = self._ssh_run(
                         ssh,
-                        f"timeout 10 docker manifest inspect {img}:{tag} 2>&1 | grep -oE 'sha256:[a-f0-9]{{64}}' | head -1",
+                        f"timeout 10 docker manifest inspect {shlex.quote(img + ':' + tag)} 2>&1 "
+                        "| grep -oE 'sha256:[a-f0-9]{64}' | head -1",
                         img,
                     )
                     d = r.output.strip()
@@ -146,7 +164,10 @@ class ComposeDeployer(Deployer):
                 def _local_has_digest(img, digest):
                     """本地镜像是否包含指定的 registry digest"""
                     r = self._ssh_run(
-                        ssh, f"docker image inspect {img}:{tag} --format '{{{{.RepoDigests}}}}' 2>/dev/null", img
+                        ssh,
+                        f"docker image inspect {shlex.quote(img + ':' + tag)} "
+                        "--format '{{.RepoDigests}}' 2>/dev/null",
+                        img,
                     )
                     return f"@{digest}" in r.output
 
@@ -188,7 +209,7 @@ class ComposeDeployer(Deployer):
                     self._log(callback, S("deploy_log.pulling_image"))
                     pull_text, _ = self._ssh_exec_stream(
                         ssh,
-                        f"cd {path_q} && COLUMNS=512 timeout 600 docker-compose pull {project_short} 2>&1",
+                        f"cd {path_q} && COLUMNS=512 timeout 600 docker-compose pull {shlex.quote(project_short)} 2>&1",
                         callback,
                     )
                 else:
@@ -198,16 +219,13 @@ class ComposeDeployer(Deployer):
                 # 4c. 私有仓库失败 → 回退 Docker Hub
                 if not pull_ok and is_private:
                     self._log(callback, S("deploy_log.fallback_dockerhub", image=dh_image))
-                    self._ssh_run(
-                        ssh,
-                        f'cd {path_q} && sed -i "s#^IMAGE=.*#IMAGE={dh_image}#" {env_file_q} && grep -q \'^IMAGE=\' {env_file_q} || echo "IMAGE={dh_image}" >> {env_file_q}',
-                        image,
-                    )
+                    # 与主路径相同的安全写法重写 .env（仅镜像名换为 Docker Hub，tag 保持不变）
+                    self._ssh_run(ssh, _rewrite_env(dh_image), image)
                     if _needs_pull(dh_image):
                         self._log(callback, S("deploy_log.pulling_image"))
                         dh_pull, _ = self._ssh_exec_stream(
                             ssh,
-                            f"cd {path_q} && COLUMNS=512 timeout 600 docker-compose pull {project_short} 2>&1",
+                            f"cd {path_q} && COLUMNS=512 timeout 600 docker-compose pull {shlex.quote(project_short)} 2>&1",
                             callback,
                         )
                         pull_text += "\n" + dh_pull
@@ -232,13 +250,14 @@ class ComposeDeployer(Deployer):
                 img_status = ""
                 try:
                     inspect_image = dh_image if _image_exists(dh_image) else image_name
+                    inspect_q = shlex.quote(inspect_image)
                     dig, _, _ = _exec_on(
-                        ssh, f"docker image inspect --format '{{{{index .RepoDigests 0}}}}' {inspect_image} 2>/dev/null"
+                        ssh, f"docker image inspect --format '{{{{index .RepoDigests 0}}}}' {inspect_q} 2>/dev/null"
                     )
                     if dig.strip():
                         img_digest = dig.strip()
                     tag_full, _, _ = _exec_on(
-                        ssh, f"docker image inspect --format '{{{{index .RepoTags 0}}}}' {inspect_image} 2>/dev/null"
+                        ssh, f"docker image inspect --format '{{{{index .RepoTags 0}}}}' {inspect_q} 2>/dev/null"
                     )
                     if tag_full.strip():
                         img_status = tag_full.strip()
@@ -262,7 +281,8 @@ class ComposeDeployer(Deployer):
                 self._log(callback, S("deploy_log.checking_version"))
                 before = self._ssh_run(
                     ssh,
-                    f"cd {path_q} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
+                    f"cd {path_q} && docker-compose ps -q 2>/dev/null | xargs docker inspect "
+                    f"--format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F -- {shlex.quote(project_short)}",
                     image,
                 )
                 self._log(callback, S("deploy_log.current_version"))
@@ -272,7 +292,7 @@ class ComposeDeployer(Deployer):
                 self._log(callback, S("deploy_log.starting_deploy"))
                 deploy_text, _ = self._ssh_exec_stream(
                     ssh,
-                    f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {project_short} 2>&1",
+                    f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {shlex.quote(project_short)} 2>&1",
                     callback,
                 )
 
@@ -282,13 +302,14 @@ class ComposeDeployer(Deployer):
 
                 running = self._ssh_run(
                     ssh,
-                    f"cd {path_q} && docker-compose ps -q 2>/dev/null | xargs docker inspect --format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
+                    f"cd {path_q} && docker-compose ps -q 2>/dev/null | xargs docker inspect "
+                    f"--format '{{{{.Name}}}} {{{{.Config.Image}}}}' 2>/dev/null | grep -F -- {shlex.quote(project_short)}",
                     image,
                 )
                 if not running.output.strip():
                     running = self._ssh_run(
                         ssh,
-                        f"docker ps --format '{{{{.Names}}}} {{{{.Image}}}}' 2>/dev/null | grep -F '{project_short}'",
+                        f"docker ps --format '{{{{.Names}}}} {{{{.Image}}}}' 2>/dev/null | grep -F -- {shlex.quote(project_short)}",
                         image,
                     )
 

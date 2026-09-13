@@ -1,5 +1,23 @@
 # 更新日志
 
+## v1.5.2 (2026-09-13) — 安全加固版本（配套 Devops-Glue v2.8.1）
+
+### 安全
+- **所有部署入口增加镜像 tag 白名单**：tag 必须匹配 `^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`（符合 OCI 规范），非法 tag 在执行任何远程命令前返回 400。覆盖 Compose、SSH、kubectl/Helm/FluxCD 的 K8s 部署（含 `/deploy-k8s` 与流式变体）以及手工指定 tag 的回滚。注意：历史上的非法 tag（空格、分号等）此后会被拒绝。
+- **消除 Compose 部署器命令注入**：远程 `.env` 更新不再使用 `sed`/`echo` 插值，改为 `touch` + `grep -v` 删除旧 `IMAGE`/`TAG` 行 + `printf`（`shlex.quote`）重写；`docker image inspect/manifest/pull`、`compose up/ps`、`grep` 全部参数化引用，grep 加 `--`。FluxCD 调用（namespace 发现、`flux suspend`、jsonpath、grep 模式）同样全部 quote。
+- **共享登录失败锁定**：登录接入与 Devops-Glue CI 同一把锁——5 次失败 / 15 分钟，共享 `cache` 表，键为 `login_fail_`+md5(ip:lower(用户名))（HTTP 429，`errors.login_locked`）；验密前先查锁，停用/无 CD 权限等失败同样计数，登录成功清零。
+- **移除可伪造的 X-Forwarded-For 信任**：新增 `TRUSTED_PROXY_HOPS` 配置（默认 `0` = 忽略 XFF、只用 TCP 对端）；hops>0 且对端为环回/私网/链路本地时，按跳数从 XFF 右端取真实 IP，防止伪造 XFF 绕过锁定、污染审计 IP。
+- **审批四眼原则**：申请人不能批准或驳回自己发起的审批单（`super_admin` 也不例外，403 `errors.self_approval_forbidden`），必须由另一位审批人处理；批准后仍以申请人身份自动执行。
+- **拒绝公开弱 SECRET_KEY**：`devops_cd_2026` 与 `change_me_to_secret` 一律视为未配置并回退随机密钥，`.env.example` 不再提供默认密钥。使用过示例密钥的部署升级后需重新录入已加密的 SSH 口令/私钥。
+
+### 变更
+- webhook 事件入库不再使用 MySQL 的 `LAST_INSERT_ID()`，改读插入游标 `lastrowid`，修复 SQLite 下 webhook 写入失败。
+- 空/纯空白用户名登录直接按凭据错误拒绝，不查锁、不计数，避免共享 `md5(ip+":")` 桶。
+- 前端中英文语言包新增 `errors.login_locked`、`errors.self_approval_forbidden`，后端错误键已与语言包完全对齐。
+- 新增 `env-check` 一次性预检容器：`DB_DRIVER=mysql` 时若缺少 `DB_HOST`/`DB_USER`/`DB_PASS`，在 uvicorn 启动前以中英双语提示并中止；`SECRET_KEY` 未配置时输出双语提醒（仍可使用自动生成的兜底密钥）。
+
+---
+
 ## v1.5.1 (2026-09-10) — 对齐 Devops-Glue v2.8.0 的共享库校验
 
 ### 变更

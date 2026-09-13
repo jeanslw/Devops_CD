@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.5.2 (2026-09-13) — Security hardening release (paired with Devops-Glue v2.8.1)
+
+### Security
+- **Image tag allowlist on every deploy entrypoint**: tags must now match `^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$` (OCI-compatible); invalid tags are rejected with 400 before any remote command runs. Covers Compose, SSH, kubectl/Helm/FluxCD K8s deploys (both `/deploy-k8s` and streaming variants), and manual-tag rollback. Note: historically malformed tags (spaces, semicolons, …) will now be refused.
+- **Command injection eliminated in the Compose deployer**: remote `.env` updates no longer use `sed`/`echo` interpolation — the file is rewritten via `touch` + `grep -v` of old `IMAGE`/`TAG` lines + `printf` with `shlex.quote`; all `docker image inspect/manifest/pull`, `compose up/ps` and `grep` arguments are quoted and `grep` gets `--`. FluxCD invocations (namespace discovery, `flux suspend`, jsonpath, grep patterns) are now fully quoted as well.
+- **Shared login-failure lockout**: login is now guarded by the same lock as Devops-Glue CI — 5 failures / 15 minutes keyed by `login_fail_` + md5(ip:lower(username)) in the shared `cache` table (HTTP 429, `errors.login_locked`); lockout is checked before password verification, disabled/no-CD-access failures also count, and success clears the counter.
+- **Spoofable X-Forwarded-For removed**: new `TRUSTED_PROXY_HOPS` setting (default `0` = ignore XFF and use the TCP peer); with hops > 0 and a loopback/private/link-local peer, the real IP is taken from the rightmost XFF entry by hop count. This prevents forged XFF from bypassing the login lockout or polluting audit IPs.
+- **Four-eyes approval**: a requester can no longer approve or reject their own approval ticket — `super_admin` included (403, `errors.self_approval_forbidden`); another approver must handle it. Post-approval execution still runs as the requester.
+- **Weak public SECRET_KEY values rejected**: `devops_cd_2026` and `change_me_to_secret` are now treated as unconfigured and fall back to a generated key; `.env.example` ships no default secret. Deployments that used the sample key must re-enter encrypted SSH passwords/private keys after upgrading.
+
+### Changes
+- Webhook event persistence no longer uses MySQL `LAST_INSERT_ID()`; it reads the insert cursor's `lastrowid`, fixing webhook inserts on SQLite.
+- Empty/blank login usernames are rejected as invalid credentials without lock lookup or failure counting, preventing a shared `md5(ip+":")` bucket.
+- New i18n keys `errors.login_locked` and `errors.self_approval_forbidden` added to both frontend locales; backend error keys are now fully covered by the language packs.
+- New `env-check` one-shot preflight container: with `DB_DRIVER=mysql`, missing `DB_HOST`/`DB_USER`/`DB_PASS` aborts startup with bilingual (Chinese/English) guidance before uvicorn starts; an unset `SECRET_KEY` prints a bilingual advisory (auto-generated fallback still applies).
+
+---
+
 ## v1.5.1 (2026-09-10) — Align shared-DB check with Devops-Glue v2.8.0
 
 ### Changes

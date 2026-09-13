@@ -20,9 +20,11 @@ from unittest.mock import MagicMock, patch
 # 允许 `python backend/tests/test_deployers_mock.py` 直接运行时找到 backend 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+import shlex
+
 from backend.config import settings
 from backend.deploy_run import normalize_deploy_status, normalize_rollback_type
-from backend.deployers.base import DeployTarget, split_image_ref
+from backend.deployers.base import DeployTarget, InvalidTag, split_image_ref, validate_tag
 from backend.deployers.compose import ComposeDeployer
 from backend.deployers.k8s_argocd import ArgoCDDeployer
 from backend.deployers.k8s_fluxcd import _build_flux_image_patch, _discover_flux_resource
@@ -341,6 +343,112 @@ class TestFluxCD(unittest.TestCase):
         self.assertIn("hub.example.com/repo/app", str(patch_data))
         self.assertIn("newTag", str(patch_data))
         self.assertIn("v2.0", str(patch_data))
+
+
+# ─────────────────────────────────────────────────────────────
+# 镜像 tag 白名单（deployers/base.py）— 命令注入第一道关
+# ─────────────────────────────────────────────────────────────
+class TestTagValidation(unittest.TestCase):
+    VALID = ["v1.2.3", "V1.2.3", "123", "a-b_c.x", "release_2026.01.01", "a" * 128, "latest", "_x"]
+    INVALID = [
+        "",
+        "v1;id",          # 命令分隔
+        "$(id)",          # 命令替换
+        "a|whoami",       # 管道
+        "a`id`",          # 反引号
+        "v1 latest",      # 空格
+        "v1\nx",          # 换行
+        "-bad",           # 连字符开头
+        ".bad",           # 点开头
+        "../x",           # 路径穿越
+        "v1:latest",      # 冒号
+        "a" * 129,        # 超长
+        "ca#fe",          # #
+        "x=y",            # =
+    ]
+
+    def test_accepts_oci_tags(self):
+        for tag in self.VALID:
+            self.assertEqual(validate_tag(tag), tag, tag)
+
+    def test_rejects_shell_metachar_tags(self):
+        for tag in self.INVALID:
+            with self.assertRaises(InvalidTag, msg=tag):
+                validate_tag(tag)
+
+    def test_compose_rejects_malicious_tag_before_any_shell(self):
+        # commands 模式：validate_tag 在任何 SSH 会话建立之前就应拒绝
+        target = DeployTarget(
+            host="1.2.3.4", user="root", mode="commands", options={"commands": "echo hi"}
+        )
+        session = MagicMock()
+        with (
+            patch("backend.deployers.compose.ssh_session", return_value=session) as p,
+            self.assertRaises(InvalidTag),
+        ):
+            ComposeDeployer().deploy(target, "hub.example.com/app:bad;id", "group/app", "bad;id")
+        p.assert_not_called()
+
+    def test_compose_remote_env_rewrite_commands_no_sed(self):
+        """直接驱动 remote 流程断言 .env 重写命令内容（上一用例的可执行版本）。"""
+        settings.harbor_registry = ""
+        image_name = "hub.example.com/group/app"
+        tag = "v1.2.3"
+        project_short = "app"
+        state = {"exists": 0, "ps": 0}
+        captured = {}
+        stream_cmds = []
+
+        def handler(cmd):
+            if cmd.startswith("test -d"):
+                return ("OK", "", 0)
+            if "grep -v -e '^IMAGE='" in cmd:
+                captured["rewrite"] = cmd
+                return ("", "", 0)
+            if " cat " in cmd and ".env" in cmd:
+                return (f"IMAGE={image_name}\nTAG={tag}\n", "", 0)
+            if "manifest inspect" in cmd:
+                return ("", "", 0)
+            if "docker image inspect" in cmd and "echo 'EXISTS'" in cmd:
+                state["exists"] += 1
+                return ("EXISTS" if state["exists"] >= 2 else "NOT_FOUND", "", 0)
+            if "RepoDigests" in cmd or "RepoTags" in cmd:
+                return ("", "", 0)
+            if "xargs docker inspect" in cmd or "docker ps " in cmd:
+                state["ps"] += 1
+                return ("", "", 0) if state["ps"] == 1 else (f"{project_short} {image_name}:{tag}", "", 0)
+            return ("", "", 0)
+
+        fake = FakeSSH(handler)
+        session = MagicMock()
+        session.__enter__.return_value = fake
+        session.__exit__.return_value = False
+
+        def fake_stream(ssh, cmd, *a, **k):
+            stream_cmds.append(cmd)
+            return ("Started", 0)
+
+        target = DeployTarget(host="1.2.3.4", user="root", path="/srv/app")
+        with (
+            patch("backend.deployers.compose.ssh_session", return_value=session),
+            patch("backend.deployers.compose.ssh_exec_stream", side_effect=fake_stream),
+        ):
+            result = ComposeDeployer().deploy(
+                target, f"{image_name}:{tag}", "group/app", tag
+            )
+
+        self.assertEqual(result.status, "ok", result.output)
+        rewrite = captured["rewrite"]
+        # 必须用 printf 追加、grep 剔除旧行；不得出现 sed / echo 插值
+        self.assertIn("printf %s", rewrite)
+        self.assertIn("grep -v -e '^IMAGE=' -e '^TAG='", rewrite)
+        self.assertNotIn("sed", rewrite)
+        self.assertNotIn("echo IMAGE", rewrite)
+        self.assertNotIn("echo TAG", rewrite)
+        # IMAGE/TAG 内容经 shlex 处理（无特殊字符时 shlex.quote 原样返回）
+        self.assertIn(shlex.quote(f"IMAGE={image_name}\nTAG={tag}\n"), rewrite)
+        # pull/up 命令中 project 被引用
+        self.assertTrue(all(project_short in c for c in stream_cmds), stream_cmds)
 
 
 # ─────────────────────────────────────────────────────────────

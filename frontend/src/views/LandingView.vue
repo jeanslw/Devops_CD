@@ -52,7 +52,7 @@
       <a href="mailto:jeanslw@qq.com">{{ $t('landing.nav.support') }}</a>
       <template v-if="version">
         <span class="divider">|</span>
-        <span>v{{ version }}</span>
+        <span>version: v{{ version }}</span>
       </template>
     </footer>
   </div>

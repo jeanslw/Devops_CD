@@ -19,8 +19,18 @@ from backend.config import settings
 # 都不存在则生成新密钥并持久化到 .cd_secret_key（与数据库同目录）
 
 
+# 历史版本/配套仓库 .env(.example) 中出现过的公开示例值。所有照抄示例的部署共享同一把密钥，
+# 一旦库泄露即可批量解密所有服务器口令/私钥，因此把它视为“未配置”强制走随机密钥。
+_INSECURE_DEFAULT_KEYS = frozenset({"devops_cd_2026", "change_me_to_secret"})
+
+
 def _get_secret_key() -> bytes:
     raw = settings.secret_key.strip()
+    if raw in _INSECURE_DEFAULT_KEYS:
+        print("[WARN] SECRET_KEY 使用了公开的示例默认值，已忽略并改用随机密钥。")
+        print("[WARN] 请在 .env 中配置随机 SECRET_KEY（openssl rand -base64 32），")
+        print("[WARN]       否则已保存的服务器口令/私钥需要重新录入。")
+        raw = ""
     if raw:
         # 用户已配置：直接使用
         return _derive_key(raw)

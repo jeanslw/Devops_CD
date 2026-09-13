@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from backend.auth import load_user_context
 from backend.config import settings
 from backend.database import Database
-from backend.exceptions import NotFoundError
+from backend.exceptions import AppException, NotFoundError
 from backend.services.ci_service import CiService
 from backend.services.deploy_executor import execute_from_params
 from backend.services.notification import notify_approval
@@ -207,10 +207,23 @@ def can_cancel(approval: dict, user: dict) -> bool:
 # ── 审批动作 ──
 
 
+def _ensure_not_requester(approval: dict, user: dict) -> None:
+    """职责分离（四眼原则）：任何人（含 super_admin）都不能审批/驳回自己发起的部署单。"""
+    requester = (approval.get("requester") or "").strip()
+    current = (user.get("username") or "").strip()
+    if requester and current and requester == current:
+        raise AppException(
+            "申请人不能审批或驳回自己发起的部署单，请由其他审批人处理",
+            status_code=403,
+            error_key="errors.self_approval_forbidden",
+        )
+
+
 def approve(db, approval_id, user: dict) -> dict:
     approval = _get(db, approval_id)
     if not approval:
         raise NotFoundError("审批单不存在", error_key="errors.approval_not_found")
+    _ensure_not_requester(approval, user)
     rule = get_rule(db, approval["project"]) or {}
     if not can_approve(approval, rule, user):
         raise HTTPException(403, "无审批权限")
@@ -227,6 +240,7 @@ def reject(db, approval_id, user: dict, note: str = "") -> dict:
     approval = _get(db, approval_id)
     if not approval:
         raise NotFoundError("审批单不存在", error_key="errors.approval_not_found")
+    _ensure_not_requester(approval, user)
     rule = get_rule(db, approval["project"]) or {}
     if not can_approve(approval, rule, user):
         raise HTTPException(403, "无审批权限")

@@ -41,7 +41,7 @@ CD Panel (本项目)
 |----------|------|------|
 | SSH 单机 | 自定义命令 | Shell 脚本，支持 `{image}` `{tag}` `{project}` 占位符 |
 | SSH 单机 | Ansible Playbook | `ansible-playbook -e image={image} -e tag={tag}` |
-| Docker Compose | 远程 YAML | `cd {path} && IMAGE={image} TAG={tag} docker compose up -d` |
+| Docker Compose | 远程 YAML | 更新远程 `.env` 中的 `IMAGE`/`TAG` → `cd {path} && docker compose up -d` |
 | Docker Compose | 在线编写 | SFTP 上传 compose YAML → 自动建目录 → 启动 |
 | K8s kubectl | SSH apply | SSH 到 master 执行 `kubectl apply -f` |
 | K8s Helm | SSH kubectl | `helm upgrade --install` + 版本验证 |
