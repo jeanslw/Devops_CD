@@ -28,9 +28,11 @@ class TestLoginGuardRails(unittest.TestCase):
     def test_empty_username_rejected_without_lock_lookup_or_record(self):
         """空用户名：401 invalid_credentials，且不查锁/不计数（避免 md5(ip+':') 共享桶）。"""
         db = MagicMock()
-        with patch.object(auth_router, "is_login_locked") as locked, \
-             patch.object(auth_router, "record_login_failure") as record, \
-             patch("backend.auth.authenticate") as authenticate:
+        with (
+            patch.object(auth_router, "is_login_locked") as locked,
+            patch.object(auth_router, "record_login_failure") as record,
+            patch("backend.auth.authenticate") as authenticate,
+        ):
             with self.assertRaises(AppException) as ctx:
                 auth_router.login(LoginRequest(user="   ", password="x"), _req(), db)
         self.assertEqual(ctx.exception.status_code, 401)
@@ -41,8 +43,10 @@ class TestLoginGuardRails(unittest.TestCase):
 
     def test_missing_username_field_same_path(self):
         db = MagicMock()
-        with patch.object(auth_router, "record_login_failure") as record, \
-             patch("backend.auth.authenticate") as authenticate:
+        with (
+            patch.object(auth_router, "record_login_failure") as record,
+            patch("backend.auth.authenticate") as authenticate,
+        ):
             with self.assertRaises(AppException) as ctx:
                 auth_router.login(LoginRequest(user="", password=""), _req("8.8.8.8"), db)
         self.assertEqual(ctx.exception.status_code, 401)
@@ -52,9 +56,11 @@ class TestLoginGuardRails(unittest.TestCase):
     def test_locked_user_short_circuits_before_authenticate(self):
         """命中锁定：429 errors.login_locked，且不执行验密。"""
         db = MagicMock()
-        with patch.object(auth_router, "is_login_locked", return_value=True) as locked, \
-             patch.object(auth_router, "record_login_failure") as record, \
-             patch("backend.auth.authenticate") as authenticate:
+        with (
+            patch.object(auth_router, "is_login_locked", return_value=True) as locked,
+            patch.object(auth_router, "record_login_failure") as record,
+            patch("backend.auth.authenticate") as authenticate,
+        ):
             with self.assertRaises(AppException) as ctx:
                 auth_router.login(LoginRequest(user="Admin", password="x"), _req(), db)
         self.assertEqual(ctx.exception.status_code, 429)

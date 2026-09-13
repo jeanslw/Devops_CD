@@ -22,16 +22,20 @@ class TestInsecureDefaultKeys(unittest.TestCase):
     def test_insecure_value_falls_back_to_generated_file_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             key_file = Path(tmp) / ".cd_secret_key"
-            with patch.object(settings, "secret_key", "change_me_to_secret"), \
-                 patch.object(crypto, "_key_file_path", return_value=key_file):
+            with (
+                patch.object(settings, "secret_key", "change_me_to_secret"),
+                patch.object(crypto, "_key_file_path", return_value=key_file),
+            ):
                 derived = crypto._get_secret_key()
             # 必须落盘了随机密钥文件
             self.assertTrue(key_file.exists())
             # 派生结果不得等于该弱值直接派生的密钥
             self.assertNotEqual(derived, crypto._derive_key("change_me_to_secret"))
             # 再次读取应稳定复用文件中的密钥
-            with patch.object(settings, "secret_key", ""), \
-                 patch.object(crypto, "_key_file_path", return_value=key_file):
+            with (
+                patch.object(settings, "secret_key", ""),
+                patch.object(crypto, "_key_file_path", return_value=key_file),
+            ):
                 self.assertEqual(crypto._get_secret_key(), derived)
 
     def test_explicit_strong_key_still_used_directly(self):
