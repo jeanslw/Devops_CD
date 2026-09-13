@@ -58,9 +58,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
             name = name.strip()
             if not name:
                 continue
-            spec = _ssh_cmd(
-                ssh, f"kubectl get {shlex.quote(kind)} {shlex.quote(name)} -n {ns_q} -o yaml 2>/dev/null"
-            )
+            spec = _ssh_cmd(ssh, f"kubectl get {shlex.quote(kind)} {shlex.quote(name)} -n {ns_q} -o yaml 2>/dev/null")
             if (image_name and image_name in spec) or project_fallback in spec:
                 return name, kind
 

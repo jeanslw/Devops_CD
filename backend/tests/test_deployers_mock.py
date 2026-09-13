@@ -352,19 +352,19 @@ class TestTagValidation(unittest.TestCase):
     VALID = ["v1.2.3", "V1.2.3", "123", "a-b_c.x", "release_2026.01.01", "a" * 128, "latest", "_x"]
     INVALID = [
         "",
-        "v1;id",          # 命令分隔
-        "$(id)",          # 命令替换
-        "a|whoami",       # 管道
-        "a`id`",          # 反引号
-        "v1 latest",      # 空格
-        "v1\nx",          # 换行
-        "-bad",           # 连字符开头
-        ".bad",           # 点开头
-        "../x",           # 路径穿越
-        "v1:latest",      # 冒号
-        "a" * 129,        # 超长
-        "ca#fe",          # #
-        "x=y",            # =
+        "v1;id",  # 命令分隔
+        "$(id)",  # 命令替换
+        "a|whoami",  # 管道
+        "a`id`",  # 反引号
+        "v1 latest",  # 空格
+        "v1\nx",  # 换行
+        "-bad",  # 连字符开头
+        ".bad",  # 点开头
+        "../x",  # 路径穿越
+        "v1:latest",  # 冒号
+        "a" * 129,  # 超长
+        "ca#fe",  # #
+        "x=y",  # =
     ]
 
     def test_accepts_oci_tags(self):
@@ -378,9 +378,7 @@ class TestTagValidation(unittest.TestCase):
 
     def test_compose_rejects_malicious_tag_before_any_shell(self):
         # commands 模式：validate_tag 在任何 SSH 会话建立之前就应拒绝
-        target = DeployTarget(
-            host="1.2.3.4", user="root", mode="commands", options={"commands": "echo hi"}
-        )
+        target = DeployTarget(host="1.2.3.4", user="root", mode="commands", options={"commands": "echo hi"})
         session = MagicMock()
         with (
             patch("backend.deployers.compose.ssh_session", return_value=session) as p,
@@ -433,9 +431,7 @@ class TestTagValidation(unittest.TestCase):
             patch("backend.deployers.compose.ssh_session", return_value=session),
             patch("backend.deployers.compose.ssh_exec_stream", side_effect=fake_stream),
         ):
-            result = ComposeDeployer().deploy(
-                target, f"{image_name}:{tag}", "group/app", tag
-            )
+            result = ComposeDeployer().deploy(target, f"{image_name}:{tag}", "group/app", tag)
 
         self.assertEqual(result.status, "ok", result.output)
         rewrite = captured["rewrite"]
