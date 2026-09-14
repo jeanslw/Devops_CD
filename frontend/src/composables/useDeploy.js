@@ -113,10 +113,10 @@ export function useDeploy() {
     }
   }
 
-  function rollbackStream(project, lang = 'en', deployType = '', tag = '', opts = {}) {
+  function rollbackStream(project, lang = 'en', deployType = '', tag = '', note = '', opts = {}) {
     if (!project) return Promise.resolve(false)
     return stream('/api/deploy/rollback-stream', {
-      project, lang, deploy_type: deployType, tag
+      project, lang, deploy_type: deployType, tag, deploy_note: note
     }, opts)
   }
 

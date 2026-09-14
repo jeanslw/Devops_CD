@@ -99,7 +99,11 @@ class ArgoCDDeployer(K8sSubDeployer):
             prev = sorted_history[-2]
             prev_id = prev.get("id")
             prev_rev = prev.get("revision", "")
-            log(S("deploy_log.argocd_rollback_to", id=prev_id, revision=prev_rev))
+            rollback_summary = S("deploy_log.argocd_rollback_to", id=prev_id, revision=prev_rev)
+            # 目标版本说明结构性归入说明列（rollback_summary → deploy_note），不写入执行日志
+            # output（保持日志纯输出）；仅经 callback 实时推送，让回滚进行中的 SSE 界面能看到目标
+            if callable(callback):
+                callback(rollback_summary)
 
             check_cancelled()
             r = requests.post(
@@ -149,7 +153,11 @@ class ArgoCDDeployer(K8sSubDeployer):
             else:
                 log(S("deploy_log.argocd_timeout"))
 
-            return {"success": success, "output": "\n".join(output)}
+            result = {"success": success, "output": "\n".join(output)}
+            # 回滚目标版本摘要（ArgoCD history id + git revision），供执行器写入部署记录的说明列
+            if success:
+                result["rollback_summary"] = rollback_summary
+            return result
         except Exception as e:
             logger.error("ArgoCD rollback failed", exc_info=e)
             msg = S("deploy_log.argocd_rollback_error")

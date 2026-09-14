@@ -632,6 +632,31 @@ label {
 /* ── 部署面板 ── */
 .deploy-layout { display: flex; flex-direction: column; gap: 16px; }
 
+/* 活跃审批单横幅（部署页顶部提醒） */
+.approval-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+.approval-banner:hover { border-color: var(--accent); }
+.approval-banner .banner-text { display: flex; align-items: center; gap: 8px; }
+.approval-banner .banner-link { color: var(--accent); font-weight: 600; white-space: nowrap; }
+.approval-banner.banner-pending { border-color: rgba(245,158,11,0.45); }
+.approval-banner.banner-pending .banner-icon { color: #f59e0b; }
+.approval-banner.banner-approved { border-color: rgba(59,130,246,0.5); }
+.approval-banner.banner-approved .banner-icon { color: var(--accent); }
+.approval-banner.banner-deploying .banner-icon { color: var(--accent); }
+.banner-icon { font-size: 15px; }
+
 pre.output {
   margin-top: 14px; font-size: 13px; color: #86efac; white-space: pre-wrap;
   max-height: 360px; overflow-y: auto; background: var(--bg-pre);

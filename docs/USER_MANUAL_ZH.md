@@ -7,7 +7,7 @@
 Devops-Glue CD 是持续部署服务，与 [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) 配套使用，将 Harbor 镜像部署到 Docker 或 Kubernetes 集群。通过一个统一面板完成项目选择、Tag 确认、部署执行、日志查看和通知推送。
 
 ```
-CI (Jenkins / GitLab CI)
+CI (Jenkins / GitLab CI / Custom_Push)
   → build + push → Harbor
   → scan-sync → ci_pipeline_artifacts
 
@@ -266,11 +266,7 @@ cd_service/
 | POST | `/api/registry/sync` | ✅ | 触发 Harbor 同步 |
 | WS | `/ws/terminal/{id}` | — | Web Shell 终端 |
 | POST | `/api/upload/{id}` | ✅ | SFTP 文件上传 |
-| GET | `/api/users` | 🔑 | 用户列表 |
-| POST | `/api/users` | 🔑 | 创建用户 |
-| DELETE | `/api/users/{name}` | 🔑 | 删除用户 |
-| PUT | `/api/users/{name}/role` | 🔑 | 修改角色 |
-| PUT | `/api/users/{name}/password` | ✅ | 修改密码（自己或 admin） |
+| GET | `/api/users` | 🔑 | 用户列表（供审批规则选择审批人，需 `cd.deploy.approve`；账号管理统一在 CI 侧） |
 | **Webhook 配置管理** | | | |
 | GET | `/api/webhooks` | ✅ | Webhook 配置列表 |
 | POST | `/api/webhooks` | 🔑 | 创建 Webhook（需 `cd.notification-manage`） |

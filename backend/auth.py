@@ -110,8 +110,8 @@ def get_current_user(
     if not _timing_safe_compare(token, expected):
         raise HTTPException(401, "Invalid or expired token")
 
-    # 查询该角色的权限列表
-    role_name = row.get("role", settings.admin_role)
+    # 查询该角色的权限列表（无角色 → 空权限，deny-by-default）
+    role_name = row.get("role") or ""
     permissions = _query_permissions(db, role_name)
 
     return {
@@ -148,15 +148,6 @@ def require_perm(perm_key: str):
         return user
 
     return checker
-
-
-def require_admin_role(user: dict = Depends(get_current_user)):
-    """角色级权限检查：允许 super_admin 和 admin 角色访问。
-    用于用户管理等按角色而非权限 key 控制的功能。
-    cd.admin 不在 CI permissions 表中，无法用 require_perm 检查。"""
-    if user.get("role") not in (settings.super_admin_role, settings.admin_role):
-        raise HTTPException(403, "Permission denied: admin or super_admin role required")
-    return user
 
 
 # ── 部署权限映射：deploy_type / cd_type → 需要的 permission key ──
@@ -253,7 +244,9 @@ def load_user_context(db: Database, username: str) -> dict:
     """
     with db.conn() as conn:
         row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
-    role = (row["role"] if row else "") or settings.admin_role
+    # 用户不存在（账号被删）或无角色 → 空权限，执行时权限校验会拒绝（deny-by-default），
+    # 不再回退到任何默认角色
+    role = (row["role"] if row else "") or ""
     permissions = _query_permissions(db, role)
     return {"username": username, "role": role, "permissions": permissions}
 

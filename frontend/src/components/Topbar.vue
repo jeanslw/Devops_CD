@@ -15,7 +15,7 @@
       <div class="user-tag" v-if="auth.state.user">
         <span class="user-icon">👤</span>
         <span class="user-name">{{ auth.state.user.username }}</span>
-        <span class="user-role">{{ $t('users.role_' + auth.state.user.role) }}</span>
+        <span class="user-role">{{ roleLabel }}</span>
       </div>
       <div class="lang-toggle">
         <button :class="['lang-btn', locale === 'en' ? 'active' : '']" @click="setLang('en')">EN</button>
@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { inject } from 'vue'
+import { inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLang } from '@/locales'
 
@@ -35,5 +35,12 @@ const auth = inject('auth')
 
 defineEmits(['logout', 'toggle-sidebar'])
 
-const { locale } = useI18n()
+const { locale, t, te } = useI18n()
+
+// 内置角色走 i18n 文案；CI 侧自定义角色无对应文案时直接显示角色名
+const roleLabel = computed(() => {
+  const role = auth.state.user?.role || ''
+  const key = 'users.role_' + role
+  return te(key) ? t(key) : role
+})
 </script>

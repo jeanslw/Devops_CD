@@ -79,8 +79,8 @@ export function useAuth() {
   function canDeploySingle()  { return hasPerm('cd.deploy.single') || isSuperAdmin() }
   function canDeployDocker()  { return hasPerm('cd.deploy.docker') || isSuperAdmin() }
   function canDeployK8s()     { return hasPerm('cd.deploy.k8s') || isSuperAdmin() }
-  // 审批：审批中心菜单权限 / 审批人可见（发起部署者不放行，避免看到审批规则）
-  function canViewApprovals() { return hasPerm('cd.approval-center') || hasPerm('cd.deploy.approve') || isSuperAdmin() }
+  // 审批：审批中心菜单权限（审批人 / 有部署权限的申请人 / super_admin）
+  function canViewApprovals() { return hasPerm('cd.approval-center') || hasPerm('cd.deploy.approve') || hasPerm('cd.deploy-manage') || isSuperAdmin() }
   function canApprove()       { return hasPerm('cd.deploy.approve') || isSuperAdmin() }
   // 审批规则管理（新增/编辑/删除审批规则）：审批人 cd.deploy.approve，不写死角色名
   function canManageApprovalRules() { return hasPerm('cd.deploy.approve') || isSuperAdmin() }
@@ -89,12 +89,6 @@ export function useAuth() {
   function canMonitorCustom() { return hasPerm('cd.monitor.custom') || isSuperAdmin() }
   function canMonitorAlert()  { return hasPerm('cd.monitor.alert') || isSuperAdmin() }
   function canTriggerBuild()  { return hasPerm('ci.trigger') || isSuperAdmin() }
-
-  // ── 旧版兼容 ──
-  function canDeploy() { return canDeployManage() }
-  function canManage() { return canNotificationManage() }
-  function isAdmin()   { return canServerManage() }
-  function isDeployer(){ return canDeployManage() }
 
   return {
     state, A, setToken, setUser, fetchMe, logout, handle401,
@@ -107,7 +101,5 @@ export function useAuth() {
     canDeploySingle, canDeployDocker, canDeployK8s,
     canMonitorApp, canMonitorSystem, canMonitorCustom, canMonitorAlert,
     canTriggerBuild, canViewApprovals, canApprove, canManageApprovalRules,
-    // 兼容
-    canDeploy, canManage,
   }
 }

@@ -181,11 +181,16 @@ class Database:
             raw = self._connect_sqlite()
             wrapper = _SqliteWrapper(raw)
 
-        if not Database._tables_ensured and self._driver == "sqlite":
-            self._ensure_cd_tables(raw)
-            with suppress(Exception):
-                raw.execute("ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'cd_admin'")
-            raw.commit()
+        if not Database._tables_ensured:
+            # 维护 CD 自有表：SQLite 走完整建表+迁移；MySQL 的表已由 init_mysql.sql 初始化
+            # （SQLite 专属 DDL 不适用），仅做缺失列幂等迁移——否则已有库新增列
+            # （如 cd_approvals.scheduled_at）的迁移永远跑不到。
+            # admin_users/roles 等共享表 schema 由 Devops-Glue 统一管理，CD 不得改动。
+            # 必须传 wrapper（统一 .execute/.commit 接口）：MySQL 池化 raw 连接无 execute。
+            if self._driver == "mysql":
+                self._ensure_mysql_migrations(wrapper)
+            else:
+                self._ensure_cd_tables(wrapper)
             Database._tables_ensured = True
 
         try:
@@ -221,6 +226,31 @@ class Database:
             cursorclass=pymysql.cursors.DictCursor,
         )
         return conn
+
+    # ── MySQL 幂等迁移 ──
+
+    def _ensure_mysql_migrations(self, conn):
+        """MySQL 模式：库已由 init_mysql.sql 初始化（SQLite 专属 DDL 不适用），
+        仅做缺失列幂等迁移——否则已有库新增列（如 cd_approvals.scheduled_at）
+        的迁移永远跑不到（此前迁移只在 SQLite 模式执行）。
+        重复加列报 MySQL 1060 duplicate column，suppress 掉即可。
+        共享表（admin_users/roles 等）schema 由 Devops-Glue 统一管理，CD 不得改动。
+        注意：MySQL TEXT 列不支持字面 DEFAULT，统一用 VARCHAR。
+        """
+        migrations = [
+            ("cd_deploy_logs", "approval_id", "INT DEFAULT 0"),
+            ("cd_approvals", "deploy_id", "INT DEFAULT 0"),
+            ("cd_approvals", "approved_at", "VARCHAR(32) DEFAULT ''"),
+            ("cd_approvals", "scheduled_at", "VARCHAR(32) DEFAULT ''"),
+            ("cd_approvals", "updated_at", "VARCHAR(32) DEFAULT ''"),
+            ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
+            ("cd_registry_artifacts", "artifact_id", "INT DEFAULT 0"),
+            ("cd_registry_artifacts", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
+        ]
+        for tbl, col, col_def in migrations:
+            with suppress(Exception):
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
+        conn.commit()
 
     # ── SQLite 自动建表 ──
 
@@ -264,6 +294,7 @@ class Database:
             deploy_note VARCHAR(512) DEFAULT '',
             duration_ms INTEGER DEFAULT 0,
             stage_times TEXT DEFAULT '',
+            approval_id INTEGER DEFAULT 0,
             created_at TEXT DEFAULT ({NOW})
         )""")
         with suppress(Exception):
@@ -284,6 +315,8 @@ class Database:
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_id INTEGER DEFAULT 0")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_digest VARCHAR(128) DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN approval_id INTEGER DEFAULT 0")
         # 并发锁唯一索引：running 记录 lock_key=project，同项目至多一条 running（NULL 可重复）
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
         # 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id）
@@ -416,6 +449,7 @@ class Database:
             deploy_id INTEGER DEFAULT 0,
             created_at TEXT DEFAULT ({NOW}),
             approved_at TEXT DEFAULT '',
+            scheduled_at TEXT DEFAULT '',
             updated_at TEXT DEFAULT ''
         )""")
 
@@ -425,7 +459,7 @@ class Database:
             project VARCHAR(255) NOT NULL UNIQUE,
             enabled INTEGER DEFAULT 0,
             require_envs VARCHAR(255) DEFAULT '',
-            approver_role VARCHAR(32) DEFAULT 'cd_admin',
+            approver_role VARCHAR(32) DEFAULT '',
             approvers VARCHAR(1024) DEFAULT '',
             notify_bot_id INTEGER DEFAULT 0,
             require_rollback_approval INTEGER DEFAULT 1,
@@ -437,12 +471,22 @@ class Database:
             ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
             ("cd_registry_artifacts", "artifact_id", "INTEGER DEFAULT 0"),
             ("cd_registry_artifacts", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
+            ("cd_approvals", "scheduled_at", "TEXT DEFAULT ''"),
         ]
         for tbl, col, col_def in migrations:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
 
         self._ensure_indexes(conn)
+        # 历史回填（幂等）：旧审批单执行后已回填 cd_approvals.deploy_id，据此反填部署记录 approval_id。
+        # 必须在 cd_approvals 建表之后执行；仅处理 approval_id=0 的行，不覆盖已有值。
+        with suppress(Exception):
+            conn.execute(
+                "UPDATE cd_deploy_logs SET approval_id=("
+                "SELECT a.id FROM cd_approvals a WHERE a.deploy_id=cd_deploy_logs.id"
+                ") WHERE approval_id=0 AND EXISTS ("
+                "SELECT 1 FROM cd_approvals a WHERE a.deploy_id=cd_deploy_logs.id AND a.deploy_id>0)"
+            )
         conn.commit()
 
     # ── 索引（SQLite / MySQL 共用）──
@@ -453,6 +497,7 @@ class Database:
             ("idx_cdl_created", "cd_deploy_logs", "created_at"),
             ("idx_cdl_project_tag_status", "cd_deploy_logs", "project, tag, status"),
             ("idx_cdl_status", "cd_deploy_logs", "status"),
+            ("idx_cdl_approval_id", "cd_deploy_logs", "approval_id"),
             ("idx_cdr_repo_id", "cd_registry_artifacts", "repo_id"),
             ("idx_cds_type", "cd_servers", "type"),
             ("idx_cdr_enabled", "cd_alert_rules", "enabled"),

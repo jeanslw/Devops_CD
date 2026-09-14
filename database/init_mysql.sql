@@ -150,6 +150,10 @@ CALL __add_column('cd_deploy_logs', 'params_json', 'TEXT');
 CALL __add_column('cd_deploy_logs', 'rollback_type', "VARCHAR(32) DEFAULT 'manual'");
 CALL __add_column('cd_deploy_logs', 'artifact_id', 'INT DEFAULT 0');
 CALL __add_column('cd_deploy_logs', 'artifact_digest', "VARCHAR(128) DEFAULT ''");
+CALL __add_column('cd_deploy_logs', 'approval_id', 'INT DEFAULT 0');
+
+-- 审批单关联索引：按审批单反查部署记录 / 记录页筛选
+CALL __add_index('cd_deploy_logs', 'idx_cdl_approval_id', 'approval_id');
 
 -- 并发锁唯一索引（幂等）：lock_key=project 仅 running 记录非空，保证同项目至多一条 running
 DROP PROCEDURE IF EXISTS __add_unique_index;
@@ -173,6 +177,31 @@ DELIMITER ;
 
 CALL __add_unique_index('cd_deploy_logs', 'idx_cdl_lock_key', 'lock_key');
 DROP PROCEDURE IF EXISTS __add_unique_index;
+
+-- 历史回填（幂等）：旧审批单执行时已回填 cd_approvals.deploy_id，据此反填部署记录的 approval_id。
+-- 仅处理 approval_id=0 的行，不覆盖后续手动值。
+-- 存在性守卫：全新建库时 cd_approvals/cd_deploy_logs 尚未创建（建表段在本脚本迁移段之后），
+-- 裸 UPDATE JOIN 会因表不存在而中断整个初始化，故包进 procedure 按表存在与否跳过。
+DROP PROCEDURE IF EXISTS __backfill_approval_id;
+DELIMITER $$
+CREATE PROCEDURE __backfill_approval_id()
+BEGIN
+    DECLARE _a INT DEFAULT 0;
+    DECLARE _l INT DEFAULT 0;
+    SELECT COUNT(*) INTO _a FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cd_approvals';
+    SELECT COUNT(*) INTO _l FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cd_deploy_logs';
+    IF _a = 1 AND _l = 1 THEN
+        UPDATE cd_deploy_logs l
+        JOIN cd_approvals a ON a.deploy_id = l.id
+        SET l.approval_id = a.id
+        WHERE l.approval_id = 0 AND a.deploy_id > 0;
+    END IF;
+END $$
+DELIMITER ;
+CALL __backfill_approval_id();
+DROP PROCEDURE IF EXISTS __backfill_approval_id;
 
 -- 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id；DROP COLUMN 会连带删除该列上的索引）
 DROP PROCEDURE IF EXISTS __drop_column;
@@ -266,9 +295,9 @@ CREATE TABLE IF NOT EXISTS cd_webhook_events (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================================
--- 审批单（v1.5.0）
+-- 审批单（v1.5.0；v1.5.3 起改为"申请→批准→申请人手动执行"三段式）
 -- status: pending/approved/deploying/deployed/failed/rejected/cancelled
--- params_json: 完整部署请求快照（含 deploy_type 路由判别），批准后由轮询器重放执行
+-- params_json: 完整部署请求快照（含 deploy_type 路由判别），批准后由申请人凭单手动执行
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS cd_approvals (
     id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -281,8 +310,9 @@ CREATE TABLE IF NOT EXISTS cd_approvals (
     status       VARCHAR(16)  DEFAULT 'pending',
     requester    VARCHAR(64)  DEFAULT '',
     approver     VARCHAR(64)  DEFAULT '',
+    scheduled_at VARCHAR(32)  DEFAULT '',              -- 可选定时发布：'YYYY-MM-DD HH:MM:SS'，空=立即/手动
     approve_note VARCHAR(512) DEFAULT '',
-    deploy_id    INT          DEFAULT 0,               -- 批准执行后回填 cd_deploy_logs.id
+    deploy_id    INT          DEFAULT 0,               -- 申请人执行后回填 cd_deploy_logs.id
     created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
     approved_at  DATETIME     DEFAULT NULL,
     updated_at   DATETIME     DEFAULT NULL,
@@ -298,7 +328,7 @@ CREATE TABLE IF NOT EXISTS cd_approval_rules (
     project                  VARCHAR(255) NOT NULL,
     enabled                  TINYINT(1)   DEFAULT 0,
     require_envs             VARCHAR(255) DEFAULT '',  -- 需审批的环境标签，逗号分隔；空=全部
-    approver_role            VARCHAR(32)  DEFAULT 'cd_admin',
+    approver_role            VARCHAR(32)  DEFAULT '',
     approvers                VARCHAR(1024) DEFAULT '', -- 逗号分隔具体审批人 username，优先于 role
     notify_bot_id            INT          DEFAULT 0,
     require_rollback_approval TINYINT(1)  DEFAULT 1,

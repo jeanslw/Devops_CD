@@ -42,7 +42,7 @@ from backend.services.registry_service import RegistryService, start_background_
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时：定时同步 + 告警检查 + 审批队列恢复/轮询"""
+    """启动时：定时同步 + 告警检查 + 审批崩溃恢复"""
     db = Database()
     try:
         svc = RegistryService(db)
@@ -51,16 +51,20 @@ async def lifespan(app: FastAPI):
         interval = -1
     start_background_sync(lambda: Database(), interval)
     start_alert_checker()
-    # 审批：进程重启后清僵尸部署锁并重投 executing 审批单，随后启动轮询器
+    # 审批：进程重启后清僵尸部署锁，把 deploying 审批单按部署记录终态收敛；
+    # 并启动定时发布调度器（到点以申请人身份自动执行已批准的定时单据）
     try:
-        from backend.services.approval_service import recover_on_startup, start_queue_poller
+        from backend.services.approval_service import (
+            recover_on_startup,
+            start_scheduled_executor,
+        )
 
         recover_on_startup(db)
-        start_queue_poller(lambda: Database())
+        start_scheduled_executor()
     except Exception:
         import logging
 
-        logging.getLogger(__name__).exception("approval queue bootstrap failed")
+        logging.getLogger(__name__).exception("approval recovery/scheduler bootstrap failed")
     yield
 
 

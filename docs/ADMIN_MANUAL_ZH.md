@@ -385,7 +385,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 - **项目范围**：规则作用于指定项目（逗号分隔多个）或 `*` 全局默认。
 - **启用**：总开关。
 - **目标环境**（`require_envs`）：逗号分隔的环境标签；仅当目标服务器命中至少一个标签时才需审批。留空表示所有环境都需审批。
-- **审批角色**（`approver_role`，默认 `cd_admin`）与/或**显式审批人**（`approvers`，逗号分隔用户名，优先于角色）。
+- **审批角色**（`approver_role`，须为 CI `roles` 表中已存在的角色；默认空 = 仅按显式审批人审批）与/或**显式审批人**（`approvers`，逗号分隔用户名，优先于角色；保存时校验用户名在 `admin_users` 中存在）。
 - **通知机器人**（`notify_bot_id`）：审批请求/结果通知的机器人。
 - **回滚审批**（`require_rollback_approval`，默认开启）：回滚是否也需审批。
 
@@ -410,13 +410,19 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 ### 用户角色
 
+角色与权限全部由 CI（Devops-Glue）的 `roles` / `permissions` / `role_permissions` 表统一管理，角色可自定义。CD 完全按 CI 中的角色和权限映射鉴权，自身不提供账号管理接口——创建/删除用户、修改角色、重置密码均在 CI 侧完成。
+
+内置角色：
+
 | 角色 | 权限 | 说明 |
 |------|------|------|
-| `admin` | 全部权限：部署、服务器管理、用户管理、系统配置 | 由 CI 系统统一分配，CD 侧不允许创建/删除/修改 admin |
-| `deployer` | 部署操作、查看监控、管理服务器 | CD 管理员可创建 |
-| `viewer` | 只读查看：项目、部署记录、监控数据 | CD 管理员可创建 |
+| `super_admin` | 隐含拥有全部 CD 权限 | 全局唯一账号，由 CI 管理 |
 
-> **CD/CI 登录隔离**：`admin_users` 表新增 `systems` 字段（逗号分隔），CD 侧登录时校验是否包含 `"cd"`。仅 `systems` 含 `"cd"` 的用户可登录 CD 系统。CI 负责账号全生命周期管理（创建 admin、分配 systems），CD 仅管理 deployer/viewer。
+> 旧文档中的 `cd_admin` 内置角色已移除（v1.5.3）：该角色从未被 CI 种子（`DEFAULT_ROLES` 仅 `super_admin`/`viewer`），是 CD 早期账户管理功能的残留。
+
+其他角色（如 `deployer`、`viewer` 及在 CI 中新建的任意自定义角色）的访问能力，均来自该角色在 CI 中映射的 `cd.*` 权限键。
+
+> **CD/CI 登录隔离**：`admin_users` 表有 `systems` 字段（逗号分隔），CD 侧登录时校验是否包含 `"cd"`。仅 `systems` 含 `"cd"` 的用户可登录 CD 系统。账号全生命周期（建号、角色定义、systems 分配）均由 CI 管理。
 
 ### 认证
 

@@ -79,6 +79,7 @@ def prepare_rollback(
     before_deploy_id: int = 0,
     deploy_type: str = "",
     tag: str = "",
+    note: str = "",
     bot_id: int = 0,
     lang: str = "en",
 ) -> dict:
@@ -138,12 +139,17 @@ def prepare_rollback(
     if tag:
         params["tag"] = tag
 
-    # 标注回滚来源，保留原始部署说明
-    note = (params.get("deploy_note") or "").strip()
-    if tag:
-        params["deploy_note"] = f"[回滚到 {tag}] {note}".strip()
-    else:
-        params["deploy_note"] = f"[回滚 #{source['id']}] {note}".strip()
+    # 回滚是独立的新操作：说明 = 回滚标记（单级）+ 本次操作者新填的说明。
+    # 不使用源记录快照 params 里的 deploy_note（那是源版本的旧说明，递归携带会形成
+    # [回滚 #x] [回滚到 ..] … 长链）；源版本说明保留在源记录上，经 [回滚 #x] 编号关联。
+    # 原生回滚实际命中的 revision 摘要由执行器在回滚完成后再前置补写。
+    marker = f"[回滚到 {tag}]" if tag else f"[回滚 #{source['id']}]"
+    user_note = (note or "").strip()
+    # 列宽 512：优先保住回滚标记，超长部分截断用户说明
+    max_note_len = 512 - len(marker) - 1
+    if max_note_len > 0 and len(user_note) > max_note_len:
+        user_note = user_note[:max_note_len]
+    params["deploy_note"] = f"{marker} {user_note}".strip()
     params["bot_id"] = int(bot_id or params.get("bot_id") or 0)
     params["lang"] = lang or params.get("lang") or "en"
 
@@ -153,7 +159,7 @@ def prepare_rollback(
 
     # 仅"无 tag 且原生模式"走原生回退命令；指定 tag 或重放模式都走重放
     rollback_flag = native and not tag
-    # 标记原生回滚，供审批批准后执行时还原 rollback 标志（_run_approval 读取并剔除）
+    # 标记原生回滚，申请人手动执行时由 run_approval 读取并剔除，还原 rollback 标志
     params["_rollback"] = rollback_flag
 
     # 回滚同样过审批闸门（按 require_rollback_approval 判断）
@@ -181,6 +187,7 @@ def rollback(
     before_deploy_id: int = 0,
     deploy_type: str = "",
     tag: str = "",
+    note: str = "",
     bot_id: int = 0,
     lang: str = "en",
 ) -> dict:
@@ -195,6 +202,7 @@ def rollback(
         before_deploy_id=before_deploy_id,
         deploy_type=deploy_type,
         tag=tag,
+        note=note,
         bot_id=bot_id,
         lang=lang,
     )

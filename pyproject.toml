@@ -6,7 +6,9 @@ line-length = 120
 # 仅保留 CodeQL 级别的高优先级错误：语法错误 / 未定义名 / 明显缺陷。
 # 这样能避免 CI 因为风格或一时的非阻断规范而失败，同时仍能挡住真实 bug。
 select = ["E9", "F63", "F7", "F82"]
-ignore = []
+# RUF001/002/003：中文注释与 docstring 中的全角标点（，；（）等）会被误报为
+# "ambiguous-unicode-character"，本项目注释以中文为主，有意保留全角标点，统一忽略。
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
 "backend/tests/smoke_test.py" = ["E402"]  # 冒烟测试按轮次分组组织 import，非顶部导入是有意为之

@@ -103,17 +103,20 @@ def _is_busy(exc: BaseException) -> bool:
     return err_key == "errors.deploy_busy" or "已有部署进行中" in str(exc)
 
 
-def execute_from_params(db, params: dict, user: dict, callback=None, rollback: bool = False) -> dict:
+def execute_from_params(
+    db, params: dict, user: dict, callback=None, rollback: bool = False, approval_id: int = 0
+) -> dict:
     """按持久化参数执行部署，返回 {"status": "ok"|"failed"|"busy"|"cancelled", "deploy_id": int}。
 
     params 必须含 deploy_type 路由判别。user 为执行身份（含 username/role/permissions）。
     rollback=True 时 K8S 走原生回滚（kubectl rollout undo / helm rollback）。
+    approval_id 非 0 时把审批单 id 关联到新建的部署记录（经审批单执行的路径）。
     """
     deploy_type = params.get("deploy_type", "") or ""
     try:
         if deploy_type.startswith("k8s/"):
-            return _execute_k8s(db, params, user, callback, rollback=rollback)
-        return _execute_ssh(db, params, user, callback)
+            return _execute_k8s(db, params, user, callback, rollback=rollback, approval_id=approval_id)
+        return _execute_ssh(db, params, user, callback, approval_id=approval_id)
     except Exception as e:
         if _is_busy(e):
             return {"status": "busy", "deploy_id": 0, "output": getattr(e, "message", "") or str(e)}
@@ -121,7 +124,7 @@ def execute_from_params(db, params: dict, user: dict, callback=None, rollback: b
         return {"status": "failed", "deploy_id": 0, "output": getattr(e, "message", "") or str(e)}
 
 
-def _execute_ssh(db, params: dict, user: dict, callback=None) -> dict:
+def _execute_ssh(db, params: dict, user: dict, callback=None, approval_id: int = 0) -> dict:
     svc = DeployService(db)
     kwargs = {k: params[k] for k in _SSH_FIELDS if k in params}
     kwargs.setdefault("server_ids", "")
@@ -138,7 +141,7 @@ def _execute_ssh(db, params: dict, user: dict, callback=None) -> dict:
     kwargs.setdefault("lang", "en")
     kwargs["bot_id"] = int(kwargs.get("bot_id") or 0)
 
-    result = svc.execute(**kwargs, callback=callback, user=user)
+    result = svc.execute(**kwargs, callback=callback, user=user, approval_id=approval_id)
     output = "\n".join((r.get("output") or "") for r in result.get("results", []))
     if result.get("cancelled"):
         return {"status": "cancelled", "deploy_id": result.get("deploy_id", 0), "output": output}
@@ -149,7 +152,7 @@ def _execute_ssh(db, params: dict, user: dict, callback=None) -> dict:
     }
 
 
-def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = False) -> dict:
+def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = False, approval_id: int = 0) -> dict:
     req = K8sDeployRequest(**{k: params[k] for k in _K8S_FIELDS if k in params})
     image, project_key, project_short = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
@@ -167,6 +170,7 @@ def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = F
         ssh_key,
         callback=callback,
         rollback=rollback,
+        approval_id=approval_id,
     )
 
     if not result.get("cancelled"):

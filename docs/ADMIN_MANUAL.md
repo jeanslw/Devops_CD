@@ -386,7 +386,7 @@ Deployments can be gated by an approval workflow. Rules are stored in `cd_approv
 - **Project scope**: a rule applies to a specific project (comma-separated list) or `*` as the global default.
 - **Enabled**: master switch.
 - **Target environments** (`require_envs`): comma-separated environment tags; a deployment requires approval only when its target servers carry at least one matching tag. Leave empty to require approval for all environments.
-- **Approver role** (`approver_role`, default `cd_admin`) and/or **explicit approvers** (`approvers`, comma-separated usernames — takes precedence over the role).
+- **Approver role** (`approver_role`, must exist in the CI `roles` table; default empty = explicit approvers only) and/or **explicit approvers** (`approvers`, comma-separated usernames — takes precedence over the role; usernames are validated against `admin_users` on save).
 - **Notification bot** (`notify_bot_id`): a bot to notify on approval request / result.
 - **Rollback approval** (`require_rollback_approval`, default on): whether rollbacks also require approval.
 
@@ -411,13 +411,19 @@ Server passwords and SSH private keys are encrypted with Fernet symmetric encryp
 
 ### User Roles
 
+Roles and permissions are managed entirely in CI (Devops-Glue) through the `roles` / `permissions` / `role_permissions` tables. Roles are custom — CD honors whatever roles and permission mappings exist in CI, and provides no account management endpoints of its own (creating/deleting users, changing roles and resetting passwords are all done in CI).
+
+Built-in roles:
+
 | Role | Permissions | Note |
 |------|-------------|------|
-| `admin` | Full access: deploy, server management, user management, system config | Assigned by CI system only; CD cannot create/delete/modify admin |
-| `deployer` | Deploy operations, view monitoring, manage servers | Created by CD admin |
-| `viewer` | Read-only: view projects, deployment logs, monitoring data | Created by CD admin |
+| `super_admin` | Implicitly holds all CD permissions | Exactly one account; managed by CI |
 
-> **CD/CI Login Isolation**: The `admin_users` table has a `systems` column (comma-separated). CD validates login by checking for `"cd"` in this field. Only users with `"cd"` in `systems` can log in to CD. CI manages the full account lifecycle (creating admins, assigning systems), while CD only manages deployer/viewer.
+> The `cd_admin` built-in role from older docs was removed (v1.5.3): it was never seeded by CI (`DEFAULT_ROLES` seeds only `super_admin`/`viewer`) — a leftover from CD's early account-management feature.
+
+All other roles (e.g. `deployer`, `viewer`, or any custom role defined in CI) get their access from the `cd.*` permission keys mapped to the role in CI.
+
+> **CD/CI Login Isolation**: The `admin_users` table has a `systems` column (comma-separated). CD validates login by checking for `"cd"` in this field. Only users with `"cd"` in `systems` can log in to CD. CI manages the full account lifecycle (creating accounts, defining roles, assigning systems).
 
 ### Authentication
 

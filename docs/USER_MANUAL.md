@@ -7,7 +7,7 @@
 Devops-Glue CD is a continuous deployment service that works alongside [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) to deploy Harbor images to Docker or Kubernetes clusters. A unified panel handles project selection, tag confirmation, deployment execution, log viewing, and notification dispatch.
 
 ```
-CI (Jenkins / GitLab CI)
+CI (Jenkins / GitLab CI / Custom_Push)
   → build + push → Harbor
   → scan-sync → ci_pipeline_artifacts
 
@@ -266,11 +266,7 @@ cd_service/
 | POST | `/api/registry/sync` | ✅ | Trigger Harbor sync |
 | WS | `/ws/terminal/{id}` | — | Web Shell terminal |
 | POST | `/api/upload/{id}` | ✅ | SFTP file upload |
-| GET | `/api/users` | 🔑 | User list |
-| POST | `/api/users` | 🔑 | Create user |
-| DELETE | `/api/users/{name}` | 🔑 | Delete user |
-| PUT | `/api/users/{name}/role` | 🔑 | Change role |
-| PUT | `/api/users/{name}/password` | ✅ | Change password (self or admin) |
+| GET | `/api/users` | 🔑 | User list (for picking approvers in approval rules, requires `cd.deploy.approve`; account management lives in CI) |
 | **Webhooks (notification management)** | | | |
 | GET | `/api/webhooks` | ✅ | Webhook config list |
 | POST | `/api/webhooks` | 🔑 | Create webhook (requires `cd.notification-manage`) |

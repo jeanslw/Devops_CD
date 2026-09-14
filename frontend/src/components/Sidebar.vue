@@ -31,9 +31,15 @@
       </div>
     </template>
 
-    <!-- 审批中心 -->
+    <!-- 审批中心（审批人看「审批中心」；仅部署权限的申请人看「我的部署申请」） -->
     <div v-if="auth.canViewApprovals()" class="item" :class="{ active: isActive('/approvals') }" @click="go('/approvals')">
-      {{ $t('sidebar.approvals') }}
+      {{ approvalMenuText }}
+      <span
+        v-if="badgeTotal > 0"
+        class="badge-dot"
+        :class="{ 'badge-dot--amber': toApprove === 0 }"
+        :title="$t('approvals.badgeTip', { approve: toApprove, execute: toExecute })"
+      >{{ badgeTotal > 99 ? '99+' : badgeTotal }}</span>
     </div>
 
     <!-- 服务器管理 -->
@@ -91,8 +97,9 @@
 </template>
 
 <script setup>
-import { ref, inject, computed } from 'vue'
+import { ref, inject, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 defineProps({
   open: { type: Boolean, default: true }
@@ -102,9 +109,48 @@ const emit = defineEmits(['close'])
 const auth = inject('auth')
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const deployOpen = ref(false)
 const monitorOpen = ref(false)
 const notifyOpen = ref(false)
+
+// 审批菜单文案：具备审批权限 → 审批中心；否则（仅有部署权限的申请人）→ 我的部署申请
+const approvalMenuText = computed(() =>
+  auth.canApprove() ? t('sidebar.approvals') : t('sidebar.myApprovals')
+)
+
+// ── 审批菜单红点：待我审批（红）+ 我的待执行（琥珀），与 bot 通知互补的站内提醒 ──
+const toApprove = ref(0)
+const toExecute = ref(0)
+const badgeTotal = computed(() => toApprove.value + toExecute.value)
+let badgeTimer = null
+
+async function loadBadge() {
+  try {
+    const r = await fetch('/api/approvals/badge', { headers: auth.A() })
+    if (auth.handle401(r)) { stopBadgePolling(); return }
+    const d = await r.json()
+    toApprove.value = d.to_approve || 0
+    toExecute.value = d.to_execute || 0
+  } catch (e) {}
+}
+
+function startBadgePolling() {
+  if (badgeTimer || !auth.canViewApprovals()) return
+  loadBadge()
+  badgeTimer = setInterval(loadBadge, 30000)
+}
+
+function stopBadgePolling() {
+  if (badgeTimer) { clearInterval(badgeTimer); badgeTimer = null }
+}
+
+watch(() => auth.state?.user, (u) => {
+  if (u && auth.canViewApprovals()) startBadgePolling()
+  else { stopBadgePolling(); toApprove.value = 0; toExecute.value = 0 }
+}, { immediate: true })
+
+onUnmounted(stopBadgePolling)
 
 // 用户已登录但未分配任何权限（非 super_admin）时显示提示
 const showEmptyPermsHint = computed(() => {
@@ -133,3 +179,26 @@ function toggleNotify() {
   notifyOpen.value = !notifyOpen.value
 }
 </script>
+
+<style scoped>
+/* 审批菜单红点：待审批（红）/ 仅待执行（琥珀），与 bot 通知互补的站内提醒 */
+.badge-dot {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: auto;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 8px;
+  color: #fff;
+  background: #e5484d;
+  cursor: help;
+  white-space: nowrap;
+}
+
+.badge-dot--amber {
+  background: #f59e0b;
+}
+</style>
