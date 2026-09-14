@@ -76,6 +76,11 @@
           <label>{{ $t('deploy.note') }}</label>
           <input v-model="deployNote" :placeholder="$t('deploy.notePlaceholder')">
         </div>
+        <div>
+          <label>{{ $t('deploy.scheduleLabel') }}</label>
+          <DateTimePicker v-model="schedule" />
+          <div style="font-size:11px;color:var(--text-dim)">{{ $t('deploy.scheduleHint') }}</div>
+        </div>
       </div>
       <button class="btn btn-green" style="margin-top:8px" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
       <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
@@ -83,7 +88,17 @@
       <button class="btn btn-blue" style="margin-left:8px" @click="doRollbackToTag" :disabled="loading || !selectedTag" :title="$t('deploy.rollbackToTagTip')">{{ $t('deploy.rollbackToTag') }}</button>
       <button v-if="cdType !== 'fluxcd'" class="btn btn-blue" style="margin-left:8px" @click="doRollbackOneStep" :disabled="loading" :title="$t('deploy.rollbackOneStepTip')">{{ $t('deploy.rollbackOneStep') }}</button>
       <span class="btn-tip">{{ $t('deploy.rollbackTip') }}</span>
-      <pre class="output" v-text="output"></pre>
+      <ApprovalFlowPanel
+        v-if="panelApprovalId"
+        :approval-id="panelApprovalId"
+        @close="onPanelClose"
+      />
+      <ApprovalActiveList
+        v-else-if="activeApprovals.length"
+        :items="activeApprovals"
+        @open="openPanel"
+      />
+      <pre class="output" v-if="!panelApprovalId" v-text="output"></pre>
     </div>
 
     <!-- 预检弹窗 -->
@@ -103,21 +118,29 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useDeploy } from '@/composables/useDeploy'
+import { useApprovalPanel } from '@/composables/useApprovalPanel'
 import { confirm } from '@/composables/useConfirm'
 import CiPipelineStatus from '@/components/CiPipelineStatus.vue'
 import TagPager from '@/components/TagPager.vue'
+import ApprovalFlowPanel from '@/components/ApprovalFlowPanel.vue'
+import ApprovalActiveList from '@/components/ApprovalActiveList.vue'
+import DateTimePicker from '@/components/DateTimePicker.vue'
 
 const route = useRoute()
 const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
 const { projects, selectedProject, pipelineData, pipelineLoading, tagState, selectedTag, output, loading, loadProjects, changeProject, changeTagPage, stream, cancelDeploy, rollbackStream } = useDeploy()
+const {
+  panelApprovalId, activeApprovals,
+  openPanel, refreshActive, onPending, onPanelClose, resetPanel,
+} = useApprovalPanel(auth, selectedProject, 'k8s')
 
 const cdType = ref('kubectl')
 const clusterId = ref(0)
@@ -128,6 +151,7 @@ const path = ref('')
 const apiUrl = ref('')
 const k8sNs = ref('default')
 const deployNote = ref('')
+const schedule = ref('')
 
 // ── 预检弹窗 ──
 const checkModal = reactive({
@@ -179,7 +203,9 @@ async function checkDeploy(body) {
 }
 
 async function onProjectChange() {
+  resetPanel()
   await changeProject(selectedProject.value)
+  await refreshActive()
 }
 
 async function loadServers() {
@@ -212,6 +238,7 @@ async function doDeploy() {
     api_url: apiUrl.value,
     k8s_ns: k8sNs.value.trim(),
     deploy_note: deployNote.value,
+    scheduled_at: schedule.value,
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }
@@ -221,10 +248,9 @@ async function doDeploy() {
   if (!ok) return
 
   const success = await stream('/api/deploy-k8s-stream', body, {
-    initialMsg: '',
     onEnd: (ok) => toast(ok ? t('deploy.deploySuccess') : t('deploy.deployFailed'), ok),
     onError: () => toast(t('deploy.deployFailed'), false),
-    onPending: () => toast(t('deploy.submitPending'), true)
+    onPending: (id, scheduled) => { toast(scheduled ? t('deploy.submitScheduled') : t('deploy.submitPending'), true); onPending(id) }
   })
 }
 
@@ -232,22 +258,22 @@ async function doRollbackToTag() {
   if (!selectedProject.value) return toast(t('deploy.selectServerFirst'), false)
   if (!selectedTag.value) return toast(t('deploy.noTag'), false)
   if (!await confirm({ text: t('deploy.rollbackToTagConfirm', { project: selectedProject.value, tag: selectedTag.value }), danger: true })) return
-  await rollbackStream(selectedProject.value, locale.value, 'k8s/' + cdType.value, selectedTag.value, {
+  await rollbackStream(selectedProject.value, locale.value, 'k8s/' + cdType.value, selectedTag.value, deployNote.value, {
     initialMsg: '',
     onEnd: (ok) => toast(ok ? t('deploy.rollbackSuccess') : t('deploy.rollbackFailed'), ok),
     onError: () => toast(t('deploy.rollbackFailed'), false),
-    onPending: () => toast(t('deploy.rollbackPending'), true)
+    onPending: (id) => { toast(t('deploy.rollbackPending'), true); onPending(id) }
   })
 }
 
 async function doRollbackOneStep() {
   if (!selectedProject.value) return toast(t('deploy.selectServerFirst'), false)
   if (!await confirm({ text: t('deploy.rollbackOneStepConfirm', { project: selectedProject.value }), danger: true })) return
-  await rollbackStream(selectedProject.value, locale.value, 'k8s/' + cdType.value, '', {
+  await rollbackStream(selectedProject.value, locale.value, 'k8s/' + cdType.value, '', deployNote.value, {
     initialMsg: '',
     onEnd: (ok) => toast(ok ? t('deploy.rollbackSuccess') : t('deploy.rollbackFailed'), ok),
     onError: () => toast(t('deploy.rollbackFailed'), false),
-    onPending: () => toast(t('deploy.rollbackPending'), true)
+    onPending: (id) => { toast(t('deploy.rollbackPending'), true); onPending(id) }
   })
 }
 
@@ -289,5 +315,16 @@ onMounted(async () => {
   if (selectedProject.value) {
     await changeProject(selectedProject.value)
   }
+  // 从审批中心跳转：?approval=<id> 直接展开流程面板
+  if (route.query.approval) {
+    panelApprovalId.value = Number(route.query.approval) || 0
+  } else {
+    await refreshActive()
+  }
+})
+
+// 同页跳转（组件已挂载时 query 变化）
+watch(() => route.query.approval, (v) => {
+  if (v) panelApprovalId.value = Number(v) || 0
 })
 </script>

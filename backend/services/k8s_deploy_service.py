@@ -18,6 +18,7 @@ from backend.crypto import decrypt
 from backend.deploy_run import (
     DeployCancelled,
     clear_cancel_checker,
+    claim_pending_deploy_record,
     deploy_run_manager,
     find_running_deploy,
     finish_deploy_record,
@@ -42,6 +43,7 @@ class K8sDeployRequest(BaseModel):
     api_url: str = ""  # Argo CD / Flux API base
     k8s_ns: str = ""  # 留空不传 -n，namespace 以 YAML 声明为准；填写后执行/验证统一使用该 namespace
     deploy_note: str = ""  # 部署说明（记录到 cd_deploy_logs.deploy_note）
+    scheduled_at: str = ""  # 可选定时发布：'YYYY-MM-DD HH:MM[:SS]'，空=不启用定时（按常规审批/直通流程）
     bot_id: int = 0
     lang: str = "en"  # 前端当前语言 en/zh
 
@@ -79,7 +81,20 @@ def _resolve_image(db, req):
 
 
 def _deploy_k8s_core(
-    db, req, user, image, project_key, project_short, host, port, user_srv, pwd, ssh_key, callback=None, rollback=False
+    db,
+    req,
+    user,
+    image,
+    project_key,
+    project_short,
+    host,
+    port,
+    user_srv,
+    pwd,
+    ssh_key,
+    callback=None,
+    rollback=False,
+    approval_id=0,
 ):
     """执行 K8S 部署核心流程：并发锁 + running 记录 + 取消 + 耗时 + 参数快照。
 
@@ -110,18 +125,22 @@ def _deploy_k8s_core(
     deploy_type = f"k8s/{req.cd_type}"
     # 参数快照（含 deploy_type 路由判别），供回滚重放
     params_json = json.dumps({"deploy_type": deploy_type, **req.model_dump()}, ensure_ascii=False)
+    # 经审批单执行：复用申请阶段的 pending 记录（v1.6 前的旧已批准单无记录时回退新建）
     try:
-        deploy_id = start_deploy_record(
-            db,
-            deploy_type=deploy_type,
-            project=project_key,
-            tag=req.tag,
-            image=image,
-            triggered_by=user.get("username", ""),
-            deploy_note=req.deploy_note,
-            target=host,
-            params_json=params_json,
-        )
+        deploy_id = claim_pending_deploy_record(db, project=project_key, approval_id=int(approval_id or 0))
+        if not deploy_id:
+            deploy_id = start_deploy_record(
+                db,
+                deploy_type=deploy_type,
+                project=project_key,
+                tag=req.tag,
+                image=image,
+                triggered_by=user.get("username", ""),
+                deploy_note=req.deploy_note,
+                target=host,
+                params_json=params_json,
+                approval_id=int(approval_id or 0),
+            )
     except ValueError as e:
         raise ValidationError(str(e), error_key="errors.deploy_busy") from e
     deploy_run_manager.register(deploy_id)
@@ -136,6 +155,12 @@ def _deploy_k8s_core(
         ok = bool(result.get("success"))
         status = "ok" if ok else "failed"
         duration_ms = int((time.time() - started) * 1000)
+        # 原生回滚执行后才知道实际回滚目标（如 ArgoCD history id + revision），写入说明列
+        note = None
+        summary = result.get("rollback_summary")
+        if rollback and summary:
+            existing_note = (req.deploy_note or "").strip()
+            note = f"{summary} {existing_note}".strip()
         finish_deploy_record(
             db,
             deploy_id,
@@ -144,6 +169,7 @@ def _deploy_k8s_core(
             output=result.get("output", "") or "",
             duration_ms=duration_ms,
             stage_times=[{"host": host, "status": status, "duration_ms": duration_ms}],
+            note=note,
         )
         result["deploy_id"] = deploy_id
         return result

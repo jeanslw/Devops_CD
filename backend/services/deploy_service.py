@@ -12,6 +12,7 @@ from backend.database import Database
 from backend.deploy_log import S
 from backend.deploy_run import (
     DeployCancelled,
+    claim_pending_deploy_record,
     clear_cancel_checker,
     deploy_run_manager,
     find_running_deploy,
@@ -125,6 +126,7 @@ class DeployService:
         lang: str = "en",
         callback: Callable | None = None,
         user: dict | None = None,
+        approval_id: int = 0,
     ) -> dict:
         """批量部署到一台或多台服务器。
         user 参数：当前登录用户信息 dict（含 role / permissions / username），
@@ -203,18 +205,22 @@ class DeployService:
             ensure_ascii=False,
         )
 
-        # ── 插入 running 记录 + 注册取消信号 ──
-        deploy_id = start_deploy_record(
-            self._db,
-            deploy_type=deploy_type,
-            project=project_key,
-            tag=tag,
-            image=image,
-            triggered_by=triggered_by,
-            deploy_note=deploy_note,
-            params_json=params_json,
-            rollback_type=rollback_type,
-        )
+        # ── 领取/插入部署记录 + 注册取消信号 ──
+        # 经审批单执行：复用申请阶段的 pending 记录（v1.6 前的旧已批准单无记录时回退新建）
+        deploy_id = claim_pending_deploy_record(self._db, project=project_key, approval_id=approval_id)
+        if not deploy_id:
+            deploy_id = start_deploy_record(
+                self._db,
+                deploy_type=deploy_type,
+                project=project_key,
+                tag=tag,
+                image=image,
+                triggered_by=triggered_by,
+                deploy_note=deploy_note,
+                params_json=params_json,
+                rollback_type=rollback_type,
+                approval_id=approval_id,
+            )
         deploy_run_manager.register(deploy_id)
         set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
 
@@ -394,8 +400,28 @@ class DeployService:
                     "SELECT *, id AS deploy_id FROM cd_deploy_logs ORDER BY id DESC LIMIT ? OFFSET ?",
                     (page_size, offset),
                 ).fetchall()
+            items = [dict(r) for r in rows]
+            # 批量挂载审批信息（approval_id>0 的记录），避免 N+1
+            approval_ids = list({r["approval_id"] for r in items if r.get("approval_id")})
+            if approval_ids:
+                ph = ",".join("?" * len(approval_ids))
+                arows = conn.execute(
+                    f"SELECT id, approver, approved_at, status FROM cd_approvals WHERE id IN ({ph})", approval_ids
+                ).fetchall()
+                # 带 status：前端日志页审批徽章按状态渲染（已批准/待审批/已撤销/已驳回）
+                amap = {
+                    r["id"]: {
+                        "approver": r.get("approver", ""),
+                        "approved_at": r.get("approved_at", ""),
+                        "status": r.get("status", ""),
+                    }
+                    for r in arows
+                }
+                for r in items:
+                    if r.get("approval_id") and r["approval_id"] in amap:
+                        r["approval"] = amap[r["approval_id"]]
             return {
-                "items": [dict(r) for r in rows],
+                "items": items,
                 "total": total,
                 "page": page,
                 "page_size": page_size,

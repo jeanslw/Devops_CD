@@ -279,9 +279,15 @@ def deploy_k8s(
         params=k8s_params(req),
         requester=user.get("username", ""),
         lang=req.lang,
+        scheduled_at=req.scheduled_at,
     )
     if gate:
-        return {"pending": True, "approval_id": gate["approval_id"], "message": "部署已提交审批"}
+        return {
+            "pending": True,
+            "approval_id": gate["approval_id"],
+            "message": gate.get("message", "部署已提交审批"),
+            "scheduled": gate.get("scheduled", False),
+        }
     image, project_key, project_short = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
 
@@ -318,11 +324,13 @@ async def deploy_k8s_stream(
         params=k8s_params(req),
         requester=user.get("username", ""),
         lang=req.lang,
+        scheduled_at=req.scheduled_at,
     )
     if gate:
 
         async def _pending():
-            yield f"retry: 3000\ndata: PENDING:{gate['approval_id']}\n\n"
+            flag = "1" if gate.get("scheduled") else "0"
+            yield f"retry: 3000\ndata: PENDING:{gate['approval_id']}:{flag}\n\n"
 
         return StreamingResponse(_pending(), media_type="text/event-stream")
 

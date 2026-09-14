@@ -1,5 +1,28 @@
 # 更新日志
 
+## v1.5.3 (2026-09-14) — 审批申请人手动执行工作流、定时发布 & 审批修复
+
+### 新增功能
+- **审批工作流（申请人手动执行）**：`pending → approved → 申请人手动执行`——批准后单据仅可由申请人本人领取执行（保留四眼原则），支持同步 `POST /api/approvals/{id}/execute` 与 SSE `/execute-stream`。移除后台自动执行轮询；重启恢复按关联部署记录实际状态收敛 `deploying` 单据，避免重复部署。
+- **定时发布**：申请人在提交部署时可选填 `scheduled_at`；后台守护线程（30 秒）到点**以申请人身份**自动执行 `approved` 单据。有/无审批规则均生效（无规则 + 定时 → 自动批准单，到点执行）；格式非法返回 400。前端新增可选日期选择器与 ⏰ 徽章。
+- **CD 移除账户写接口**：`/api/users` 写 / 改密接口移除（统一在 CI/Glue 管理）；前端删除 `UsersView` / `UserCreateView`。
+- **部署记录与回滚**：`cd_deploy_logs.approval_id` 列（含历史回填）关联审批单；回滚支持自定义说明；ArgoCD 回滚摘要写入说明列。
+
+### 修复
+- 同步执行异常不再卡死审批单（释放项目并发锁）。
+- 撤销保留原审批人并触发撤销通知。
+- `resolve_target_envs` 改为 fail-closed（不再静默跳过审批）。
+- 启动恢复不再重开已完成的部署。
+- `/api/approvals` 规则匹配消除 N+1。
+- 部署记录审批徽章按状态渲染（原按 approver 判断）。
+- 移除遗留 `cd_admin` 默认角色（deny-by-default；新规则 `approver_role` 默认为空）。
+- `database/init_mysql.sql` 同步：`cd_approvals.scheduled_at`、`cd_deploy_logs.approval_id`、`approver_role DEFAULT ''`。
+
+### 测试
+- 审批用例扩充（定时发布、执行兜底、规则匹配/校验、撤销通知），共 114 个测试通过。
+
+---
+
 ## v1.5.2 (2026-09-13) — 安全加固版本（配套 Devops-Glue v2.8.1）
 
 ### 安全

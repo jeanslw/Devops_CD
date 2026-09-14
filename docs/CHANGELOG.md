@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.5.3 (2026-09-14) — Approval requester-execution workflow, scheduled release & approval fixes
+
+### New Features
+- **Approval workflow (requester manual execution)**: `pending → approved → requester execute` — after approval only the requester can claim and execute the ticket (four-eyes retained), via sync `POST /api/approvals/{id}/execute` or SSE `/execute-stream`. The background auto-execution poller was removed; restart recovery now converges `deploying` tickets by the actual deploy-record state to avoid duplicate deploys.
+- **Scheduled release (定时发布)**: the requester can set an optional `scheduled_at` at deploy-submit time; a background daemon (30s) executes due `approved` tickets **as the requester**. Works with or without an approval rule (no-rule + scheduled → an auto-approved ticket executed at the due time). Invalid formats are rejected with 400; the UI adds an optional datetime picker and a ⏰ badge on the ticket.
+- **Account management removed from CD**: `/api/users` write / password-change endpoints removed (managed in CI/Glue); frontend `UsersView` / `UserCreateView` deleted.
+- **Deploy records & rollback**: `cd_deploy_logs.approval_id` column (with historical backfill) links tickets to deploy records; rollback supports a custom note; ArgoCD rollback summary is routed to the note column.
+
+### Fixes
+- Sync execute failure no longer wedges the approval ticket (releases the project concurrency lock).
+- Cancel keeps the original approver and fires the cancel notification.
+- `resolve_target_envs` is fail-closed (no silent skip of approval).
+- Startup recovery no longer re-opens finished deploys.
+- `/api/approvals` rule matching de-N+1'd.
+- Deploy-log approval badge is now status-driven (was approver-based).
+- Legacy `cd_admin` default role removed (deny-by-default; new rules default to an empty `approver_role`).
+- `database/init_mysql.sql` synced: `cd_approvals.scheduled_at`, `cd_deploy_logs.approval_id`, `approver_role DEFAULT ''`.
+
+### Tests
+- Approval suite expanded (scheduled release, execution fallback, rule matching/validation, cancel notification); 114 tests total.
+
+---
+
 ## v1.5.2 (2026-09-13) — Security hardening release (paired with Devops-Glue v2.8.1)
 
 ### Security

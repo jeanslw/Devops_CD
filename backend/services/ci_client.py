@@ -24,9 +24,7 @@ API = {
     "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
     "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline（仅 GitLab CI）
     "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline（仅 GitLab CI）
-    "rbac_users": "/api/rbac/users",  # GET 列表 / POST 建号（systems 由 CI 恒写 'cd'）
-    "rbac_user": "/api/rbac/users/{username}",  # GET 单用户 / PUT 改角色/改密码 / DELETE 删号
-    "rbac_verify_password": "/api/rbac/users/{username}/verify-password",  # POST 旧密码校验 → {valid: bool}
+    "rbac_users": "/api/rbac/users",  # GET 用户列表（账号写操作在 CI 侧完成）
     "rbac_roles": "/api/rbac/roles",  # GET 角色目录 → {roles: [{name, description}]}
 }
 
@@ -152,29 +150,6 @@ class CiClient:
                 return resp.json()
             raise CiClientError(f"CI API POST 失败 [{url}]: {e}") from e
 
-    def _write(self, url: str, method: str, body: dict | None = None) -> Any:
-        """通用写请求（POST/PUT/DELETE）。失败时提取上游 {code, message} 供上层按状态码映射。"""
-        self._ensure_token()
-        try:
-            resp = self._session.request(method, url, json=body, headers=self._auth_headers(), timeout=self._timeout)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 401:
-                self._force_relogin()
-                resp = self._session.request(
-                    method, url, json=body, headers=self._auth_headers(), timeout=self._timeout
-                )
-                resp.raise_for_status()
-                return resp.json()
-            status = e.response.status_code if e.response is not None else None
-            remote = self._extract_error_message(e.response)
-            raise CiClientError(
-                f"CI API {method} 失败 [{url}]: {remote or e}",
-                status_code=status,
-                remote_message=remote,
-            ) from e
-
     @staticmethod
     def _extract_error_message(resp) -> str | None:
         """从错误响应体提取 message（CI jsonError 返回 {code, message}）。"""
@@ -281,28 +256,7 @@ class CiClient:
         """POST /api/build/{path}/pipelines/{id}/cancel — 取消 Pipeline（仅 GitLab CI）"""
         return self._post(self._url(API["cancel"], path=project, id=build_id), {})
 
-    # ── RBAC 用户写接口（/api/rbac/users，仅 API token 持 rbac.user.write scope 可调）──
-
-    def create_user(self, username: str, password: str, role: str) -> Any:
-        """POST /api/rbac/users — 建号。CI 恒写 systems='cd'，做 strtolower/$2y$/super_admin 唯一性等数据不变量。"""
-        return self._write(
-            self._url(API["rbac_users"]), "POST", {"username": username, "password": password, "role": role}
-        )
-
-    def update_user(self, username: str, role: str | None = None, password: str | None = None) -> Any:
-        """PUT /api/rbac/users/{username} — 部分更新（改角色 / 改密码）。"""
-        body: dict[str, Any] = {}
-        if role is not None:
-            body["role"] = role
-        if password is not None:
-            body["password"] = password
-        return self._write(self._url(API["rbac_user"], username=username), "PUT", body)
-
-    def delete_user(self, username: str) -> Any:
-        """DELETE /api/rbac/users/{username} — 删号。CI 做 root 保护 / super_admin 保护。"""
-        return self._write(self._url(API["rbac_user"], username=username), "DELETE")
-
-    # ── RBAC 用户读接口（复用 rbac.user.write scope，无独立 read scope）──
+    # ── RBAC 只读接口（账号写操作统一在 CI 侧管理，CD 不代理）──
 
     def list_users(self) -> list[dict]:
         """GET /api/rbac/users → {"users": [{username, role, systems, status}]}（无 password_hash）"""
@@ -310,15 +264,6 @@ class CiClient:
         if isinstance(result, dict) and "users" in result:
             return result["users"]
         return result
-
-    def get_user(self, username: str) -> dict | None:
-        """GET /api/rbac/users/{username} → {username, role, systems, status}；不存在时上游 404。"""
-        return self._get(self._url(API["rbac_user"], username=username))
-
-    def verify_password(self, username: str, password: str) -> bool:
-        """POST /api/rbac/users/{username}/verify-password → {valid: bool}（哈希不出 Glue）"""
-        result = self._write(self._url(API["rbac_verify_password"], username=username), "POST", {"password": password})
-        return bool(result.get("valid")) if isinstance(result, dict) else False
 
     def list_roles(self) -> list[dict]:
         """GET /api/rbac/roles → {"roles": [{name, description}]}"""

@@ -2,13 +2,12 @@
   <div class="page">
     <div class="app-card">
       <div class="card-header">
-        <h3>{{ $t('approvals.title') }}</h3>
-        <div class="tabs">
+        <h3>{{ canManageRules ? $t('approvals.title') : $t('approvals.myTitle') }}</h3>
+        <div class="tabs" v-if="canManageRules">
           <button class="tab-btn" :class="{ active: tab === 'list' }" @click="tab = 'list'">
             {{ $t('approvals.tabList') }}
           </button>
           <button
-            v-if="canManageRules"
             class="tab-btn"
             :class="{ active: tab === 'rules' }"
             @click="tab = 'rules'; loadRules()"
@@ -28,7 +27,6 @@
             :class="{ active: statusFilter === s.value }"
             @click="setFilter(s.value)"
           >{{ s.label }}</button>
-          <button class="tab-btn" @click="load">{{ $t('common.search') }}</button>
         </div>
 
         <table class="table" v-if="items.length">
@@ -54,14 +52,21 @@
               <td>{{ a.deploy_type || '—' }}</td>
               <td>{{ a.envs || '—' }}</td>
               <td>{{ a.requester || '—' }}</td>
-              <td><span class="badge" :class="statusClass(a.status)">{{ statusLabel(a.status) }}</span></td>
+              <td><span class="badge" :class="statusClass(a.status)">{{ statusLabel(a.status) }}</span>
+                <span
+                  v-if="a.scheduled_at"
+                  class="badge badge-sched"
+                  :title="$t('approvals.scheduleTip', { time: a.scheduled_at })"
+                  style="margin-left:4px"
+                >⏰ [{{ $t('approvals.scheduledBadge') }}] {{ a.scheduled_at.slice(0, 16) }}</span>
+              </td>
               <td>{{ a.approver || '—' }}</td>
               <td>{{ a.created_at }}</td>
               <td class="actions">
                 <button
                   v-if="a.status === 'pending' && a.can_approve"
                   class="btn btn-sm btn-green"
-                  @click="doApprove(a)"
+                  @click="openApprove(a)"
                 >{{ $t('approvals.approve') }}</button>
                 <button
                   v-if="a.status === 'pending' && a.can_approve"
@@ -69,7 +74,12 @@
                   @click="openReject(a)"
                 >{{ $t('approvals.reject') }}</button>
                 <button
-                  v-if="a.status === 'pending' && a.can_cancel"
+                  v-if="a.can_execute"
+                  class="btn btn-sm btn-blue"
+                  @click="goExecute(a)"
+                >{{ $t('approvals.execute') }}</button>
+                <button
+                  v-if="(a.status === 'pending' || a.status === 'approved') && a.can_cancel"
                   class="btn btn-sm"
                   @click="doCancel(a)"
                 >{{ $t('approvals.cancelApproval') }}</button>
@@ -106,6 +116,7 @@
             <div class="form-group">
               <label>{{ $t('approvals.ruleApproverRole') }}</label>
               <select v-model="ruleForm.approver_role">
+                <option value="">{{ $t('approvals.ruleNoRole') }}</option>
                 <option v-for="r in roles" :key="r.name" :value="r.name">{{ roleLabel(r) }}</option>
               </select>
             </div>
@@ -171,6 +182,20 @@
       </div>
     </div>
 
+    <!-- 批准弹窗 -->
+    <div class="modal-overlay" v-if="approveTarget" @click.self="approveTarget = null">
+      <div class="modal-box">
+        <h4>{{ $t('approvals.approve') }} #{{ approveTarget.id }} — {{ approveTarget.project }}</h4>
+        <p v-if="approveTarget.scheduled_at" class="approve-sched">
+          ⏰ {{ $t('approvals.scheduleTip', { time: approveTarget.scheduled_at.slice(0, 16) }) }}
+        </p>
+        <div class="modal-actions">
+          <button class="btn" @click="approveTarget = null">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-green" @click="doApprove">{{ $t('approvals.approve') }}</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 驳回弹窗 -->
     <div class="modal-overlay" v-if="rejectTarget" @click.self="rejectTarget = null">
       <div class="modal-box">
@@ -190,12 +215,15 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useError } from '@/composables/useError'
+import { approvalUrl } from '@/utils/approvalTarget'
 
 const auth = useAuth()
+const router = useRouter()
 const { t } = useI18n()
 const { toast } = useToast()
 const { showError } = useError()
@@ -207,6 +235,7 @@ const page = ref(1)
 const totalPages = ref(1)
 const rejectTarget = ref(null)
 const rejectNote = ref('')
+const approveTarget = ref(null)
 
 const rules = ref([])
 const bots = ref([])
@@ -267,12 +296,20 @@ function goPage(delta) {
   load()
 }
 
-async function doApprove(a) {
+function openApprove(a) {
+  approveTarget.value = a
+}
+
+async function doApprove() {
+  const a = approveTarget.value
+  if (!a) return
+  // 定时发布时间由申请人在提交部署时指定；批准只放行（无 body）
   const r = await fetch(`/api/approvals/${a.id}/approve`, { method: 'POST', headers: auth.A() })
   if (auth.handle401(r)) return
   const d = await r.json()
-  if (d.success) toast(t('approvals.approveSuccess'), true)
+  if (d.success) toast(d.message || t('approvals.approveSuccess'), true)
   else await showError(d)
+  approveTarget.value = null
   load()
 }
 
@@ -304,6 +341,12 @@ async function doCancel(a) {
   if (d.success) toast(t('approvals.cancelSuccess'), true)
   else await showError(d)
   load()
+}
+
+// 已批准单：跳到对应部署页（K8s/Docker/SSH）并自动展开流程面板，由申请人本人执行
+function goExecute(a) {
+  const url = approvalUrl(a)
+  if (url) router.push(url)
 }
 
 // ── 规则 ──
@@ -357,7 +400,7 @@ function resetRuleForm() {
   editingId.value = 0
   approversArr.value = []
   ruleForm.value = {
-    project: '', enabled: false, require_envs: '', approver_role: 'cd_admin',
+    project: '', enabled: false, require_envs: '', approver_role: '',
     approvers: '', notify_bot_id: 0, require_rollback_approval: true
   }
 }
@@ -369,7 +412,7 @@ function editRule(r) {
     project: r.project,
     enabled: !!r.enabled,
     require_envs: r.require_envs || '',
-    approver_role: r.approver_role || 'cd_admin',
+    approver_role: r.approver_role || '',
     approvers: r.approvers || '',
     notify_bot_id: r.notify_bot_id || 0,
     require_rollback_approval: !!r.require_rollback_approval
@@ -535,6 +578,20 @@ onUnmounted(() => {
   padding: 1px 8px;
   font-size: 11px;
   margin-right: 4px;
+}
+.badge-sched {
+  background: var(--amber, #f59e0b);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.approve-sched {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber, #f59e0b);
 }
 .user-picker {
   display: flex;

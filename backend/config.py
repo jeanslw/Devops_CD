@@ -47,15 +47,9 @@ class Settings(BaseSettings):
     # 系统会从 XFF 右端取真实客户端 IP，用于登录失败锁定（与 CI 共享计数）。
     trusted_proxy_hops: int = 0
 
-    # ── 角色（仅用于 admin_users.role 字段校验，权限判断已迁移至 roles/permissions/role_permissions 表）──
-    # 超级管理员角色名：唯一可以创建/删除/修改管理员账号的角色
+    # ── 角色（仅用于登录身份的角色判断；具体权限以 roles/permissions/role_permissions 表为准）──
+    # 超级管理员角色名：隐含全部权限
     super_admin_role: str = "super_admin"
-    # CD 管理员角色名（对应 Glue roles 表里真实存在的 cd_admin 角色）
-    admin_role: str = "cd_admin"
-    # 部署者角色名
-    deployer_role: str = "deployer"
-    # 只读角色名
-    viewer_role: str = "viewer"
 
     # ── SSH（可选）──
     ssh_timeout: int = 30

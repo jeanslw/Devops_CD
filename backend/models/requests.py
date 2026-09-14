@@ -8,17 +8,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class UserCreateRequest(BaseModel):
-    username: str
-    password: str
-    role: str = "cd_admin"  # cd_admin | viewer | deployer（super_admin 不可经此接口创建）
-
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str = ""
-    new_password: str
-
-
 class ServerRequest(BaseModel):
     name: str
     host: str
@@ -58,6 +47,7 @@ class DeployRequest(BaseModel):
     deploy_note: str = ""  # 部署说明（记录到 cd_deploy_logs.deploy_note）
     cd_type: str = "kubectl"  # K8S 子模式：kubectl | helm | argocd | fluxcd
     api_url: str = ""  # ArgoCD API 地址（带 scheme，如 https://argocd:30443），空则回退 https://{host}
+    scheduled_at: str = ""  # 可选定时发布：'YYYY-MM-DD HH:MM[:SS]'，空=不启用定时（按常规审批/直通流程）
     bot_id: int = 0
     lang: str = "en"  # 前端当前语言 en/zh，用于 bot 通知消息国际化
 
@@ -72,6 +62,7 @@ class RollbackRequest(BaseModel):
     deploy_id: int = 0  # 回滚到该记录之前的成功版本；0 = 回滚到最近一次成功版本的上一版
     deploy_type: str = ""  # 限定回滚模式（如 k8s/argocd、compose、ssh），空则回滚最近成功版本的上一版（跨模式）
     tag: str = ""  # 回滚到指定 tag（重放）；空 = 无 tag（k8s 原生回退一步 / 其余重放上一版）
+    deploy_note: str = ""  # 本次回滚的部署说明（与回滚标记一起记录，不取源记录快照里的旧说明）
     bot_id: int = 0
     lang: str = "en"
 
