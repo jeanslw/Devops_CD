@@ -746,9 +746,7 @@ class TestStartupRecovery(ApprovalFlowTestCase):
         # v1.5.3 多副本隔离：claim/insert 写入了本实例 runner + 新鲜心跳，
         # 手动把两条 running 行改为心跳过期，模拟进程已崩溃/被硬杀（否则不会被恢复）
         with self.db.conn() as conn:
-            conn.execute(
-                "UPDATE cd_deploy_logs SET heartbeat_at='0' WHERE id IN (?, ?)", (log_id, plain_id)
-            )
+            conn.execute("UPDATE cd_deploy_logs SET heartbeat_at='0' WHERE id IN (?, ?)", (log_id, plain_id))
         # 只恢复心跳过期的 running 行（其他进程心跳新鲜的绝不动）
         self.assertEqual(recover_stale_running(self.db), 2)
         # 再次执行：心跳已清（行已是 interrupted），无 running 行可恢复
@@ -954,9 +952,11 @@ class TestExecuteSyncFallback(ApprovalFlowTestCase):
             triggered_by="alice",
             approval_id=aid,
         )
-        with self.assertRaises(RuntimeError), patch.object(
-            svc, "load_user_context", return_value=make_user("alice", perms=["cd.deploy.single"])
-        ), patch.object(svc, "run_approval", side_effect=RuntimeError("executor crashed")):
+        with (
+            self.assertRaises(RuntimeError),
+            patch.object(svc, "load_user_context", return_value=make_user("alice", perms=["cd.deploy.single"])),
+            patch.object(svc, "run_approval", side_effect=RuntimeError("executor crashed")),
+        ):
             execute_approval(aid, db=self.db, user=make_user("alice", perms=["cd.deploy.single"]))
 
         # 异常被兜底：单据不卡死在 deploying，锁被释放
