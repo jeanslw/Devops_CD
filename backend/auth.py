@@ -1,6 +1,7 @@
 """认证模块 — 与 php_api 共享 admin_users 表"""
 
 import base64
+import time
 
 import bcrypt
 from fastapi import Depends, HTTPException
@@ -13,6 +14,30 @@ security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
 _systems_col_ok = True  # 乐观假设 systems 列存在，查询失败后置 False
+
+
+def _issue_token(username: str, password_hash: str) -> str:
+    """签发 Bearer token：base64(username:hash:过期epoch秒)。
+
+    有效期 settings.auth_token_ttl_hours（默认 24 小时），过期后需重新登录。
+    """
+    expires = int(time.time()) + settings.auth_token_ttl_hours * 3600
+    return base64.b64encode(f"{username}:{password_hash}:{expires}".encode()).decode()
+
+
+def _parse_token(token: str) -> tuple[str, str, int | None]:
+    """解析 token → (username, hash, 过期epoch秒或 None)。
+
+    兼容两种格式：旧格式 base64(username:hash) 无过期段（expires=None，
+    与 Devops-Glue 共享调用）；新格式多一段过期时间戳。
+    username 含 ':' 时旧格式 partition 取首个 ':' 为界；新格式取末段数字为过期时间。
+    """
+    decoded = base64.b64decode(token).decode()
+    parts = decoded.split(":")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        return parts[0], ":".join(parts[1:-1]), int(parts[-1])
+    username, _, pwd_hash = decoded.partition(":")
+    return username, pwd_hash, None
 
 
 def _has_system(systems: str | None, target: str) -> bool:
@@ -59,10 +84,11 @@ def verify_token(
 
     token = credentials.credentials
     try:
-        decoded = base64.b64decode(token).decode()
-        username, _, _hash = decoded.partition(":")
+        username, _hash, expires = _parse_token(token)
     except Exception as e:
         raise HTTPException(401, "Invalid token format") from e
+    if expires is not None and time.time() > expires:
+        raise HTTPException(401, "Token expired, please login again")
 
     with db.conn() as conn:
         row = _query_user_with_systems(conn, username, "password_hash, systems, status")
@@ -73,9 +99,8 @@ def verify_token(
     _check_cd_access(row)
     _check_disabled(row)
 
-    # 完整校验：重组 token 并比对（防止 path traversal 类攻击）
-    expected = base64.b64encode(f"{username}:{row['password_hash']}".encode()).decode()
-    if not _timing_safe_compare(token, expected):
+    # 校验 token 中的口令哈希段与库内一致（防止 path traversal 类攻击）
+    if not _timing_safe_compare(_hash, row["password_hash"]):
         raise HTTPException(401, "Invalid or expired token")
 
     return username
@@ -92,10 +117,11 @@ def get_current_user(
 
     token = credentials.credentials
     try:
-        decoded = base64.b64decode(token).decode()
-        username, _, _hash = decoded.partition(":")
+        username, _hash, expires = _parse_token(token)
     except Exception as e:
         raise HTTPException(401, "Invalid token format") from e
+    if expires is not None and time.time() > expires:
+        raise HTTPException(401, "Token expired, please login again")
 
     with db.conn() as conn:
         row = _query_user_with_systems(conn, username, "username, password_hash, role, systems, status")
@@ -106,8 +132,7 @@ def get_current_user(
     _check_cd_access(row)
     _check_disabled(row)
 
-    expected = base64.b64encode(f"{username}:{row['password_hash']}".encode()).decode()
-    if not _timing_safe_compare(token, expected):
+    if not _timing_safe_compare(_hash, row["password_hash"]):
         raise HTTPException(401, "Invalid or expired token")
 
     # 查询该角色的权限列表（无角色 → 空权限，deny-by-default）
@@ -222,7 +247,7 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
                 status_code=403,
                 error_key="errors.no_cd_access",
             )
-        return base64.b64encode(f"{user}:{row['password_hash']}".encode()).decode()
+        return _issue_token(user, row["password_hash"])
     return None
 
 
@@ -241,9 +266,20 @@ def load_user_context(db: Database, username: str) -> dict:
 
     用于审批单/回滚在后台执行时重建执行身份（无 token 场景）。返回的角色与权限
     与 get_current_user 一致，执行时仍会做部署权限二次校验（防御深度）。
+    账号已停用（status=0）抛 AppException(403)：手动执行路径登录即被拦，
+    后台/定时执行路径由此处拦截，保证停用账号的已批准定时单不会被自动执行。
     """
+    from backend.exceptions import AppException
+
     with db.conn() as conn:
-        row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
+        row = conn.execute("SELECT role, status FROM admin_users WHERE username=?", (username,)).fetchone()
+    # 停用账号检查（与 authenticate / _check_disabled 同口径）：列不存在时默认 1 放行（兼容旧库）
+    try:
+        status = row["status"] if row else 1
+    except (KeyError, IndexError):
+        status = 1
+    if status is not None and int(status) == 0:
+        raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
     # 用户不存在（账号被删）或无角色 → 空权限，执行时权限校验会拒绝（deny-by-default），
     # 不再回退到任何默认角色
     role = (row["role"] if row else "") or ""

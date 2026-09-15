@@ -125,7 +125,7 @@ def _deploy_k8s_core(
     deploy_type = f"k8s/{req.cd_type}"
     # 参数快照（含 deploy_type 路由判别），供回滚重放
     params_json = json.dumps({"deploy_type": deploy_type, **req.model_dump()}, ensure_ascii=False)
-    # 经审批单执行：复用申请阶段的 pending 记录（v1.6 前的旧已批准单无记录时回退新建）
+    # 经审批单执行：复用申请阶段的 pending 记录（v1.5.3 前的旧已批准单无记录时回退新建）
     try:
         deploy_id = claim_pending_deploy_record(db, project=project_key, approval_id=int(approval_id or 0))
         if not deploy_id:

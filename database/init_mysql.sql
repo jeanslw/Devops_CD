@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS cd_deploy_logs (
     deploy_note  VARCHAR(512) DEFAULT '',
     duration_ms  INT          DEFAULT 0,
     stage_times  TEXT,
+    runner       VARCHAR(128) DEFAULT '',
+    heartbeat_at VARCHAR(32)  DEFAULT '',
     created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

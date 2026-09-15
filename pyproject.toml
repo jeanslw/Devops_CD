@@ -12,3 +12,4 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
 "backend/tests/smoke_test.py" = ["E402"]  # 冒烟测试按轮次分组组织 import，非顶部导入是有意为之
+"backend/tests/*" = ["E402"]  # 测试先 sys.path.insert 再 import backend 包，非顶部导入是有意为之

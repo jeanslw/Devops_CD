@@ -258,6 +258,12 @@ def _run_loop():
     logger.info(f"Alert checker started, interval={interval}s")
     while not _stop.wait(interval):
         try:
+            from backend.database import Database
+            from backend.dlock import acquire
+
+            # 多副本/多 worker 隔离：锁被其他存活实例持有时静默跳过本轮
+            if not acquire(Database(), "alert_check", ttl_seconds=max(interval * 3, 90)):
+                continue
             check_all_rules()
         except Exception as e:
             logger.error(f"Alert check error: {e}")

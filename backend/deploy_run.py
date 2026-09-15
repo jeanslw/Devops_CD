@@ -18,8 +18,15 @@ v1.3.1 新增，支撑三个能力：
 import json
 import sqlite3
 import threading
+import time
 
 from backend.config import settings
+from backend.dlock import INSTANCE_ID
+
+
+def _now_padded() -> str:
+    """当前 epoch 秒的 13 位零填充字符串（定长，字典序比较即数值比较，双驱动通用）。"""
+    return f"{int(time.time()):013d}"
 
 
 def normalize_deploy_status(raw: str | None) -> str:
@@ -29,7 +36,7 @@ def normalize_deploy_status(raw: str | None) -> str:
     normalized to the DB truth values used by the runtime: ok, failed, running,
     terminated, interrupted.
 
-    Note: 'pending' is a first-class status since v1.6 (approval-created deploy
+    Note: 'pending' is a first-class status since v1.5.3 (approval-created deploy
     log rows) and must NOT be aliased to 'running' here.
     """
     value = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
@@ -134,8 +141,98 @@ class DeployRunManager:
         with self._lock:
             self._events.pop(deploy_id, None)
 
+    def active_ids(self) -> list[int]:
+        """返回本进程所有进行中部署的 id（心跳续写与优雅停机用）。"""
+        with self._lock:
+            return list(self._events.keys())
+
+    def cancel_all(self) -> None:
+        """置位本进程所有进行中部署的取消信号（优雅停机用）。"""
+        with self._lock:
+            for ev in self._events.values():
+                ev.set()
+
 
 deploy_run_manager = DeployRunManager()
+
+
+# ── 心跳：多副本 / 多 worker 隔离 ──
+# running 记录带 runner（进程实例标识）+ heartbeat_at，证明持锁进程仍存活。
+# 其他进程启动恢复（recover_stale_running）时只清「无实例标识或心跳已过期」的记录，
+# 绝不动其他进程正在执行的部署。心跳间隔须远小于恢复的过期阈值。
+_HEARTBEAT_INTERVAL = 15  # 秒
+_heartbeat_thread = None
+_heartbeat_stop = threading.Event()
+
+
+def _heartbeat_loop():
+    """为本进程正在执行的部署续写心跳（每 _HEARTBEAT_INTERVAL 秒）。
+
+    Database 惰性单例：Database.__init__ 每次构造都会跑 _validate_shared_db
+    （额外开一条原始连接执行 SHOW TABLES），不能每个心跳周期新建一次；
+    构造失败（DB 短暂不可用）时置 None，下一周期自动重试。
+    """
+    db_holder: list = [None]
+
+    def _get_db():
+        if db_holder[0] is None:
+            from backend.database import Database
+
+            db_holder[0] = Database()
+        return db_holder[0]
+
+    while not _heartbeat_stop.wait(_HEARTBEAT_INTERVAL):
+        try:
+            ids = deploy_run_manager.active_ids()
+            if not ids:
+                continue
+            ph = ",".join("?" * len(ids))
+            db = _get_db()
+            with db.conn() as conn:
+                conn.execute(
+                    f"UPDATE cd_deploy_logs SET heartbeat_at=? "
+                    f"WHERE id IN ({ph}) AND runner=? AND status='running'",
+                    (_now_padded(), *ids, INSTANCE_ID),
+                )
+        except Exception:
+            # DB 不可用时置空 holder，下一周期重新构造（自动重连）
+            db_holder[0] = None
+            import logging
+
+            logging.getLogger(__name__).exception("deploy heartbeat update failed")
+
+
+def ensure_heartbeat() -> None:
+    """启动部署心跳线程（幂等）。"""
+    global _heartbeat_thread
+    if _heartbeat_thread and _heartbeat_thread.is_alive():
+        return
+    _heartbeat_stop.clear()
+    _heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name="deploy-heartbeat")
+    _heartbeat_thread.start()
+
+
+def stop_heartbeat() -> None:
+    """停止部署心跳线程。"""
+    _heartbeat_stop.set()
+    if _heartbeat_thread:
+        _heartbeat_thread.join(timeout=3)
+
+
+def shutdown_running_deploys(timeout: float = 25.0) -> int:
+    """优雅停机：取消本进程所有进行中的部署并等待其收尾（落库 terminated）。
+
+    uvicorn 收到 SIGTERM 后（lifespan shutdown）调用：置位取消信号后，部署线程在
+    下一个检查点抛 DeployCancelled，按 terminated 正常落库，远端不会停留在半执行
+    状态（如 helm 半程 upgrade）。返回等待超时后仍未结束的部署数（正常应为 0）。
+    """
+    deploy_run_manager.cancel_all()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not deploy_run_manager.active_ids():
+            return 0
+        time.sleep(0.2)
+    return len(deploy_run_manager.active_ids())
 
 
 # ── 线程上下文：把当前部署的取消检查回调透传给低层函数 ──
@@ -181,14 +278,17 @@ def start_deploy_record(
     （原子，不再依赖「先查后插」的非原子检查）。
     params_json：完整部署请求快照（含 deploy_type 路由判别），供回滚重放使用。
     approval_id：经审批单执行时关联 cd_approvals.id，无审批为 0。
+    runner / heartbeat_at：进程实例标识 + 心跳（多副本/多 worker 隔离，
+    recover_stale_running 只恢复心跳过期的记录，不误杀其他进程的部署）。
     """
+    ensure_heartbeat()
     with db.conn() as conn:
         try:
             cur = conn.execute(
                 "INSERT INTO cd_deploy_logs "
                 "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, "
-                "lock_key, params_json, rollback_type, approval_id) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "lock_key, params_json, rollback_type, approval_id, runner, heartbeat_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     project,
                     tag,
@@ -203,6 +303,8 @@ def start_deploy_record(
                     params_json or "",
                     normalize_rollback_type(rollback_type),
                     int(approval_id or 0),
+                    INSTANCE_ID,
+                    _now_padded(),
                 ),
             )
         except Exception as e:
@@ -260,14 +362,16 @@ def create_pending_deploy_record(
 def claim_pending_deploy_record(db, *, project: str, approval_id: int) -> int:
     """执行审批单时把其 pending 记录原子转为 running 并占用项目锁。
 
-    返回部署记录 id；该审批单没有 pending 记录时返回 0（v1.6 之前的历史已批准单，
+    返回部署记录 id；该审批单没有 pending 记录时返回 0（v1.5.3 之前的历史已批准单，
     由调用方回退到 start_deploy_record 新建）。并发/重复领取至多一个成功
     （条件 UPDATE）；同项目已有 running 触发唯一索引冲突时抛 ValueError（busy 语义）。
 
     注意：pending 行的 project 是申请阶段的原始项目名，这里同步更新为执行链路的
     project_key（与直通/回滚路径 start_deploy_record 落库口径一致），避免同一项目的
     日志行 project 列在两种路径下分裂，导致按项目筛选/锁预检口径不一致。
+    同时写入 runner / heartbeat_at（多副本/多 worker 隔离，见 start_deploy_record）。
     """
+    ensure_heartbeat()
     approval_id = int(approval_id or 0)
     if not approval_id:
         return 0
@@ -280,8 +384,9 @@ def claim_pending_deploy_record(db, *, project: str, approval_id: int) -> int:
             return 0
         try:
             cur = conn.execute(
-                "UPDATE cd_deploy_logs SET status='running', lock_key=?, project=? WHERE id=? AND status='pending'",
-                (project, project, row["id"]),
+                "UPDATE cd_deploy_logs SET status='running', lock_key=?, project=?, runner=?, heartbeat_at=? "
+                "WHERE id=? AND status='pending'",
+                (project, project, INSTANCE_ID, _now_padded(), row["id"]),
             )
         except Exception as e:
             if _is_integrity_error(e):
@@ -393,12 +498,26 @@ def normalize_db_status_for_query(status: str | None) -> str:
     return normalize_deploy_status(status)
 
 
-def recover_stale_running(db) -> int:
+def recover_stale_running(db, stale_seconds: int = 120) -> int:
     """进程重启恢复：把崩溃遗留的 running 部署记录标记为 interrupted 并清空 lock_key。
 
     返回恢复的记录数。若进程在部署中途崩溃，cd_deploy_logs 会残留 status='running'
     且 lock_key 非空，导致该项目被并发锁永久锁死。启动时调用此函数清理。
+
+    v1.5.3 多副本/多 worker 隔离：running 记录带 runner（进程实例标识）+ heartbeat_at，
+    只恢复「无实例标识（旧版本遗留）或心跳已过期」的记录——其他进程正在执行的部署
+    （心跳新鲜）绝不动，避免任一进程/worker 启动时误杀其他进程进行中的部署
+    （此前无条件全量恢复，replicas>1 或 --workers>1 时会互相打断）。
+
+    心跳超时判定：持锁进程每 15s 续写一次心跳，超过 stale_seconds（默认 120s）未续写
+    即视为已崩溃/被硬杀（无优雅停机窗口兜底时，最多延迟 120s 恢复，项目锁不会永久锁死）。
     """
+    stale_before = f"{int(time.time()) - stale_seconds:013d}"
     with db.conn() as conn:
-        cur = conn.execute("UPDATE cd_deploy_logs SET status='interrupted', lock_key=NULL WHERE status='running'")
+        cur = conn.execute(
+            "UPDATE cd_deploy_logs SET status='interrupted', lock_key=NULL "
+            "WHERE status='running' AND (runner IS NULL OR runner='' "
+            "OR heartbeat_at IS NULL OR heartbeat_at='' OR heartbeat_at < ?)",
+            (stale_before,),
+        )
         return getattr(cur, "rowcount", 0) or 0

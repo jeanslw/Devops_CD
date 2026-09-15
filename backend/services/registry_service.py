@@ -562,6 +562,11 @@ def _sync_worker(db_factory, interval_minutes: int):
         if _sync_stop.is_set():
             break
         try:
+            from backend.dlock import acquire
+
+            # 多副本/多 worker 隔离：锁被其他存活实例持有时静默跳过本轮
+            if not acquire(db_factory(), "registry_sync", ttl_seconds=max(interval_minutes * 180, 120)):
+                continue
             svc = RegistryService(db_factory())
             result = svc.sync_all()
             logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")

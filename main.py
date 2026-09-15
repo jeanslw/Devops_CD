@@ -36,8 +36,8 @@ from backend.routers import (
     users,
     webhooks,
 )
-from backend.services.alert_service import start_alert_checker
-from backend.services.registry_service import RegistryService, start_background_sync
+from backend.services.alert_service import start_alert_checker, stop_alert_checker
+from backend.services.registry_service import RegistryService, start_background_sync, stop_background_sync
 
 
 @asynccontextmanager
@@ -66,6 +66,32 @@ async def lifespan(app: FastAPI):
 
         logging.getLogger(__name__).exception("approval recovery/scheduler bootstrap failed")
     yield
+
+    # ── 优雅停机（uvicorn 收到 SIGTERM 后执行）──
+    # 1. 先停后台线程（镜像同步 / 告警检查 / 定时发布调度器 / 部署心跳）；
+    # 2. 再取消本进程所有进行中的部署并等待其收尾（置位取消信号 → 部署线程在下一个
+    #    检查点抛 DeployCancelled → 按 terminated 正常落库），远端不会停留在半执行状态
+    #    （如 helm 半程 upgrade）。K8s 场景建议 terminationGracePeriodSeconds ≥ 30。
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    try:
+        stop_background_sync()
+        stop_alert_checker()
+        from backend.services.approval_service import stop_scheduled_executor
+
+        stop_scheduled_executor()
+    except Exception:
+        _log.exception("background threads shutdown failed")
+    try:
+        from backend.deploy_run import shutdown_running_deploys, stop_heartbeat
+
+        pending = shutdown_running_deploys(timeout=25.0)
+        stop_heartbeat()
+        if pending:
+            _log.warning("graceful shutdown: %s deploy(s) still active after timeout", pending)
+    except Exception:
+        _log.exception("deploy graceful shutdown failed")
 
 
 # ── 创建 app ──

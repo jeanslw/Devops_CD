@@ -227,7 +227,7 @@ def deploy_k8s_check(
                     f"{req.api_url.rstrip('/')}/api/v1/applications/{deploy_name}",
                     headers={"Authorization": f"Bearer {pwd}"},
                     timeout=10,
-                    verify=False,
+                    verify=settings.argocd_verify_tls,
                 )
                 result["exists"] = r.status_code == 200
             except Exception:

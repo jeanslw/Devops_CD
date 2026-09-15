@@ -685,7 +685,7 @@ def _notify_result(db, rule, approval, result, approver="", note=""):
     notify_approval(db, bot_id, msg)
 
 
-# ── 定时发布调度器（v1.6.1）──
+# ── 定时发布调度器（v1.5.3）──
 # 到点以申请人身份自动执行已批准的定时单据：claim_for_execution 内部实时重建
 # 申请人身份并按快照复核权限，审计链（谁申请/谁批/谁执行）与手动执行完全一致。
 
@@ -749,9 +749,22 @@ def run_due_scheduled(db) -> int:
 
 
 def _sched_run_loop():
+    from backend.database import Database
+    from backend.dlock import acquire, release
+
     while not _sched_stop.is_set():
         try:
-            run_due_scheduled(Database())
+            # 多副本/多 worker 隔离：锁被其他存活实例持有时静默跳过本轮
+            # （分布式锁防止多头扫描调度；单据本身的原子领取状态机兜底不重复部署）
+            if acquire(Database(), "scheduled_executor", ttl_seconds=120):
+                try:
+                    db = Database()
+                    run_due_scheduled(db)
+                    # 周期清扫：恢复其他实例崩溃遗留（心跳已过期）的 running 部署锁，
+                    # 与启动恢复同一套逻辑，无需依赖重启才会触发
+                    recover_on_startup(db)
+                finally:
+                    release(Database(), "scheduled_executor")
         except Exception:
             logger.exception("scheduled executor loop error")
         _sched_stop.wait(_SCHED_POLL_INTERVAL)
