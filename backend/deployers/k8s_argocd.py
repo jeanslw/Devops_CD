@@ -39,9 +39,7 @@ class ArgoCDDeployer(K8sSubDeployer):
         app_name = project.split("/")[-1]
         try:
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            r = requests.delete(
-                f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=_VERIFY
-            )
+            r = requests.delete(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=_VERIFY)
             if r.status_code in (200, 204):
                 return {"success": True, "output": f"ArgoCD application {app_name} deleted"}
             else:

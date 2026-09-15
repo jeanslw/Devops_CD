@@ -190,8 +190,7 @@ def _heartbeat_loop():
             db = _get_db()
             with db.conn() as conn:
                 conn.execute(
-                    f"UPDATE cd_deploy_logs SET heartbeat_at=? "
-                    f"WHERE id IN ({ph}) AND runner=? AND status='running'",
+                    f"UPDATE cd_deploy_logs SET heartbeat_at=? WHERE id IN ({ph}) AND runner=? AND status='running'",
                     (_now_padded(), *ids, INSTANCE_ID),
                 )
         except Exception:
