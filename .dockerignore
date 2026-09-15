@@ -12,6 +12,10 @@ Dockerfile
 *.md
 LICENSE
 
+# 加密密钥（绝不打入镜像）：crypto.py 在无 SECRET_KEY 时写入项目根的 .cd_secret_key，
+# 泄露即可解密 cd_servers 中所有 SSH 口令/私钥
+.cd_secret_key
+
 #cache
 frontend/node_modules
 frontend/dist
@@ -20,6 +24,15 @@ frontend/dist
 __pycache__
 *.pyc
 *.pyo
+
+# 本地工具目录/缓存（与运行无关）
+.codebuddy/
+.trae/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+pyrightconfig.json
+start.bat
 
 #localhost
 tests/

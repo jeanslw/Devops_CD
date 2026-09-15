@@ -239,6 +239,8 @@ class Database:
         """
         migrations = [
             ("cd_deploy_logs", "approval_id", "INT DEFAULT 0"),
+            ("cd_deploy_logs", "runner", "VARCHAR(128) DEFAULT ''"),
+            ("cd_deploy_logs", "heartbeat_at", "VARCHAR(32) DEFAULT ''"),
             ("cd_approvals", "deploy_id", "INT DEFAULT 0"),
             ("cd_approvals", "approved_at", "VARCHAR(32) DEFAULT ''"),
             ("cd_approvals", "scheduled_at", "VARCHAR(32) DEFAULT ''"),
@@ -317,6 +319,10 @@ class Database:
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_digest VARCHAR(128) DEFAULT ''")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN approval_id INTEGER DEFAULT 0")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN runner VARCHAR(128) DEFAULT ''")
+        with suppress(Exception):
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN heartbeat_at VARCHAR(32) DEFAULT ''")
         # 并发锁唯一索引：running 记录 lock_key=project，同项目至多一条 running（NULL 可重复）
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
         # 清理废弃的 deploy_id 列（原自增部署序号，已改用主键 id）
@@ -452,6 +458,16 @@ class Database:
             scheduled_at TEXT DEFAULT '',
             updated_at TEXT DEFAULT ''
         )""")
+
+        # 旧库缺列幂等迁移（CREATE TABLE IF NOT EXISTS 不会为已存在的表补列）
+        for col, col_def in (
+            ("deploy_id", "INTEGER DEFAULT 0"),
+            ("approved_at", "TEXT DEFAULT ''"),
+            ("scheduled_at", "TEXT DEFAULT ''"),
+            ("updated_at", "TEXT DEFAULT ''"),
+        ):
+            with suppress(Exception):
+                conn.execute(f"ALTER TABLE cd_approvals ADD COLUMN {col} {col_def}")
 
         # 审批规则表（v1.5.0）
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_approval_rules (

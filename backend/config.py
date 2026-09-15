@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # 用于加密 cd_servers 的 password / ssh_key；留空则自动生成 .cd_secret_key 文件
     secret_key: str = ""
 
+    # ── 认证 token（可选）──
+    # 登录签发的 Bearer token 有效期（小时），过期后需重新登录，默认 24 小时。
+    # 兼容性：旧格式（无过期段）的 base64(username:hash) token 仍然接受，
+    # 与 Devops-Glue 共享账号/token 的调用不受影响。
+    auth_token_ttl_hours: int = 24
+
     # ── Harbor 镜像仓库（必填）──
     # 统一读 HARBOR_BASE_URL（带 scheme 的完整地址，如 https://hub.example.com）：
     # CI(Glue) 直接使用；CD 内部剥掉 scheme 供 Docker 镜像引用，HarborClient 自动探测 https→http。
@@ -64,6 +70,9 @@ class Settings(BaseSettings):
     flux_namespace: str = "flux-system"
     k8s_helm_timeout: int = 300  # helm upgrade --install --timeout（秒）
     k8s_rollout_timeout: int = 120  # kubectl rollout status --timeout（秒）
+    # ArgoCD API 请求是否校验 TLS 证书。ArgoCD 始终走 HTTPS；自签名证书环境保持 false，
+    # 证书受信（如 ingress 挂了有效证书）时设 true 防中间人截获 Bearer token。
+    argocd_verify_tls: bool = False
 
     # ── 通知（可选）──
     dingtalk_secret: str = ""  # 钉钉加签密钥

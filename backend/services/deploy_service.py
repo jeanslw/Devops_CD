@@ -206,7 +206,7 @@ class DeployService:
         )
 
         # ── 领取/插入部署记录 + 注册取消信号 ──
-        # 经审批单执行：复用申请阶段的 pending 记录（v1.6 前的旧已批准单无记录时回退新建）
+        # 经审批单执行：复用申请阶段的 pending 记录（v1.5.3 前的旧已批准单无记录时回退新建）
         deploy_id = claim_pending_deploy_record(self._db, project=project_key, approval_id=approval_id)
         if not deploy_id:
             deploy_id = start_deploy_record(

@@ -1,4 +1,4 @@
-"""审批三段式流程测试（v1.6.0：申请 → 批准仅放行 → 申请人本人手动执行）。
+"""审批三段式流程测试（v1.5.3：申请 → 批准仅放行 → 申请人本人手动执行）。
 
 用真实临时 SQLite 库验证状态机与 SQL（建表/迁移/回填），外部身份重建与
 执行器用 mock 隔离，不依赖 SSH/K8s/CI。
@@ -29,11 +29,9 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # 测试一律用临时 SQLite，忽略 .env 中可能配置的 MySQL（必须在导入 Database 前设置）
-from backend.config import settings  # noqa: E402
+from backend.config import settings
 
 settings.db_driver = "sqlite"
-
-from fastapi import HTTPException  # noqa: E402
 
 from backend.database import Database  # noqa: E402
 from backend.deploy_run import (  # noqa: E402
@@ -108,8 +106,11 @@ class ApprovalFlowTestCase(unittest.TestCase):
             )
             return cur.lastrowid
 
-    def get_approval(self, aid):
-        return svc._get(self.db, aid)
+    def get_approval(self, aid) -> dict:
+        """按 id 取审批单；不存在时断言失败（测试内所有调用点均假定单据存在）。"""
+        row = svc._get(self.db, aid)
+        assert row is not None, f"approval {aid} not found"
+        return dict(row)
 
     def set_status(self, aid, status):
         with self.db.conn() as conn:
@@ -354,6 +355,7 @@ class TestClaimAndRun(ApprovalFlowTestCase):
         # 日志行退回 pending、锁释放，可再次领取
         with self.db.conn() as conn:
             log_row = conn.execute("SELECT status, lock_key FROM cd_deploy_logs WHERE id=?", (log_id,)).fetchone()
+        assert log_row is not None
         self.assertEqual(log_row["status"], "pending")
         self.assertIsNone(log_row["lock_key"])
         self.assertEqual(claim_pending_deploy_record(self.db, project="proj-a", approval_id=aid), log_id)
@@ -630,6 +632,7 @@ class TestGateCreatesOnlyRequest(ApprovalFlowTestCase):
                 params={"deploy_type": "ssh", "deploy_note": "note-x"},
                 requester="alice",
             )
+        assert result is not None
 
         self.assertTrue(result["pending"])
         aid = result["approval_id"]
@@ -696,6 +699,7 @@ class TestGateCreatesOnlyRequest(ApprovalFlowTestCase):
                 requester="alice",
                 for_rollback=True,
             )
+        assert result is not None
         self.assertTrue(result["pending"])
         self.assertTrue(self.get_approval(result["approval_id"])["status"], svc.PENDING)
 
@@ -739,8 +743,16 @@ class TestStartupRecovery(ApprovalFlowTestCase):
             image="",
             triggered_by="root",
         )
-        # 模拟 recover_stale_running 先把所有 running 行标记 interrupted
+        # v1.5.3 多副本隔离：claim/insert 写入了本实例 runner + 新鲜心跳，
+        # 手动把两条 running 行改为心跳过期，模拟进程已崩溃/被硬杀（否则不会被恢复）
+        with self.db.conn() as conn:
+            conn.execute(
+                "UPDATE cd_deploy_logs SET heartbeat_at='0' WHERE id IN (?, ?)", (log_id, plain_id)
+            )
+        # 只恢复心跳过期的 running 行（其他进程心跳新鲜的绝不动）
         self.assertEqual(recover_stale_running(self.db), 2)
+        # 再次执行：心跳已清（行已是 interrupted），无 running 行可恢复
+        self.assertEqual(recover_stale_running(self.db), 0)
         svc.recover_on_startup(self.db)
 
         with self.db.conn() as conn:
@@ -753,6 +765,38 @@ class TestStartupRecovery(ApprovalFlowTestCase):
         # 无 approval_id 的普通 interrupted 行保持 interrupted
         self.assertEqual(rows[plain_id][0], "interrupted")
         self.assertEqual(self.get_approval(aid)["status"], svc.APPROVED)
+
+    def test_recovery_skips_fresh_heartbeat_from_other_instance(self):
+        """v1.5.3 多副本/多 worker 隔离：其他进程心跳新鲜的 running 行绝不被启动恢复误杀。
+
+        场景：K8s replicas>1 或 uvicorn --workers>1，另一实例正在执行部署（心跳新鲜），
+        本实例启动时 recover_stale_running 不得将其标记 interrupted（此前无条件全量恢复
+        会互相打断其他进程的部署）。
+        """
+        from backend.deploy_run import recover_stale_running
+
+        other_id = start_deploy_record(
+            self.db,
+            deploy_type="ssh",
+            project="proj-y",
+            tag="v1",
+            image="",
+            triggered_by="root",
+        )
+        # 模拟另一实例持有：改写 runner 为其他实例标识，心跳保持新鲜（刚写入）
+        with self.db.conn() as conn:
+            conn.execute("UPDATE cd_deploy_logs SET runner='other-host:1:deadbeef' WHERE id=?", (other_id,))
+        self.assertEqual(recover_stale_running(self.db), 0)
+        with self.db.conn() as conn:
+            row = conn.execute("SELECT status FROM cd_deploy_logs WHERE id=?", (other_id,)).fetchone()
+        self.assertEqual(row["status"], "running")
+        # 心跳过期后才被恢复（进程确实崩溃）
+        with self.db.conn() as conn:
+            conn.execute("UPDATE cd_deploy_logs SET heartbeat_at='0' WHERE id=?", (other_id,))
+        self.assertEqual(recover_stale_running(self.db), 1)
+        with self.db.conn() as conn:
+            row = conn.execute("SELECT status, lock_key FROM cd_deploy_logs WHERE id=?", (other_id,)).fetchone()
+        self.assertEqual((row["status"], row["lock_key"]), ("interrupted", None))
 
     def test_recovery_converges_terminal_deploy_records(self):
         """崩溃窗口：部署记录已写终态但审批单还停留在 deploying 时，按记录状态收敛审批单。
@@ -910,17 +954,16 @@ class TestExecuteSyncFallback(ApprovalFlowTestCase):
             triggered_by="alice",
             approval_id=aid,
         )
-        with (
-            patch.object(svc, "load_user_context", return_value=make_user("alice", perms=["cd.deploy.single"])),
-            patch.object(svc, "run_approval", side_effect=RuntimeError("executor crashed")),
-        ):
-            with self.assertRaises(RuntimeError):
-                execute_approval(aid, db=self.db, user=make_user("alice", perms=["cd.deploy.single"]))
+        with self.assertRaises(RuntimeError), patch.object(
+            svc, "load_user_context", return_value=make_user("alice", perms=["cd.deploy.single"])
+        ), patch.object(svc, "run_approval", side_effect=RuntimeError("executor crashed")):
+            execute_approval(aid, db=self.db, user=make_user("alice", perms=["cd.deploy.single"]))
 
         # 异常被兜底：单据不卡死在 deploying，锁被释放
         self.assertEqual(self.get_approval(aid)["status"], svc.FAILED)
         with self.db.conn() as conn:
             row = conn.execute("SELECT status, lock_key FROM cd_deploy_logs WHERE id=?", (log_id,)).fetchone()
+        assert row is not None
         self.assertEqual(row["status"], "pending")
         self.assertIsNone(row["lock_key"])
 
@@ -948,16 +991,22 @@ class TestMatchRule(ApprovalFlowTestCase):
         self._add_rule("proj-a")
         self._add_rule("*")
         rules = svc.list_all_rules(self.db)
-        self.assertEqual(svc.match_rule(rules, "proj-a")["project"], "proj-a")
+        rule = svc.match_rule(rules, "proj-a")
+        assert rule is not None
+        self.assertEqual(rule["project"], "proj-a")
         # 未精确命中 → '*' 全局默认兜底
-        self.assertEqual(svc.match_rule(rules, "proj-x")["project"], "*")
+        rule = svc.match_rule(rules, "proj-x")
+        assert rule is not None
+        self.assertEqual(rule["project"], "*")
         # 无规则 → None
         self.assertIsNone(svc.match_rule([], "proj-a"))
 
     def test_csv_multi_project_match(self):
         self._add_rule("a,b,c")
         rules = svc.list_all_rules(self.db)
-        self.assertEqual(svc.match_rule(rules, "b")["project"], "a,b,c")
+        rule = svc.match_rule(rules, "b")
+        assert rule is not None
+        self.assertEqual(rule["project"], "a,b,c")
         self.assertIsNone(svc.match_rule(rules, "d"))
 
     def test_list_all_rules_returns_all_ordered(self):
@@ -1077,7 +1126,7 @@ class TestRuleWriteWithoutSharedTables(ApprovalFlowTestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 定时发布（v1.6.1）：批准带定时 + 调度器到点执行
+# 定时发布（v1.5.3）：批准带定时 + 调度器到点执行
 # ─────────────────────────────────────────────────────────────
 class TestScheduledExecution(ApprovalFlowTestCase):
     def _add_rule(self, project="proj-a"):
@@ -1103,6 +1152,7 @@ class TestScheduledExecution(ApprovalFlowTestCase):
                 requester="alice",
                 scheduled_at="2026-09-15 10:00",
             )
+        assert result is not None
         self.assertTrue(result["pending"])
         # datetime-local 的 'HH:MM' 归一为 'HH:MM:SS'
         self.assertEqual(self.get_approval(result["approval_id"])["scheduled_at"], "2026-09-15 10:00:00")
@@ -1119,6 +1169,7 @@ class TestScheduledExecution(ApprovalFlowTestCase):
                 params={"deploy_type": "ssh"},
                 requester="alice",
             )
+        assert result is not None
         self.assertTrue(result["pending"])
         self.assertEqual(self.get_approval(result["approval_id"])["scheduled_at"], "")
 
@@ -1149,6 +1200,7 @@ class TestScheduledExecution(ApprovalFlowTestCase):
             requester="alice",
             scheduled_at="2026-09-15 10:00",
         )
+        assert result is not None
         self.assertTrue(result["pending"])
         self.assertTrue(result["scheduled"])
         row = self.get_approval(result["approval_id"])
@@ -1162,6 +1214,7 @@ class TestScheduledExecution(ApprovalFlowTestCase):
                 (result["approval_id"],),
             ).fetchone()
         self.assertIsNotNone(log)
+        assert log is not None
         self.assertEqual(log["status"], "pending")
         self.assertIsNone(log["lock_key"])
 
@@ -1247,7 +1300,7 @@ class TestScheduledExecution(ApprovalFlowTestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 侧边栏红点计数（v1.6.2）：count_todo
+# 侧边栏红点计数（v1.5.3）：count_todo
 # ─────────────────────────────────────────────────────────────
 class TestCountTodo(ApprovalFlowTestCase):
     def test_count_todo_counts_pending_for_approver_and_own_to_execute(self):

@@ -7,11 +7,13 @@ import os
 import posixpath
 import re
 import shlex
+import time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
 from backend.auth import (
     _check_disabled,
+    _parse_token,
     _query_permissions,
     _query_user_with_systems,
     _timing_safe_compare,
@@ -58,10 +60,11 @@ async def _ws_verify(token: str | None = None) -> str:
     if not token:
         raise HTTPException(401, "请登录")
     try:
-        decoded = base64.b64decode(token).decode()
-        username, _, _hash = decoded.partition(":")
+        username, _hash, expires = _parse_token(token)
     except Exception as e:
         raise HTTPException(401, "token 无效") from e
+    if expires is not None and time.time() > expires:
+        raise HTTPException(401, "token 已过期，请重新登录")
 
     db = get_db()
     with db.conn() as conn:
@@ -70,8 +73,7 @@ async def _ws_verify(token: str | None = None) -> str:
             raise HTTPException(401, "token 无效")
         # 停用账号即时踢下线：WebSocket（WebShell）是独立鉴权路径，必须与 REST 一致校验 status
         _check_disabled(row)
-        expected = base64.b64encode(f"{row['username']}:{row['password_hash']}".encode()).decode()
-        if not _timing_safe_compare(token, expected):
+        if not _timing_safe_compare(_hash, row["password_hash"]):
             raise HTTPException(401, "token 无效")
         return row["username"]
 

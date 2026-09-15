@@ -2,12 +2,25 @@
 
 import logging
 
+import requests
+import urllib3
+
+from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.base import split_image_ref
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import check_cancelled
 
 logger = logging.getLogger(__name__)
+
+# ArgoCD 始终走 HTTPS；是否校验 TLS 证书由 settings.argocd_verify_tls 控制
+# （默认 False 兼容自签名证书环境；证书受信时设 True 防中间人截获 Bearer token）
+_VERIFY = settings.argocd_verify_tls
+
+
+def _get(url: str, **kw):
+    headers = kw.pop("headers", {})
+    return requests.get(url, headers=headers, timeout=10, verify=_VERIFY, **kw)
 
 
 class ArgoCDDeployer(K8sSubDeployer):
@@ -20,16 +33,15 @@ class ArgoCDDeployer(K8sSubDeployer):
         self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
     ) -> dict:
         """停止：删除 ArgoCD Application"""
-        import requests
-        import urllib3
-
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         token = pwd
         base = getattr(req, "api_url", "") or f"https://{host}"
         app_name = project.split("/")[-1]
         try:
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            r = requests.delete(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+            r = requests.delete(
+                f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=_VERIFY
+            )
             if r.status_code in (200, 204):
                 return {"success": True, "output": f"ArgoCD application {app_name} deleted"}
             else:
@@ -62,10 +74,10 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             # ── 发现 Argo CD Application 名（与 deploy 同源，不盲猜等于项目名） ──
             app_name = project.split("/")[-1]
-            r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+            r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
             if r.status_code != 200:
                 log(S("deploy_log.argocd_searching"))
-                r_list = requests.get(f"{base}/api/v1/applications", headers=headers, timeout=10, verify=False)
+                r_list = _get(f"{base}/api/v1/applications", headers=headers)
                 found = None
                 if r_list.status_code == 200:
                     for a in r_list.json().get("items", []):
@@ -81,7 +93,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                     msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                     log(msg)
                     return {"success": False, "output": msg}
-                r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
                 if r.status_code != 200:
                     msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                     log(msg)
@@ -111,7 +123,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 json={"id": prev_id},
                 headers=headers,
                 timeout=10,
-                verify=False,
+                verify=_VERIFY,
             )
             if r.status_code != 200:
                 log(S("deploy_log.argocd_rollback_failed", code=r.status_code, msg=r.text[:200]))
@@ -123,7 +135,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             for i in range(30):
                 check_cancelled()
                 time.sleep(2)
-                r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
                 if r.status_code != 200:
                     log(S("deploy_log.argocd_poll_fail", code=r.status_code, msg=r.text[:200]))
                     continue
@@ -190,11 +202,11 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             # ── 发现 Argo CD Application 名，不盲猜等于项目名 ──
             app_name = project.split("/")[-1]
-            r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+            r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
             if r.status_code != 200:
                 # 精确名不存在，搜索所有 App 按镜像名匹配
                 log(S("deploy_log.argocd_searching"))
-                r_list = requests.get(f"{base}/api/v1/applications", headers=headers, timeout=10, verify=False)
+                r_list = _get(f"{base}/api/v1/applications", headers=headers)
                 if r_list.status_code == 200:
                     apps = r_list.json().get("items", [])
                     found = None
@@ -216,7 +228,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                     log(msg)
                     return {"success": False, "output": msg}
                 # 用发现的 app_name 重新获取
-                r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
                 if r.status_code != 200:
                     msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                     log(msg)
@@ -251,7 +263,7 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             log(S("deploy_log.argocd_update"))
             r = requests.put(
-                f"{base}/api/v1/applications/{app_name}", json=patch, headers=headers, timeout=10, verify=False
+                f"{base}/api/v1/applications/{app_name}", json=patch, headers=headers, timeout=10, verify=_VERIFY
             )
             if r.status_code != 200:
                 log(S("deploy_log.argocd_update_fail", code=r.status_code, msg=r.text[:200]))
@@ -260,7 +272,7 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             log(S("deploy_log.argocd_sync"))
             r = requests.post(
-                f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=False
+                f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=_VERIFY
             )
             if r.status_code != 200:
                 log(S("deploy_log.argocd_sync_fail", code=r.status_code, msg=r.text[:200]))
@@ -273,7 +285,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             for i in range(30):
                 check_cancelled()
                 time.sleep(2)
-                r = requests.get(f"{base}/api/v1/applications/{app_name}", headers=headers, timeout=10, verify=False)
+                r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
                 if r.status_code != 200:
                     log(S("deploy_log.argocd_poll_fail", code=r.status_code, msg=r.text[:200]))
                     continue
