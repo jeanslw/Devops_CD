@@ -380,7 +380,9 @@ async function viewLog(b) {
 
 async function loadLog() {
   try {
-    const r = await fetch(`/api/ci/projects/${encodeURIComponent(selectedProject.value)}/builds/${encodeURIComponent(logBuildId.value)}/log`, {
+    // Gitea Actions：run id 与 job id 是两个独立序列，日志需走 run id → 全部 job 日志端点
+    const endpoint = buildProvider.value === 'gitea_ci' ? 'pipeline-log' : 'log'
+    const r = await fetch(`/api/ci/projects/${encodeURIComponent(selectedProject.value)}/builds/${encodeURIComponent(logBuildId.value)}/${endpoint}`, {
       headers: auth.A()
     })
     if (auth.handle401(r)) return
