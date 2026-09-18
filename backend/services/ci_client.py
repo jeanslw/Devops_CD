@@ -19,7 +19,8 @@ API = {
     "projects_full": "/api/build/projects",  # GET → [{job_name, ..., latest_tag, latest_pipeline, tag_time}]
     "tags": "/api/build/{path}/tags",  # GET → {items, total, page, page_size, total_pages}
     "trigger": "/api/build/{path}/trigger",  # POST {ref, variables} → trigger result
-    "log": "/api/build/{path}/logs/{id}",  # GET → text/plain
+    "log": "/api/build/{path}/logs/{id}",  # GET → text/plain（id=job id）
+    "pipeline_log": "/api/build/{path}/pipelines/{id}/logs",  # GET → text/plain（Gitea 专属：id=run id）
     "variables": "/api/build/{path}/variables",  # GET → {key: options}
     "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
     "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline（仅 GitLab CI）
@@ -231,8 +232,12 @@ class CiClient:
         return self._post(self._url(API["trigger"], path=project), body)
 
     def get_build_log(self, project: str, build_id: int | str) -> str:
-        """GET /api/build/{path}/logs/{id} → text/plain"""
+        """GET /api/build/{path}/logs/{id} → text/plain（id=job id）"""
         return self._get_text(self._url(API["log"], path=project, id=build_id))
+
+    def get_pipeline_log(self, project: str, run_id: int | str) -> str:
+        """GET /api/build/{path}/pipelines/{id}/logs → text/plain（Gitea 专属：id=run id → 全部 job 日志拼接）"""
+        return self._get_text(self._url(API["pipeline_log"], path=project, id=run_id))
 
     def get_variables(self, project: str) -> Any:
         """GET /api/build/{path}/variables?format=json → 完整含 build_provider"""

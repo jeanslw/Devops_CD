@@ -70,9 +70,20 @@ def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(
 # ── 构建日志 ──
 @router.get("/projects/{project:path}/builds/{id}/log")
 def get_build_log(project: str, id: str, _user: str = Depends(require_perm("cd.build-manage"))):
-    """获取构建日志 → CI GET /api/build/{path}/logs/{id}"""
+    """获取构建日志 → CI GET /api/build/{path}/logs/{id}（id=job id）"""
     try:
         log = _client().get_build_log(project, id)
+        return PlainTextResponse(log)
+    except CiClientError as e:
+        raise ServiceUnavailableError(f"CI 日志获取失败: {e}", error_key="errors.ci_log_failed") from e
+
+
+# ── 流水线日志（Gitea 专属：run id → 全部 job 日志拼接）──
+@router.get("/projects/{project:path}/builds/{id}/pipeline-log")
+def get_pipeline_log(project: str, id: str, _user: str = Depends(require_perm("cd.build-manage"))):
+    """获取流水线日志 → CI GET /api/build/{path}/pipelines/{id}/logs（id=run id）"""
+    try:
+        log = _client().get_pipeline_log(project, id)
         return PlainTextResponse(log)
     except CiClientError as e:
         raise ServiceUnavailableError(f"CI 日志获取失败: {e}", error_key="errors.ci_log_failed") from e
