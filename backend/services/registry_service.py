@@ -130,7 +130,14 @@ class RegistryService:
         try:
             raw = self._harbor.list_artifacts(repo)
             logger.info(f"Harbor 返回 {len(raw)} 条 artifacts: {repo}")
+        except HarborUnavailableError:
+            # 连接层不可达（HARBOR_BASE_URL 错 / 网络不通 / Harbor 未启动）必须上抛：
+            # 一旦被下面的兜底分支当成「0 条」，sync_all 会返回 ok=true，前端显示「同步完成」，
+            # 把故障伪装成「同步成功但没数据」。上抛后由 sync_all / sync_for_project 转成
+            # {ok: false, error_key: errors.harbor_unavailable}，界面即可提示「连接不可达」。
+            raise
         except Exception as e:
+            # 单个仓库的非连接类错误（404 / 解析异常等）保持容错，不打断其他仓库的同步
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
@@ -569,7 +576,12 @@ def _sync_worker(db_factory, interval_minutes: int):
                 continue
             svc = RegistryService(db_factory())
             result = svc.sync_all()
-            logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")
+            if result.get("ok"):
+                logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")
+            else:
+                # Harbor / CI 不可达时 sync_all 返回 ok=False，此时不能再打「完成」，
+                # 否则日志与真实状态不符（和界面上「显示同步完成」是同一个坑）
+                logger.warning(f"定时同步中止: {result.get('error') or '未知原因'}")
         except HarborUnavailableError as e:
             logger.warning(f"定时同步跳过（Harbor 不可达）: {e}")
         except Exception as e:

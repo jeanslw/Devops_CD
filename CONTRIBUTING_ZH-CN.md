@@ -61,7 +61,7 @@
 - **文档**：你的贡献必须包含或更新相关文档：
     - 在 `README.md` / `README_ZH-CN.md` 或 `docs/` 下更新使用说明。
     - 如果是新的 API 接口，更新手册中的 OpenAPI / 端点列表。
-    - 如果引入新配置项，更新 `.env.example` 和管理员手册。
+    - 如果引入新配置项：部署相关更新 `.env.example`，业务参数更新 `config/app.env`；两者都同步管理员手册。
 
 ### 4. 提交代码（Commit Message）
 

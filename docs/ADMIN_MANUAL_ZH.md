@@ -40,7 +40,18 @@
 | Ansible | 自动化部署（可选） |
 | MySQL 8.0+ / MariaDB 10.4+ | 数据库（推荐生产环境） |
 
-## 2. 环境变量配置
+## 2. 配置说明（两个文件）
+
+配置分两层，不要混：
+
+| 文件 | 放什么 | 谁维护 |
+|------|--------|--------|
+| 项目根 `.env` | **部署配置**：数据库连接、SECRET_KEY、Harbor / CI 凭据、监听地址、TZ、反代跳数 | 每个部署环境各自填（`cp .env.example .env`） |
+| `config/app.env` | **业务参数**：超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等 | 随版本发布、已带合理默认值，一般不用改 |
+
+优先级：**进程环境变量 > 根 `.env` > `config/app.env` > 代码默认值**。想临时覆盖某个业务参数，直接写进根 `.env`（Docker 下由 compose 注入容器）即可，**无需重建镜像**。
+
+### 2.1 部署配置：项目根 `.env`
 
 ```env
 # ── 数据库（必填，必须与 Devops-Glue API 一致）──
@@ -66,9 +77,6 @@ CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/�
 # CI_ADMIN_USER=admin                 # 未配置 token 时回退：CI 系统管理员账号
 # CI_ADMIN_PASS=                      # 未配置 token 时回退：CI 系统管理员密码
 
-# ── SSH 自动信任（开发环境 fallback，生产保持 false）──
-SSH_AUTO_TRUST=false
-
 # ── 加密密钥（openssl rand -base64 32；用于加密 SSH 口令/私钥）──
 # 留空时首次运行自动生成并写入 .cd_secret_key 文件（勿提交、勿删除）；
 # 公开示例值 devops_cd_2026 / change_me_to_secret 会被拒绝并回退随机密钥。
@@ -77,17 +85,28 @@ SECRET_KEY=
 # ── 可信反向代理跳数：0=直连（默认，忽略 X-Forwarded-For）；前置 nginx 设 1，多层递增 ──
 TRUSTED_PROXY_HOPS=0
 
-# ── SSH ──
+# ── 监听地址 / 时区（docker-compose 已注入 0.0.0.0:8081 与 TZ）──
+# HOST=0.0.0.0
+# PORT=8081
+# TZ=Asia/Shanghai
+```
+
+### 2.2 业务参数：`config/app.env`（随镜像发布，通常无需修改）
+
+```env
+AUTH_TOKEN_TTL_HOURS=24     # 登录 token 有效期（小时）
+SUPER_ADMIN_ROLE=super_admin
+DB_POOL_MAX=10
+DB_POOL_MIN=2
 SSH_TIMEOUT=30
-SSH_DEFAULT_USER=root
-
-# ── Docker 部署 ──
+SSH_KEEPALIVE=30
+SSH_AUTO_TRUST=false        # 已废弃，仅为兼容旧配置保留
 CONTAINER_RESTART_POLICY=always
-
-# ── K8s 部署 ──
-# FLUX_NAMESPACE=flux-system
-
-# ── 监控与告警（秒）──
+FLUX_NAMESPACE=flux-system
+K8S_HELM_TIMEOUT=300
+K8S_ROLLOUT_TIMEOUT=120
+ARGOCD_VERIFY_TLS=false
+CI_TIMEOUT=30
 MONITORING_ENABLED=true
 MONITOR_CACHE_SERVERS=60
 MONITOR_CACHE_SYSTEM=30
@@ -96,10 +115,8 @@ MONITOR_CACHE_PODS=30
 MONITOR_CACHE_DOCKER=30
 MONITOR_CACHE_POD_DETAIL=15
 ALERT_CHECK_INTERVAL=60
-REGISTRY_SYNC_INTERVAL=3600
-
-# ── 日志截断（字符）──
-LOG_TRUNCATE_CHARS=2000
+REGISTRY_SYNC_INTERVAL=30
+LOG_TRUNCATE_CHARS=20000
 NOTIFY_TRUNCATE_CHARS=200
 ```
 

@@ -1,5 +1,14 @@
 # CD Service — 和 PHP Devops-Glue 搭配使用
 # 数据库推荐 MySQL / MariaDB，和 PHP 端共用 devops_glue 库
+#
+# 配置分两层：
+#   · 部署层 —— 根目录 .env（数据库 / SECRET_KEY / Harbor / CI 凭据 / TZ），下面 env_file 注入容器；
+#   · 业务层 —— config/app.env（超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等），随镜像发布；
+#   优先级：进程环境变量 > 根 .env > config/app.env > 代码默认值 ——
+#   临时覆盖业务参数：写进根 .env 或本文件的 environment 即可，无需重建镜像。
+#
+# 联合部署（Devops_Glue 仓库 docker-compose.yml 里注释掉的 devops-cd 段）时，CD 不带任何 volume，
+# 业务参数同样来自镜像内 config/app.env，根 .env 由 Glue 的 env_file 注入。
 
 services:
   # 启动前环境变量预检（一次性容器，复用 devops-cd 镜像不增加额外构建）：

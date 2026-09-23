@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.5.4 (2026-09-23) — Config layering: deployment config vs application parameters
+
+### Changed
+- **Two-layer configuration**: the repo-root `.env` now holds deployment values only (database, SECRET_KEY, Harbor / CI credentials, listen address, TZ, proxy hops); application parameters (timeouts / cache TTLs / intervals / truncation / namespaces / roles / monitoring switch) moved to `config/app.env`, shipped with the repo and the image.
+- **Precedence**: process environment > root `.env` > `config/app.env` > code defaults. Override any application parameter by adding it to the root `.env` (compose injects it in Docker) or to the compose `environment:` block — **no image rebuild needed**.
+- **Joint deployment requires no change to Devops-Glue's `docker-compose.yml`**: the commented-out `devops-cd` block mounts no volumes, so CD takes application parameters from `config/app.env` inside the image while deployment values come from that block's `env_file: .env` (`DB_HOST=mysql` resolves via the compose service name).
+- Standalone Docker: `docker compose up -d --build` (application parameters come from `config/app.env` inside the image); bare metal: just run `python main.py` from the repo root — `backend/config.py` reads the root `.env` itself, so no environment pre-export and no launcher script are involved.
+- Docs: admin manual §2 split into "2.1 Deployment config / 2.2 Application parameters" (both languages); `.env.example`, FAQ, README, CONTRIBUTING and UI hints updated; `config/app.env` ships with full comments.
+
+### Fixed
+- **Registry sync masked Harbor outages**: `RegistryService.sync_repo()` caught `HarborUnavailableError` inside its generic `except Exception` and returned 0, so `POST /api/registry/sync` answered `{ok: true, total: 0}` and the UI reported "sync complete" while Harbor was unreachable (the background thread logged "sync complete" too). Connection-level failures now propagate: the API returns `{ok: false, error_key: "errors.harbor_unavailable"}` and the UI shows "connection unreachable" (red, kept until a sync succeeds); per-repo non-connection errors stay tolerant. Regression tests in `backend/tests/test_registry_sync.py`.
+- **Startup crash**: pydantic-settings defaults to `extra="forbid"`, so any non-field key in `.env` (`TZ`, or the Glue-side `DB_ROOT_PASS` injected during joint deployment) raised `extra_forbidden`; now explicitly `extra="ignore"`.
+
 ## v1.5.3 (2026-09-14) — Approval requester-execution workflow, scheduled release & approval fixes
 
 ### New Features

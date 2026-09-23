@@ -1,7 +1,19 @@
-"""应用配置 — 所有配置通过 .env 文件设置，不要直接修改此文件"""
+"""应用配置 — 分两层文件，不要直接修改此文件
+
+- 部署层（随环境变）：项目根 `.env` —— 数据库连接、SECRET_KEY、Harbor / CI 凭据、监听地址、TZ。
+  Docker 部署时由 docker-compose.yml / Devops-Glue 的 env_file 注入容器（镜像内不含 .env）。
+- 业务层（随版本走）：`config/app.env` —— 超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等。
+  随镜像发布，改完重启即可；容器内要临时覆盖，把变量写进根 .env 或 compose 的 environment 即可。
+- 优先级：进程环境变量 > 项目根 .env（部署层，可覆盖任何一项）> config/app.env（随版本发布的业务默认值）> 下方字段默认值。
+"""
+
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 项目根目录（本文件位于 <root>/backend/config.py）— 用绝对路径，裸机 / 容器 / 任意工作目录一致
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -101,7 +113,15 @@ class Settings(BaseSettings):
     monitor_cache_pod_detail: int = 15
     alert_check_interval: int = 60  # 告警检测间隔（秒）
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # 两个文件都允许缺失（缺失则跳过，不报错）：Docker 镜像内没有 .env，配置由 compose 注入进程环境变量。
+    # 同名变量以「元组中靠后的文件」生效，因此 .env 放最后 → 根 .env 永远能覆盖 config/app.env（随版本发布的业务默认值）。
+    # extra="ignore"：pydantic-settings 默认 extra="forbid"，env 文件里与本服务无关的键（如 .env 的 TZ、
+    # Devops-Glue 侧注入的 DB_ROOT_PASS 等）会被当作额外字段直接报错，这里显式忽略。
+    model_config = SettingsConfigDict(
+        env_file=(BASE_DIR / "config" / "app.env", BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 settings = Settings()
