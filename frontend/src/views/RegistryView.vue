@@ -4,7 +4,7 @@
     <div class="card" v-if="!viewingArtifacts">
       <h3>{{ $t('registry.title') }}
         <span class="refresh-bar">
-          <span style="font-size:12px;color:#888;margin-right:10px">{{ lastSyncText }}</span>
+          <span :style="{ fontSize: '12px', color: syncUnreachable ? '#e74c3c' : '#888', marginRight: '10px' }">{{ lastSyncText }}</span>
           <select v-model="syncInterval" @change="onSyncIntervalChange" style="width:auto;margin:0;padding:3px 8px;font-size:12px">
             <option :value="0">{{ $t('registry.syncInterval.off') }}</option>
             <option :value="15">{{ $t('registry.syncInterval.minutes', { n: 15 }) }}</option>
@@ -121,6 +121,9 @@ const { showError } = useError()
 const repos = ref([])
 const loading = ref(true)
 const lastSyncText = ref('加载中…')
+// Harbor 连接不可达标记：同步被中止时上方显示「连接不可达」（红色），
+// 并让 loadRepos() 的刷新不会用「上次同步：…」把它盖掉
+const syncUnreachable = ref(false)
 const syncInterval = ref(0)
 let _syncing = false
 
@@ -189,7 +192,9 @@ async function loadRepos() {
     if (!ct.includes('application/json')) { console.error('registry/repositories 返回非 JSON'); return }
     const data = await r.json()
     repos.value = Array.isArray(data.repositories) ? data.repositories : []
-    lastSyncText.value = data.last_sync ? t('registry.lastSync', { time: formatTime(data.last_sync) }) : t('registry.notSynced')
+    lastSyncText.value = syncUnreachable.value
+      ? t('registry.syncUnreachable')
+      : (data.last_sync ? t('registry.lastSync', { time: formatTime(data.last_sync) }) : t('registry.notSynced'))
   } catch (e) { console.error('加载仓库列表失败:', e) } finally { loading.value = false }
 }
 
@@ -220,9 +225,16 @@ async function syncAll() {
     }
     const d = await r.json()
     if (d.ok) {
+      syncUnreachable.value = false
       lastSyncText.value = d.last_sync ? t('registry.lastSync', { time: formatTime(d.last_sync) }) : t('registry.syncComplete', { total: 0, repos: 0 })
       toast(t('registry.syncComplete', { total: d.total, repos: d.repos }), true)
+    } else if (d.error_key === 'errors.harbor_unavailable') {
+      // Harbor 连接不可达：不能显示「同步完成」，明确提示连接不可达
+      syncUnreachable.value = true
+      lastSyncText.value = t('registry.syncUnreachable')
+      showError(d)
     } else {
+      syncUnreachable.value = false
       lastSyncText.value = t('registry.syncFail')
       showError(d)
     }
@@ -306,9 +318,12 @@ async function syncCurrentRepo() {
     }
     const d = await r.json()
     if (d.ok) {
+      syncUnreachable.value = false
       toast('✅ ' + t('registry.syncComplete', { total: 0, repos: 0 }).split('：')[0] + t('common.success'), true)
       if (artifactRepoId.value) loadArtifacts(artifactPage.value)
     } else {
+      // Harbor 连接不可达时同步被中止：标记状态，返回列表页仍显示「连接不可达」
+      syncUnreachable.value = d.error_key === 'errors.harbor_unavailable'
       showError(d)
     }
   } catch (e) {

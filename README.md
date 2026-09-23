@@ -47,11 +47,12 @@ venv\Scripts\activate
 
 pip install -r requirements.txt
 
-# Configure environment
+# Configure environment (deployment values: database / Harbor / CI credentials / SECRET_KEY)
 cp .env.example .env
 # DB_DRIVER=sqlite (default; must point to the same .db file as the PHP API, e.g. ../php_api/config/data/data.db)
 # or DB_DRIVER=mysql (recommended; must share the same database with the PHP API)
 # SECRET_KEY: leave empty to auto-generate .cd_secret_key, or set openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
+# Application parameters (timeouts / cache TTLs / intervals / monitoring switch) live in config/app.env with sane defaults
 
 python main.py
 # Open http://localhost:8081
@@ -61,6 +62,7 @@ python main.py
 
 ```bash
 cp .env.example .env
+# Application parameters come from config/app.env inside the image; to override one, add it to .env and run `docker compose up -d` (no --build needed)
 docker compose up -d --build
 # Open http://localhost:8081
 ```

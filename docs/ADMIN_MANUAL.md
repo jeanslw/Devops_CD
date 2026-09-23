@@ -41,7 +41,18 @@
 | Ansible | Infrastructure automation (optional) |
 | MySQL 8.0+ / MariaDB 10.4+ | Database (recommended for production) |
 
-## 2. Environment Configuration
+## 2. Configuration (two files)
+
+Configuration is split into two layers:
+
+| File | Contents | Maintained by |
+|------|----------|---------------|
+| Repo-root `.env` | **Deployment config**: database, SECRET_KEY, Harbor / CI credentials, listen address, TZ, proxy hops | per environment (`cp .env.example .env`) |
+| `config/app.env` | **Application parameters**: timeouts / cache TTLs / intervals / truncation / namespaces / roles | shipped with releases, sane defaults — usually no change |
+
+Precedence: **process environment > root `.env` > `config/app.env` > code defaults**. To override an application parameter temporarily, just add it to the root `.env` (compose injects it into the container in Docker) — **no image rebuild needed**.
+
+### 2.1 Deployment config: repo-root `.env`
 
 ```env
 # ── Database (required; must match Devops-Glue API) ──
@@ -67,9 +78,6 @@ CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account /
 # CI_ADMIN_USER=admin                 # fallback admin account login (only when token empty)
 # CI_ADMIN_PASS=                      # fallback admin account password (only when token empty)
 
-# ── SSH Auto-Trust (dev fallback, keep false in prod) ──
-SSH_AUTO_TRUST=false
-
 # ── Encryption key (openssl rand -base64 32; encrypts SSH passwords/private keys) ──
 # Empty = auto-generated on first run into .cd_secret_key (do not commit or delete).
 # Public sample values devops_cd_2026 / change_me_to_secret are rejected and replaced by a random key.
@@ -78,17 +86,28 @@ SECRET_KEY=
 # ── Trusted reverse-proxy hops: 0=direct (default, ignore X-Forwarded-For); 1 behind nginx, increase per extra layer ──
 TRUSTED_PROXY_HOPS=0
 
-# ── SSH ──
+# ── Listen address / timezone (docker-compose injects 0.0.0.0:8081 and TZ) ──
+# HOST=0.0.0.0
+# PORT=8081
+# TZ=Asia/Shanghai
+```
+
+### 2.2 Application parameters: `config/app.env` (shipped in the image, usually no change)
+
+```env
+AUTH_TOKEN_TTL_HOURS=24     # login token TTL (hours)
+SUPER_ADMIN_ROLE=super_admin
+DB_POOL_MAX=10
+DB_POOL_MIN=2
 SSH_TIMEOUT=30
-SSH_DEFAULT_USER=root
-
-# ── Docker Deployment ──
+SSH_KEEPALIVE=30
+SSH_AUTO_TRUST=false        # deprecated, kept for old configs only
 CONTAINER_RESTART_POLICY=always
-
-# ── K8s Deployment ──
-# FLUX_NAMESPACE=flux-system
-
-# ── Monitoring & Alerting (seconds) ──
+FLUX_NAMESPACE=flux-system
+K8S_HELM_TIMEOUT=300
+K8S_ROLLOUT_TIMEOUT=120
+ARGOCD_VERIFY_TLS=false
+CI_TIMEOUT=30
 MONITORING_ENABLED=true
 MONITOR_CACHE_SERVERS=60
 MONITOR_CACHE_SYSTEM=30
@@ -97,10 +116,8 @@ MONITOR_CACHE_PODS=30
 MONITOR_CACHE_DOCKER=30
 MONITOR_CACHE_POD_DETAIL=15
 ALERT_CHECK_INTERVAL=60
-REGISTRY_SYNC_INTERVAL=3600
-
-# ── Log Truncation (characters) ──
-LOG_TRUNCATE_CHARS=2000
+REGISTRY_SYNC_INTERVAL=30
+LOG_TRUNCATE_CHARS=20000
 NOTIFY_TRUNCATE_CHARS=200
 ```
 

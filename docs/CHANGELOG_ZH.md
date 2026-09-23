@@ -1,5 +1,18 @@
 # 更新日志
 
+## v1.5.4 (2026-09-23) — 配置分层：部署配置与业务参数分离
+
+### 变更
+- **配置分两层**：项目根 `.env` 只放部署配置（数据库连接、SECRET_KEY、Harbor / CI 凭据、监听地址、TZ、反代跳数）；业务参数（超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色 / 监控开关等）移到 `config/app.env`，随仓库与镜像发布。
+- **优先级**：进程环境变量 > 根 `.env` > `config/app.env` > 代码默认值。要覆盖某个业务参数，写进根 `.env`（Docker 下由 compose 注入）或 compose 的 `environment` 即可，**无需重建镜像**。
+- **联合部署无需改动 Devops-Glue 的 `docker-compose.yml`**：注释掉的 `devops-cd` 段没有任何 volume，CD 的业务参数来自镜像内 `config/app.env`，部署变量由该段的 `env_file: .env` 注入（`DB_HOST=mysql` 走 compose 服务名）。
+- 单独部署：`docker compose up -d --build`（业务参数取自镜像内 `config/app.env`）；裸机：在项目根执行 `python main.py` 即可 —— `backend/config.py` 自己读取根 `.env`，无需预先导出环境变量，也不依赖任何启动脚本。
+- 文档：管理员手册 §2 拆为「2.1 部署配置 / 2.2 业务参数」（中英）；`.env.example`、FAQ、README、CONTRIBUTING 与界面提示同步；`config/app.env` 内附完整注释。
+
+### 修复
+- **镜像同步把 Harbor 故障伪装成成功**：`RegistryService.sync_repo()` 的兜底 `except Exception` 把 `HarborUnavailableError` 一起吞掉并返回 0，导致 `POST /api/registry/sync` 返回 `{ok: true, total: 0}`、界面显示「同步完成」（后台线程日志同样记「定时同步完成」）。现在连接层错误直接上抛：接口返回 `{ok: false, error_key: "errors.harbor_unavailable"}`，界面显示「连接不可达」（红色，直到下次同步成功才恢复）；单个仓库的非连接类错误仍保持容错。回归测试见 `backend/tests/test_registry_sync.py`。
+- **启动即崩**：pydantic-settings 默认 `extra="forbid"`，`.env` 中存在非字段键（如 `TZ`，或联合部署时 Glue 侧注入的 `DB_ROOT_PASS`）会抛 `extra_forbidden`；现显式 `extra="ignore"`。
+
 ## v1.5.3 (2026-09-14) — 审批申请人手动执行工作流、定时发布 & 审批修复
 
 ### 新增功能

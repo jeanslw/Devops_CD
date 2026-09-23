@@ -61,7 +61,7 @@ If you plan to implement a major feature or refactor, please **discuss it in an 
 - **Documentation**: Your contribution must include or update relevant documentation:
     - Update usage instructions in `README.md` / `README_ZH-CN.md` or under `docs/`.
     - If it's a new API endpoint, update the OpenAPI / endpoint list in the manuals.
-    - If new configuration items are introduced, update `.env.example` and the administrator manual.
+    - If new configuration items are introduced: deployment values go to `.env.example`, application parameters go to `config/app.env`; keep the administrator manual in sync with both.
 
 ### 4. Commit Message
 

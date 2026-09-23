@@ -225,6 +225,6 @@ DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 0 2 * * * mysql -u root -p'password' devops_glue -e "DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);"
 ```
 
-**后台任务说明**：CD 服务自身有两个内置后台线程（`threading.Event.wait`），通过 `.env` 配置间隔：
+**后台任务说明**：CD 服务自身有两个内置后台线程（`threading.Event.wait`），通过 `config/app.env` 配置间隔：
 - Harbor 同步：`REGISTRY_SYNC_INTERVAL`（默认 3600 秒 = 1 小时）
 - 告警检查：`ALERT_CHECK_INTERVAL`（默认 300 秒 = 5 分钟）
