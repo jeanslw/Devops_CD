@@ -49,10 +49,10 @@ class ComposeDeployer(Deployer):
             if not template:
                 return DeployResult(image=image, status="failed", output="Missing custom commands")
             cmd = (
-                template.replace("{image}", image)
-                .replace("{image_name}", image_name)
-                .replace("{tag}", tag)
-                .replace("{project}", project)
+                template.replace("{image}", shlex.quote(image))
+                .replace("{image_name}", shlex.quote(image_name))
+                .replace("{tag}", shlex.quote(tag))
+                .replace("{project}", shlex.quote(project))
             )
             try:
                 with ssh_session(target, settings.ssh_timeout) as ssh:

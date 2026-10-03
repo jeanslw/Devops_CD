@@ -10,6 +10,7 @@ from backend.config import settings
 from backend.crypto import decrypt
 from backend.database import Database
 from backend.deploy_log import S
+from backend.exceptions import ValidationError
 from backend.deploy_run import (
     DeployCancelled,
     claim_pending_deploy_record,
@@ -68,7 +69,10 @@ class DeployService:
                 placeholders = ",".join("?" * len(ids))
                 rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
+                # server_ids 为空 = 部署到全部可用服务器；K8S 集群（type=k8s/argocd/fluxcd）
+                # 只能走 /api/deploy-k8s（cluster_id 指定），不属于本 SSH/Compose 路线，
+                # 须过滤掉，否则空选择会误把 K8S 集群当 SSH/Compose 目标导致签名错位。
+                rows = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name").fetchall()
 
             return [
                 (
@@ -157,8 +161,9 @@ class DeployService:
         # ── 并发锁：同一项目同时只允许一个进行中部署 ──
         running = find_running_deploy(self._db, project_key)
         if running:
-            raise ValueError(
-                f"项目 '{project_key}' 已有部署进行中 (deploy #{running['deploy_id']})，请等待完成或取消后再试"
+            raise ValidationError(
+                f"项目 '{project_key}' 已有部署进行中 (deploy #{running['deploy_id']})，请等待完成或取消后再试",
+                error_key="errors.deploy_busy",
             )
 
         options = _parse_command_options(commands) if commands else {}
@@ -207,20 +212,24 @@ class DeployService:
 
         # ── 领取/插入部署记录 + 注册取消信号 ──
         # 经审批单执行：复用申请阶段的 pending 记录（v1.5.3 前的旧已批准单无记录时回退新建）
-        deploy_id = claim_pending_deploy_record(self._db, project=project_key, approval_id=approval_id)
-        if not deploy_id:
-            deploy_id = start_deploy_record(
-                self._db,
-                deploy_type=deploy_type,
-                project=project_key,
-                tag=tag,
-                image=image,
-                triggered_by=triggered_by,
-                deploy_note=deploy_note,
-                params_json=params_json,
-                rollback_type=rollback_type,
-                approval_id=approval_id,
-            )
+        try:
+            deploy_id = claim_pending_deploy_record(self._db, project=project_key, approval_id=approval_id)
+            if not deploy_id:
+                deploy_id = start_deploy_record(
+                    self._db,
+                    deploy_type=deploy_type,
+                    project=project_key,
+                    tag=tag,
+                    image=image,
+                    triggered_by=triggered_by,
+                    deploy_note=deploy_note,
+                    params_json=params_json,
+                    rollback_type=rollback_type,
+                    approval_id=approval_id,
+                )
+        except ValueError as e:
+            # 唯一索引冲突（同项目已有 running）= busy，包装为与 K8S 路径一致的语义异常
+            raise ValidationError(str(e), error_key="errors.deploy_busy") from e
         deploy_run_manager.register(deploy_id)
         set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
 
@@ -307,6 +316,7 @@ class DeployService:
                 output=self._build_output(results, is_batch, total),
                 duration_ms=duration_ms,
                 stage_times=stage_times,
+                project=project_key,
             )
 
             # 通知
@@ -349,6 +359,7 @@ class DeployService:
                 output=cancelled_output,
                 duration_ms=duration_ms,
                 stage_times=stage_times,
+                project=project_key,
             )
             return {
                 "success": False,
@@ -373,6 +384,7 @@ class DeployService:
                 output=error_output[: settings.log_truncate_chars],
                 duration_ms=duration_ms,
                 stage_times=stage_times,
+                project=project_key,
             )
             raise
         finally:

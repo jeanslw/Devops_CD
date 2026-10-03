@@ -428,6 +428,7 @@ def finish_deploy_record(
     duration_ms: int = 0,
     stage_times: list | None = None,
     note: str | None = None,
+    project: str = "",
 ) -> None:
     """把 running 记录更新为最终状态（ok / failed / partial / terminated）。
 
@@ -457,13 +458,17 @@ def finish_deploy_record(
                 params,
             )
         else:
-            # 兜底：没有拿到 deploy_id 时按 running 记录更新（保证不丢）
+            # 兜底：没有拿到 deploy_id 时按 project 精确更新 running 记录（保证不丢），
+            # 绝不裸更新全部 running——并发多项目部署会互相覆盖终态。
             params = [normalized_status, target, output_truncated, duration_ms, stage_times_json]
             if note_value is not None:
                 params.append(note_value)
+            where = "WHERE status='running' AND project=?" if project else "WHERE status='running'"
+            if project:
+                params.append(project)
             conn.execute(
                 f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?{note_clause}, "
-                "lock_key=NULL WHERE status='running'",
+                f"lock_key=NULL {where}",
                 params,
             )
 

@@ -10,6 +10,8 @@ namespace 从 YAML 中解析，前端不提供 namespace 输入框。
 import logging
 import shlex
 
+import yaml
+
 from backend.config import settings
 from backend.deploy_log import S
 from backend.deployers.k8s_utils import _kubectl_pods
@@ -20,18 +22,32 @@ logger = logging.getLogger(__name__)
 
 
 def _get_yaml_metadata(ssh, yaml_path):
-    """从 YAML 文件提取 Deployment 的 name + namespace。
-    namespace 未声明时返回空串，调用方不传 -n，由 kubectl context 决定。"""
-    _, stdout, _ = ssh.exec_command(
-        f"kubectl get -f {shlex.quote(yaml_path)} "
-        f'-o jsonpath=\'{{.items[?(@.kind=="Deployment")].metadata.name}} {{{{.items[?(@.kind=="Deployment")].metadata.namespace}}}}\' '
-        f"2>/dev/null"
-    )
-    raw = stdout.read().decode().strip()
-    if not raw:
+    """从远程 YAML 文件内容本地解析 Deployment 的 name + namespace。
+
+    首次部署时资源尚未在集群中创建，kubectl get -f 会 NotFound 取不到名，
+    故改为 cat 读文件内容 + yaml 本地解析（不依赖资源已存在）。
+    namespace 未声明时返回空串，调用方不传 -n，由 kubectl context 决定。
+    """
+    out, _, _ = _exec_on(ssh, f"cat {shlex.quote(yaml_path)} 2>/dev/null")
+    if not out.strip():
         return "", ""
-    parts = raw.split(None, 1)  # name namespace
-    return parts[0], (parts[1].strip() if len(parts) > 1 else "")
+    try:
+        docs = list(yaml.safe_load_all(out))
+    except yaml.YAMLError:
+        return "", ""
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        # 单文档直接是 Deployment；List 类型（kind: List）则遍历 items
+        if doc.get("kind") == "Deployment":
+            meta = doc.get("metadata") or {}
+            return str(meta.get("name") or ""), str(meta.get("namespace") or "")
+        if doc.get("kind") == "List":
+            for item in doc.get("items") or []:
+                if isinstance(item, dict) and item.get("kind") == "Deployment":
+                    meta = item.get("metadata") or {}
+                    return str(meta.get("name") or ""), str(meta.get("namespace") or "")
+    return "", ""
 
 
 class K8sDeployer(Deployer):

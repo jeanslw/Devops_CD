@@ -39,8 +39,8 @@ assert e == {"success": False, "error": "test", "code": 500}
 print(f"  responses.error(): {PASS}")
 
 # Signatures
-assert list(inspect.signature(_exec_on).parameters.keys()) == ["ssh", "cmd"]
-assert list(inspect.signature(_ssh_cmd).parameters.keys()) == ["ssh", "cmd"]
+assert list(inspect.signature(_exec_on).parameters.keys()) == ["ssh", "cmd", "timeout"]
+assert list(inspect.signature(_ssh_cmd).parameters.keys()) == ["ssh", "cmd", "timeout"]
 assert list(inspect.signature(ssh_exec_stream).parameters.keys()) == ["ssh", "cmd", "log_fn"]
 print(f"  Signatures: {PASS}")
 

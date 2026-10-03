@@ -179,7 +179,11 @@ def require_perm(perm_key: str):
 # 顶层 blanket 权限 cd.deploy-manage 隐含所有子权限（super_admin 也隐含所有）
 _DEPLOY_PERM_MAP: dict = {
     "ssh": "cd.deploy.single",
-    "docker": "cd.deploy.docker",
+    # Docker/Compose 部署：前端（DockerDeployView）与部署器注册名均为 "compose"，
+    # 权限键是 cd.deploy.docker。此前误写为 "docker" 键，导致 resolve_deploy_perm("compose")
+    # 匹配不上而回退到 cd.deploy.single（少权用户 403 / 单机权限用户反可部署 Docker）。
+    "compose": "cd.deploy.docker",
+    "docker": "cd.deploy.docker",  # 兼容历史入参（老记录/外部脚本可能仍发 "docker"）
     "k8s/kubectl": "cd.deploy.k8s",
     "k8s/argocd": "cd.deploy.k8s",
     "k8s/fluxcd": "cd.deploy.k8s",

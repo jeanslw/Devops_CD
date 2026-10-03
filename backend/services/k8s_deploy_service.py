@@ -170,6 +170,7 @@ def _deploy_k8s_core(
             duration_ms=duration_ms,
             stage_times=[{"host": host, "status": status, "duration_ms": duration_ms}],
             note=note,
+            project=project_key,
         )
         result["deploy_id"] = deploy_id
         return result
@@ -183,6 +184,7 @@ def _deploy_k8s_core(
             output="Deployment cancelled by user",
             duration_ms=duration_ms,
             stage_times=[{"host": host, "status": "terminated", "duration_ms": duration_ms}],
+            project=project_key,
         )
         return {"success": False, "output": "Deployment cancelled by user", "cancelled": True, "deploy_id": deploy_id}
     except Exception as e:
@@ -196,6 +198,7 @@ def _deploy_k8s_core(
             output=str(e)[: settings.log_truncate_chars],
             duration_ms=duration_ms,
             stage_times=[{"host": host, "status": "failed", "duration_ms": duration_ms}],
+            project=project_key,
         )
         raise
     finally:

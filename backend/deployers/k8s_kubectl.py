@@ -122,7 +122,8 @@ class KubectlDeployer(K8sSubDeployer):
         tag = req.tag
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
-        ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
+        # ns_flag 延后构建：留空 k8s_ns 时需先解析 YAML 提取 manifest 声明的 namespace
+        # 作为执行/验证上下文（见 effective_ns），不能在这里就按空串拼 -n ''
 
         yaml_content = ""
         ssh = None
@@ -163,15 +164,18 @@ class KubectlDeployer(K8sSubDeployer):
                 docs = list(yaml.safe_load_all(yaml_content))
             except yaml.YAMLError as exc:
                 return {"success": False, "output": f"Invalid Kubernetes YAML: {exc}"}
+            manifest_ns = ""
             for doc in docs:
                 if not isinstance(doc, dict):
                     continue
                 kind = str(doc.get("kind") or "")
                 metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
-                manifest_ns = str(metadata.get("namespace") or "").strip()
+                doc_ns = str(metadata.get("namespace") or "").strip()
+                if doc_ns and not manifest_ns:
+                    manifest_ns = doc_ns
                 if (
                     namespace
-                    and manifest_ns
+                    and doc_ns
                     and kind
                     not in {
                         "Namespace",
@@ -186,15 +190,22 @@ class KubectlDeployer(K8sSubDeployer):
                         "PriorityClass",
                         "PodSecurityPolicy",
                     }
-                    and manifest_ns != namespace
+                    and doc_ns != namespace
                 ):
                     return {
                         "success": False,
                         "output": (
                             f"Kubernetes namespace mismatch: request namespace [{namespace}] "
-                            f"but manifest resource [{kind or 'Unknown'}] declares [{manifest_ns}]."
+                            f"but manifest resource [{kind or 'Unknown'}] declares [{doc_ns}]."
                         ),
                     }
+
+            # 执行/验证统一使用的 namespace：请求填写优先；留空则以 YAML 声明为准
+            # （与 K8sDeployRequest.k8s_ns 契约一致）。apply 不带 -n 时按 manifest 落位，
+            # 若 rollout/pods 查询仍不带 -n 会落到 kubeconfig 默认 ns，
+            # 造成「apply 成功、验证/重启却查错 namespace」的假失败。
+            effective_ns = namespace or manifest_ns
+            ns_flag = f" -n {shlex.quote(effective_ns)}" if effective_ns else ""
 
             yaml_deploy_name = _get_deployment_name(yaml_content)
             if yaml_deploy_name and yaml_deploy_name != filter_name:
@@ -216,7 +227,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             _log(callback, S("deploy_log.verifying_app"))
 
-            before = _kubectl_pods(ssh, deploy_name, namespace)
+            before = _kubectl_pods(ssh, deploy_name, effective_ns)
             before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
             before_pods = {b.split()[0] for b in before.split("\n") if b.strip()} if before else set()
 
@@ -227,7 +238,7 @@ class KubectlDeployer(K8sSubDeployer):
                     is_first_deploy = True
                     _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
                 else:
-                    all_pods = _kubectl_pods(ssh, "", namespace)
+                    all_pods = _kubectl_pods(ssh, "", effective_ns)
                     running_pods = all_pods.strip()
                     if running_pods:
                         _log(callback, S("deploy_log.app_not_found", name=deploy_name, running=running_pods))
@@ -247,9 +258,9 @@ class KubectlDeployer(K8sSubDeployer):
                 _log(callback, S("deploy_log.current_version_none"))
 
             _log(callback, S("deploy_log.starting_deploy"))
-            cmds = [f"kubectl apply -n {shlex.quote(namespace)} -f {shlex.quote(tmp)}"]
+            cmds = [f"kubectl apply{ns_flag} -f {shlex.quote(tmp)}"]
             if not is_first_deploy:
-                cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)} {ns_flag}")
+                cmds.append(f"kubectl rollout restart deployment/{shlex.quote(deploy_name)}{ns_flag}")
             for i, c in enumerate(cmds):
                 check_cancelled()
                 _log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
@@ -267,7 +278,7 @@ class KubectlDeployer(K8sSubDeployer):
             # ── rollout status 等待部署完成 ──
             check_cancelled()
             _log(callback, S("deploy_log.waiting_pod"))
-            rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout={settings.k8s_rollout_timeout}s"
+            rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)}{ns_flag} --timeout={settings.k8s_rollout_timeout}s"
             rollout_out, rollout_err, rollout_ec = _exec_exit(
                 ssh, rollout_cmd, timeout=settings.k8s_rollout_timeout + 30
             )
@@ -279,7 +290,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             # ── 部署后：查当前 Pod，排除旧 Pod ──
             _log(callback, S("deploy_log.after_version"))
-            all_after = _kubectl_pods(ssh, deploy_name, namespace)
+            all_after = _kubectl_pods(ssh, deploy_name, effective_ns)
             if all_after.strip():
                 after_pods = [
                     line for line in all_after.split("\n") if line.strip() and line.split()[0] not in before_pods
