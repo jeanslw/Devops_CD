@@ -293,18 +293,26 @@ def ssh_session(target: "DeployTarget", timeout: int):
         ssh.close()
 
 
-def _exec_on(ssh, cmd: str) -> tuple[str, str, int]:
-    """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr, exit_code)"""
-    _, stdout, stderr = ssh.exec_command(cmd)
+def _exec_on(ssh, cmd: str, timeout: int = 130) -> tuple[str, str, int]:
+    """在已建立的 SSH 连接上执行单条命令，返回 (stdout, stderr, exit_code)
+
+    timeout 为 SSH 通道读超时（秒）：远端挂死时 read() 抛 socket.timeout，
+    而非让部署线程永久阻塞。默认 130s，长命令由调用方传更大值（与 _exec_exit 一致）。
+    """
+    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
     o = stdout.read().decode(errors="replace").strip()
     e = stderr.read().decode(errors="replace").strip()
-    exit_code = stdout.channel.recv_exit_status()
+    try:
+        exit_code = stdout.channel.recv_exit_status()
+    except Exception:
+        # 通道异常关闭（如超时）时 fallback：有 stderr 则视为失败
+        exit_code = 1
     return o, e, exit_code
 
 
-def _ssh_cmd(ssh, cmd: str) -> str:
+def _ssh_cmd(ssh, cmd: str, timeout: int = 130) -> str:
     """执行 SSH 命令，返回 stdout+stderr 合并字符串（去重 fallback）"""
-    o, e, _ = _exec_on(ssh, cmd)
+    o, e, _ = _exec_on(ssh, cmd, timeout=timeout)
     return o or e
 
 

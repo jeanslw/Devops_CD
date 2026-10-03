@@ -24,7 +24,7 @@ class HelmDeployer(K8sSubDeployer):
         """停止：helm uninstall（先检查 release 是否存在）"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         ns = req.k8s_ns
-        ns_flag = f" -n {ns}" if ns else ""
+        ns_flag = f" -n {shlex.quote(ns)}" if ns else ""
         release_name = project.split("/")[-1] if "/" in project else project
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
@@ -48,7 +48,7 @@ class HelmDeployer(K8sSubDeployer):
         """原生回滚：helm rollback <release>（回退到上一版本）。"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         ns = req.k8s_ns
-        ns_flag = f" -n {ns}" if ns else ""
+        ns_flag = f" -n {shlex.quote(ns)}" if ns else ""
         release_name = project.split("/")[-1] if "/" in project else project
 
         ssh = None
@@ -86,7 +86,7 @@ class HelmDeployer(K8sSubDeployer):
         chart = req.path
         image_repo, _ = split_image_ref(image)
         ns = req.k8s_ns
-        ns_flag = f" -n {ns}" if ns else ""
+        ns_flag = f" -n {shlex.quote(ns)}" if ns else ""
 
         try:
             _log(callback, S("deploy_log.helm_connecting"))
