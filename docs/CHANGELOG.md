@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.5.5 (2026-10-03) — Deploy-core hardening
+
+### Fixed
+- **Compose deploy permission mapping** — `_DEPLOY_PERM_MAP` gains the missing `compose` key so `resolve_deploy_perm("compose")` maps to `cd.deploy.docker`; previously it fell through to `cd.deploy.single`, mis-scoping Docker-deploy permissions.
+- **Kubectl namespace when `k8s_ns` is empty** — the effective namespace is now resolved from the manifest (`effective_ns`), so `kubectl apply` without `-n` no longer verifies/restarts against the wrong namespace (false "deploy failed").
+- **`/api/stop` rejects `k8s/*` deploy types** — the endpoint now guards K8s sub-modes like `/api/deploy` / `/api/deploy-stream`, instead of a `K8sSubDeployer.stop()` signature mismatch (TypeError → 500).
+- **Empty `server_ids` filters out K8s clusters** — `_get_targets` no longer treats `k8s`/`argocd`/`fluxcd` servers as SSH/Compose targets when no server is selected.
+- **First-deploy YAML metadata parsing** — `_get_yaml_metadata` reads and parses the remote YAML locally instead of `kubectl get -f` (which 404s before the resource exists), fixing first-deploy failures.
+- **Placeholder / `ns_flag` quoting** — compose `commands` mode and helm `ns_flag` now `shlex.quote` their interpolations (matching `ssh.py` / `k8s_kubectl.py`).
+- **SSH command timeouts** — `_exec_on` / `_ssh_cmd` gained a channel read timeout (default 130s) so a hung remote no longer blocks the deploy thread forever.
+- **Busy / finish-record consistency** — the SSH path now raises `ValidationError(error_key="errors.deploy_busy")` like the K8s path; `finish_deploy_record`'s no-`deploy_id` fallback is scoped by `project` instead of updating every `running` record.
+
 ## v1.5.4 (2026-09-23) — Config layering: deployment config vs application parameters
 
 ### Changed

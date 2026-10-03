@@ -1,5 +1,17 @@
 # 更新日志
 
+## v1.5.5 (2026-10-03) — 部署核心加固
+
+### 修复
+- **Compose 部署权限映射** — `_DEPLOY_PERM_MAP` 补上缺失的 `compose` 键，使 `resolve_deploy_perm("compose")` 映射到 `cd.deploy.docker`；此前会回退到 `cd.deploy.single`，导致 Docker 部署权限错位。
+- **留空 `k8s_ns` 时的 namespace 处理** — 现从 manifest 解析出 `effective_ns`，`kubectl apply` 不带 `-n` 时验证/重启不再查错 namespace（消除「部署假失败」）。
+- **`/api/stop` 拦截 `k8s/*` 类型** — 该端点补上与 `/api/deploy`、`/api/deploy-stream` 一致的 K8s 子模式拦截，避免 `K8sSubDeployer.stop()` 签名错位（TypeError → 500）。
+- **空 `server_ids` 过滤 K8s 集群** — `_get_targets` 未选择服务器时不再把 `k8s`/`argocd`/`fluxcd` 集群当作 SSH/Compose 目标。
+- **首次部署 YAML 元数据解析** — `_get_yaml_metadata` 改为 cat 读文件 + yaml 本地解析，替代 `kubectl get -f`（资源尚未创建时会 NotFound），修复首次部署失败。
+- **占位符 / `ns_flag` 加 quote** — compose `commands` 模式与 helm `ns_flag` 对插值补 `shlex.quote`（对齐 `ssh.py` / `k8s_kubectl.py`）。
+- **SSH 命令超时** — `_exec_on` / `_ssh_cmd` 增加通道读超时（默认 130s），远端挂死不再让部署线程永久阻塞。
+- **busy 与收尾记录一致性** — SSH 路径统一抛 `ValidationError(error_key="errors.deploy_busy")`（对齐 K8s 路径）；`finish_deploy_record` 无 `deploy_id` 的兜底按 `project` 精确更新，不再裸更新全部 `running` 记录。
+
 ## v1.5.4 (2026-09-23) — 配置分层：部署配置与业务参数分离
 
 ### 变更
