@@ -68,7 +68,12 @@ class DeployService:
                 placeholders = ",".join("?" * len(ids))
                 rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM cd_servers ORDER BY name").fetchall()
+                # server_ids 为空 = 部署到全部可用服务器；K8S 集群（type=k8s/argocd/fluxcd）
+                # 只能走 /api/deploy-k8s（cluster_id 指定），不属于本 SSH/Compose 路线，
+                # 须过滤掉，否则空选择会误把 K8S 集群当 SSH/Compose 目标导致签名错位。
+                rows = conn.execute(
+                    "SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name"
+                ).fetchall()
 
             return [
                 (

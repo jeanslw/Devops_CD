@@ -129,6 +129,12 @@ def stop(
     user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
     """停止服务 — 按 deploy_type 分发到对应 Deployer"""
+    # K8S 子模式必须走 /api/stop-k8s，禁止混进 SSH/Compose 路线（签名不兼容）
+    if req.deploy_type.startswith("k8s/"):
+        raise ValidationError(
+            f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/stop-k8s",
+            error_key="errors.wrong_deploy_api",
+        )
     enforce_deploy_perm(user, req.deploy_type)
     if not req.server_ids:
         raise ValidationError("请选择目标服务器", error_key="errors.select_server")
