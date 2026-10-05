@@ -1,5 +1,10 @@
 # 更新日志
 
+## v1.5.6 (2026-10-05) — 供 Glue 只读的部署日志契约视图
+
+### 新增功能
+- **`v_glue_deploy_logs` 契约视图** — 在 `cd_deploy_logs` 之上建只读视图，仅暴露审计列（`id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at`），供 Devops-Glue 渲染「部署日志」审计列表。刻意排除大字段（`output`、`stage_times`）与 CD 内部/运维列（`runner`、`heartbeat_at`、`duration_ms`、`lock_key`、`params_json`、`rollback_type`、`artifact_*`），保证 Glue 只依赖一份稳定、最小化的契约。MySQL 用 `CREATE OR REPLACE VIEW`；SQLite 启动时 `DROP VIEW IF EXISTS` + `CREATE VIEW` 自愈。
+
 ## v1.5.5 (2026-10-03) — 部署核心加固
 
 ### 修复
