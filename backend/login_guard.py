@@ -60,6 +60,11 @@ def client_ip(request: Request) -> str:
 
 
 def _key(ip: str, username: str) -> str:
+    # 这里的 MD5 是「键派生」而非安全散列：必须与 Devops-Glue 的 PHP AdminAuthService
+    # 逐字节一致（md5(ip . ':' . strtolower(username))），才能共享 cache 表里同一把登录失败锁。
+    # 换成 SHA-256 会让两侧键不一致，攻击者即可绕过 CI 的 5 次锁定只打 CD 入口。
+    # username / ip 均非机密（仅作限流桶标识），MD5 抗碰撞性在此无关紧要 —— 属 CodeQL 误报。
+    # lgtm[py/weak-sensitive-data-hashing]
     return KEY_PREFIX + hashlib.md5(f"{ip}:{(username or '').strip().lower()}".encode("utf-8")).hexdigest()
 
 
