@@ -503,6 +503,15 @@ class Database:
                 ") WHERE approval_id=0 AND EXISTS ("
                 "SELECT 1 FROM cd_approvals a WHERE a.deploy_id=cd_deploy_logs.id AND a.deploy_id>0)"
             )
+        # v_glue_deploy_logs：供 Devops-Glue 只读的部署记录契约视图（审计字段，不含 output 等大字段）。
+        # SQLite 不支持 OR REPLACE VIEW，用 DROP+CREATE 自愈，保证契约列变化时老库也能刷新。
+        with suppress(Exception):
+            conn.execute("DROP VIEW IF EXISTS v_glue_deploy_logs")
+            conn.execute(
+                "CREATE VIEW v_glue_deploy_logs AS "
+                "SELECT id, project, tag, image, deploy_type, target, status, triggered_by, "
+                "deploy_note, created_at FROM cd_deploy_logs"
+            )
         conn.commit()
 
     # ── 索引（SQLite / MySQL 共用）──
