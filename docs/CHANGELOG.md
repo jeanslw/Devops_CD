@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.6 (2026-10-05) — Read-only deploy-log view for Glue
+
+### New Features
+- **`v_glue_deploy_logs` contract view** — a read-only view over `cd_deploy_logs` exposing only the audit columns (`id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at`) for Devops-Glue to render a "deploy logs" audit list. Large columns (`output`, `stage_times`) and CD-internal/operational columns (`runner`, `heartbeat_at`, `duration_ms`, `lock_key`, `params_json`, `rollback_type`, `artifact_*`) are intentionally excluded, so Glue depends on a single stable, minimal contract. MySQL uses `CREATE OR REPLACE VIEW`; SQLite self-heals with `DROP VIEW IF EXISTS` + `CREATE VIEW` on startup.
+
 ## v1.5.5 (2026-10-03) — Deploy-core hardening
 
 ### Fixed

@@ -337,3 +337,13 @@ CREATE TABLE IF NOT EXISTS cd_approval_rules (
     created_at               DATETIME     DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_appr_project (project)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================================
+-- v_glue_deploy_logs：供 Devops-Glue 只读的部署记录契约视图。
+-- 仅暴露审计字段（不含 output/stage_times 等大字段），CD 未来重命名/拆表在此视图内吸收，
+-- 保证 Glue 侧读取契约稳定。
+-- ============================================================================
+CREATE OR REPLACE VIEW v_glue_deploy_logs AS
+SELECT id, project, tag, image, deploy_type, target, status, triggered_by,
+       deploy_note, created_at
+FROM cd_deploy_logs;
