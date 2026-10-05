@@ -1,0 +1,16 @@
+# CodeQL 配置：只排除一条已知误报，不关闭默认查询集。
+#
+# py/weak-sensitive-data-hashing 在全仓只命中 backend/login_guard.py 的 MD5，
+# 而该 MD5 是「跨系统键派生」：必须与 Devops-Glue 的 PHP AdminAuthService 逐字节一致
+# （md5(ip . ':' . strtolower(username))）才能共享 cache 表里同一把登录失败锁，
+# 并非保护敏感数据的安全散列（详见 backend/login_guard.py 内注释）。故排除此条查询。
+#
+# 注意：若将来在别处用 MD5/SHA1 散列真正的敏感数据（如口令），本条排除会一并放过，
+# 需自行评估。当前全仓无其他 MD5/SHA1 使用点。
+name: "Devops-CD CodeQL configuration"
+
+disable-default-queries: false
+
+query-filters:
+  - exclude:
+      id: py/weak-sensitive-data-hashing
