@@ -61,13 +61,20 @@ class HarborClient:
         except Exception:
             pass
         try:
-            r = requests.get(f"{base}/api/v2.0/projects?page_size=1", auth=(self._user, self._password), timeout=8, verify=self._verify)
+            r = requests.get(
+                f"{base}/api/v2.0/projects?page_size=1",
+                auth=(self._user, self._password),
+                timeout=8,
+                verify=self._verify,
+            )
             if r.status_code < 500:
                 return "v2"
         except Exception:
             pass
         try:
-            r = requests.get(f"{base}/api/projects?page_size=1", auth=(self._user, self._password), timeout=8, verify=self._verify)
+            r = requests.get(
+                f"{base}/api/projects?page_size=1", auth=(self._user, self._password), timeout=8, verify=self._verify
+            )
             if r.status_code < 500:
                 return "v1"
         except Exception:
@@ -111,7 +118,9 @@ class HarborClient:
 
     def _delete(self, path: str):
         try:
-            r = requests.delete(f"{self._base}{path}", auth=(self._user, self._password), timeout=15, verify=self._verify)
+            r = requests.delete(
+                f"{self._base}{path}", auth=(self._user, self._password), timeout=15, verify=self._verify
+            )
         except requests.ConnectionError as e:
             raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
         except requests.Timeout as e:

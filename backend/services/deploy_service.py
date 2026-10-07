@@ -418,7 +418,8 @@ class DeployService:
             if approval_ids:
                 ph = ",".join("?" * len(approval_ids))
                 arows = conn.execute(
-                    f"SELECT id, approver, approved_at, status FROM cd_approvals WHERE id IN ({ph})", approval_ids  # nosec
+                    f"SELECT id, approver, approved_at, status FROM cd_approvals WHERE id IN ({ph})",  # nosec
+                    approval_ids,
                 ).fetchall()
                 # 带 status：前端日志页审批徽章按状态渲染（已批准/待审批/已撤销/已驳回）
                 amap = {
