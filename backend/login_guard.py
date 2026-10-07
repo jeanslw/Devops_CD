@@ -76,7 +76,7 @@ def _upsert_sql() -> str:
         )
     return (
         f"INSERT INTO {CACHE_TABLE} (cache_key, value, expires_at) VALUES (?,?,?) "  # nosec
-            "ON CONFLICT(cache_key) DO UPDATE SET value=excluded.value, expires_at=excluded.expires_at"
+        "ON CONFLICT(cache_key) DO UPDATE SET value=excluded.value, expires_at=excluded.expires_at"
     )
 
 
