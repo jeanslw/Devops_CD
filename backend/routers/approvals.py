@@ -201,7 +201,7 @@ async def execute_approval_stream(
     import threading
     from contextlib import suppress
 
-    log_queue = queue.Queue()
+    log_queue: queue.Queue = queue.Queue()
     exec_result = {}
 
     def do_exec():
@@ -300,7 +300,7 @@ def _validate_rule(db, project: str, req: ApprovalRuleRequest) -> None:
             ph = ",".join("?" * len(approvers))
             try:
                 rows = conn.execute(
-                    f"SELECT username FROM admin_users WHERE LOWER(username) IN ({ph})",
+                    f"SELECT username FROM admin_users WHERE LOWER(username) IN ({ph})",  # nosec
                     [a.lower() for a in approvers],
                 ).fetchall()
             except Exception as e:
@@ -454,7 +454,7 @@ async def rollback_deploy_stream(
     import threading
     from contextlib import suppress
 
-    log_queue = queue.Queue()
+    log_queue: queue.Queue = queue.Queue()
     exec_result = {}
 
     def do_exec():

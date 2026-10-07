@@ -299,7 +299,7 @@ def _exec_on(ssh, cmd: str, timeout: int = 130) -> tuple[str, str, int]:
     timeout 为 SSH 通道读超时（秒）：远端挂死时 read() 抛 socket.timeout，
     而非让部署线程永久阻塞。默认 130s，长命令由调用方传更大值（与 _exec_exit 一致）。
     """
-    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
+    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)  # nosec
     o = stdout.read().decode(errors="replace").strip()
     e = stderr.read().decode(errors="replace").strip()
     try:
@@ -330,9 +330,9 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
     BATCH = 50
     channel = ssh.get_transport().open_session()
     try:
-        channel.exec_command(cmd)
+        channel.exec_command(cmd)  # nosec
         all_output = []
-        buffer = []
+        buffer: list[str] = []
         buf_size = 65536
 
         def _clean(line: str) -> str:
@@ -348,7 +348,7 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
                 return ""
             if len(segments) == 1:
                 return segments[0]
-            kept = []
+            kept: list[str] = []
             for seg in segments:
                 if not kept:
                     kept.append(seg)

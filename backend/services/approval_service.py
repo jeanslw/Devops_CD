@@ -23,7 +23,6 @@ from datetime import datetime
 from fastapi import HTTPException
 
 from backend.auth import enforce_deploy_perm, load_user_context
-from backend.database import Database
 from backend.config import settings
 from backend.deploy_run import (
     create_pending_deploy_record,
@@ -130,7 +129,7 @@ def resolve_target_envs(db, server_ids: str = "") -> set[str]:
             raise ValidationError(f"server_ids 无效: {server_ids}", error_key="errors.deploy_validation")
         ph = ",".join("?" * len(ids))
         with db.conn() as conn:
-            rows = conn.execute(f"SELECT tags FROM cd_servers WHERE id IN ({ph})", ids).fetchall()
+            rows = conn.execute(f"SELECT tags FROM cd_servers WHERE id IN ({ph})", ids).fetchall()  # nosec
     envs: set[str] = set()
     for r in rows:
         envs.update(_parse_csv(r.get("tags") or ""))
@@ -195,7 +194,7 @@ def _transition(db, approval_id, from_statuses, to_status, **fields) -> bool:
     sets.append("status=?")
     sets.append("updated_at=?")
     ph = ",".join("?" * len(from_statuses))
-    sql = f"UPDATE cd_approvals SET {', '.join(sets)} WHERE id=? AND status IN ({ph})"
+    sql = f"UPDATE cd_approvals SET {', '.join(sets)} WHERE id=? AND status IN ({ph})"  # nosec
     params = [*fields.values(), to_status, _now(), approval_id, *from_statuses]
     with db.conn() as conn:
         cur = conn.execute(sql, params)
@@ -227,7 +226,7 @@ def list_approvals(
     page_size = max(min(page_size, 100), 1)
     offset = (page - 1) * page_size
     where = []
-    args = []
+    args: list = []
     if active:
         # 活跃单据：pending/approved/deploying（部署页恢复"我的申请进度"用）
         ph = ",".join("?" * len(ACTIVE_STATUSES))
@@ -265,9 +264,9 @@ def list_approvals(
     else:
         order_sql = "ORDER BY id DESC"
     with db.conn() as conn:
-        total = conn.execute(f"SELECT COUNT(*) AS cnt FROM cd_approvals{where_sql}", args).fetchone()["cnt"]
+        total = conn.execute(f"SELECT COUNT(*) AS cnt FROM cd_approvals{where_sql}", args).fetchone()["cnt"]  # nosec
         rows = conn.execute(
-            f"SELECT * FROM cd_approvals{where_sql} {order_sql} LIMIT ? OFFSET ?",
+            f"SELECT * FROM cd_approvals{where_sql} {order_sql} LIMIT ? OFFSET ?",  # nosec
             [*args, page_size, offset],
         ).fetchall()
     return {

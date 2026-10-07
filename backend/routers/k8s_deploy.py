@@ -338,7 +338,7 @@ async def deploy_k8s_stream(
     import queue
     import threading
 
-    log_queue = queue.Queue()
+    log_queue: queue.Queue = queue.Queue()
     deploy_result = {}
 
     try:

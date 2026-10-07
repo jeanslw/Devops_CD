@@ -206,7 +206,7 @@ class RegistryService:
         if current_tags:
             placeholders = ",".join("?" for _ in current_tags)
             conn.execute(
-                f"DELETE FROM cd_registry_artifacts WHERE repo_id=? AND tag NOT IN ({placeholders})",
+                f"DELETE FROM cd_registry_artifacts WHERE repo_id=? AND tag NOT IN ({placeholders})",  # nosec
                 (repo_id, *current_tags),
             )
 

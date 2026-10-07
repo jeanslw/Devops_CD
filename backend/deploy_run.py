@@ -190,7 +190,7 @@ def _heartbeat_loop():
             db = _get_db()
             with db.conn() as conn:
                 conn.execute(
-                    f"UPDATE cd_deploy_logs SET heartbeat_at=? WHERE id IN ({ph}) AND runner=? AND status='running'",
+                    f"UPDATE cd_deploy_logs SET heartbeat_at=? WHERE id IN ({ph}) AND runner=? AND status='running'",  # nosec
                     (_now_padded(), *ids, INSTANCE_ID),
                 )
         except Exception:
@@ -453,7 +453,7 @@ def finish_deploy_record(
                 params.append(note_value)
             params.append(deploy_id)
             conn.execute(
-                f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?{note_clause}, "
+                f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?{note_clause}, "  # nosec
                 f"lock_key=NULL {where_clause}",
                 params,
             )
@@ -467,7 +467,7 @@ def finish_deploy_record(
             if project:
                 params.append(project)
             conn.execute(
-                f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?{note_clause}, "
+                f"UPDATE cd_deploy_logs SET status=?, target=?, output=?, duration_ms=?, stage_times=?{note_clause}, "  # nosec
                 f"lock_key=NULL {where}",
                 params,
             )

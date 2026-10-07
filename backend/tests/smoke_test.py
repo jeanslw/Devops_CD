@@ -191,7 +191,7 @@ for r in routers:
     n = len(r.routes)
     total += n
     # infer module name
-    name = r.tags[0] if r.tags else "?"
+    name = str(r.tags[0]) if r.tags else "?"
     print(f"  {name}: {n} routes")
 print(f"  Total: {total} routes -> {PASS}")
 

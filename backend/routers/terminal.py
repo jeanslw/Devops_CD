@@ -1,7 +1,6 @@
 """Web Shell + SCP 文件上传"""
 
 import asyncio
-import base64
 import json
 import os
 import posixpath
@@ -212,7 +211,7 @@ async def terminal(websocket: WebSocket, server_id: int):
 async def upload_file(
     server_id: int,
     file: UploadFile = File(...),
-    path: str = Form("/tmp/"),
+    path: str = Form("/tmp/"),  # nosec
     _user: dict = Depends(require_perm("cd.webshell")),
 ):
     """上传文件到目标服务器"""

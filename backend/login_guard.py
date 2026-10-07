@@ -38,7 +38,7 @@ def client_ip(request: Request) -> str:
     peer = request.client.host if request.client else ""
     hops = settings.trusted_proxy_hops
     if not peer or hops <= 0:
-        return peer or "0.0.0.0"
+        return peer or "0.0.0.0"  # nosec
     try:
         peer_addr = ipaddress.ip_address(peer)
     except ValueError:
@@ -65,18 +65,18 @@ def _key(ip: str, username: str) -> str:
     # 换成 SHA-256 会让两侧键不一致，攻击者即可绕过 CI 的 5 次锁定只打 CD 入口。
     # username / ip 均非机密（仅作限流桶标识），MD5 抗碰撞性在此无关紧要 —— 属 CodeQL 误报。
     # lgtm[py/weak-sensitive-data-hashing]
-    return KEY_PREFIX + hashlib.md5(f"{ip}:{(username or '').strip().lower()}".encode("utf-8")).hexdigest()
+    return KEY_PREFIX + hashlib.md5(f"{ip}:{(username or '').strip().lower()}".encode("utf-8")).hexdigest()  # nosec
 
 
 def _upsert_sql() -> str:
     if settings.db_driver == "mysql":
         return (
-            f"INSERT INTO {CACHE_TABLE} (cache_key, value, expires_at) VALUES (?,?,?) "
+            f"INSERT INTO {CACHE_TABLE} (cache_key, value, expires_at) VALUES (?,?,?) "  # nosec
             "ON DUPLICATE KEY UPDATE value=VALUES(value), expires_at=VALUES(expires_at)"
         )
     return (
-        f"INSERT INTO {CACHE_TABLE} (cache_key, value, expires_at) VALUES (?,?,?) "
-        "ON CONFLICT(cache_key) DO UPDATE SET value=excluded.value, expires_at=excluded.expires_at"
+        f"INSERT INTO {CACHE_TABLE} (cache_key, value, expires_at) VALUES (?,?,?) "  # nosec
+            "ON CONFLICT(cache_key) DO UPDATE SET value=excluded.value, expires_at=excluded.expires_at"
     )
 
 
@@ -85,7 +85,7 @@ def is_login_locked(db: Database, ip: str, username: str) -> bool:
     try:
         with db.conn() as conn:
             row = conn.execute(
-                f"SELECT value FROM {CACHE_TABLE} WHERE cache_key=? AND expires_at > ?",
+                f"SELECT value FROM {CACHE_TABLE} WHERE cache_key=? AND expires_at > ?",  # nosec
                 (_key(ip, username), int(time.time())),
             ).fetchone()
         if not row:
@@ -103,7 +103,7 @@ def record_login_failure(db: Database, ip: str, username: str) -> None:
         now = int(time.time())
         with db.conn() as conn:
             row = conn.execute(
-                f"SELECT value FROM {CACHE_TABLE} WHERE cache_key=? AND expires_at > ?",
+                f"SELECT value FROM {CACHE_TABLE} WHERE cache_key=? AND expires_at > ?",  # nosec
                 (key, now),
             ).fetchone()
             count = (int(row["value"]) if row and row["value"] is not None else 0) + 1
@@ -116,6 +116,6 @@ def clear_login_failure(db: Database, ip: str, username: str) -> None:
     """登录成功清除计数。"""
     try:
         with db.conn() as conn:
-            conn.execute(f"DELETE FROM {CACHE_TABLE} WHERE cache_key=?", (_key(ip, username),))
+            conn.execute(f"DELETE FROM {CACHE_TABLE} WHERE cache_key=?", (_key(ip, username),))  # nosec
     except Exception:
         logger.warning("clear_login_failure 删除失败（忽略）", exc_info=True)

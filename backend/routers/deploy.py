@@ -242,7 +242,7 @@ async def deploy_stream(
     import queue
     import threading
 
-    log_queue = queue.Queue()
+    log_queue: queue.Queue = queue.Queue()
     deploy_result = {}
 
     def do_deploy():
