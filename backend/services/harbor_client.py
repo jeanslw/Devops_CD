@@ -23,6 +23,7 @@ class HarborClient:
         raw = settings.harbor_registry.strip().rstrip("/")
         self._user = settings.harbor_user
         self._password = settings.harbor_password
+        self._verify = settings.harbor_verify_ssl  # HTTPS 证书校验开关（自签名 Harbor 可关）
         self._version = None  # "v1" | "v2"
         self._base = None
 
@@ -48,25 +49,25 @@ class HarborClient:
     def _probe_version(self, base: str) -> str | None:
         """探测 Harbor API 版本，返回 "v1" | "v2" | None"""
         try:
-            r = requests.get(f"{base}/api/v2.0/ping", auth=(self._user, self._password), timeout=8)
+            r = requests.get(f"{base}/api/v2.0/ping", auth=(self._user, self._password), timeout=8, verify=self._verify)
             if r.ok:
                 return "v2"
         except Exception:
             pass
         try:
-            r = requests.get(f"{base}/api/ping", auth=(self._user, self._password), timeout=8)
+            r = requests.get(f"{base}/api/ping", auth=(self._user, self._password), timeout=8, verify=self._verify)
             if r.ok:
                 return "v1"
         except Exception:
             pass
         try:
-            r = requests.get(f"{base}/api/v2.0/projects?page_size=1", auth=(self._user, self._password), timeout=8)
+            r = requests.get(f"{base}/api/v2.0/projects?page_size=1", auth=(self._user, self._password), timeout=8, verify=self._verify)
             if r.status_code < 500:
                 return "v2"
         except Exception:
             pass
         try:
-            r = requests.get(f"{base}/api/projects?page_size=1", auth=(self._user, self._password), timeout=8)
+            r = requests.get(f"{base}/api/projects?page_size=1", auth=(self._user, self._password), timeout=8, verify=self._verify)
             if r.status_code < 500:
                 return "v1"
         except Exception:
@@ -84,7 +85,7 @@ class HarborClient:
     def _get_raw(self, path: str) -> requests.Response:
         """返回原始响应对象（用于需要读取 headers 的分页场景）"""
         try:
-            r = requests.get(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
+            r = requests.get(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=self._verify)
         except requests.ConnectionError as e:
             raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
         except requests.Timeout as e:
@@ -100,7 +101,7 @@ class HarborClient:
 
     def _post(self, path: str) -> bool:
         try:
-            r = requests.post(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=False)
+            r = requests.post(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=self._verify)
         except requests.ConnectionError as e:
             raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
         except requests.Timeout as e:
@@ -110,7 +111,7 @@ class HarborClient:
 
     def _delete(self, path: str):
         try:
-            r = requests.delete(f"{self._base}{path}", auth=(self._user, self._password), timeout=15, verify=False)
+            r = requests.delete(f"{self._base}{path}", auth=(self._user, self._password), timeout=15, verify=self._verify)
         except requests.ConnectionError as e:
             raise HarborUnavailableError(f"Harbor 连接失败：{e}") from e
         except requests.Timeout as e:
@@ -143,7 +144,7 @@ class HarborClient:
         enc_repo = urllib.parse.quote(repo, safe="")
         base_path = f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}/artifacts"
 
-        all_items = []
+        all_items: list[dict] = []
         page = 1
         page_size = 100
         while True:
@@ -164,7 +165,7 @@ class HarborClient:
         for art in all_items:
             # Harbor 不同版本的 scan_overview key 不同，动态取第一个
             scan_overview = art.get("scan_overview") or {}
-            scan = {}
+            scan: dict = {}
             if scan_overview:
                 # 尝试常见 key 模式
                 for key in scan_overview:
@@ -203,7 +204,7 @@ class HarborClient:
         encoded = urllib.parse.quote(repo_full, safe="")
         base_path = f"/api/repositories/{encoded}/tags"
 
-        all_items = []
+        all_items: list[dict] = []
         page = 1
         page_size = 100
         while True:
@@ -312,7 +313,7 @@ class HarborClient:
 
             # 1) 优先取 scan_overview（包含 summary 和 severity）
             scan_overview = art.get("scan_overview") or {}
-            scan = {}
+            scan: dict = {}
             if scan_overview:
                 for key in scan_overview:
                     if "vulnerability.report" in key or "scanner.adapter" in key:

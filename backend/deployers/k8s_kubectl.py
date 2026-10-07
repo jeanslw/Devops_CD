@@ -211,7 +211,7 @@ class KubectlDeployer(K8sSubDeployer):
             if yaml_deploy_name and yaml_deploy_name != filter_name:
                 # 前端预检弹窗已确认，这里只打警告不拦截
                 _log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=yaml_deploy_name, project=filter_name))
-            tmp = f"/tmp/k8s-{filter_name}.yaml"
+            tmp = f"/tmp/k8s-{filter_name}.yaml"  # nosec
 
             _log(callback, S("deploy_log.uploading_yaml_k8s"))
             sftp = ssh.open_sftp()

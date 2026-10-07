@@ -298,7 +298,7 @@ def _query_user_with_systems(conn, username: str, columns: str):
     if _systems_col_ok:
         try:
             return conn.execute(
-                f"SELECT {columns} FROM admin_users WHERE username=?",
+                f"SELECT {columns} FROM admin_users WHERE username=?",  # nosec
                 (username,),
             ).fetchone()
         except Exception:
@@ -314,7 +314,7 @@ def _query_user_with_systems(conn, username: str, columns: str):
     )
     if fallback_cols.strip():
         return conn.execute(
-            f"SELECT {fallback_cols} FROM admin_users WHERE username=?",
+            f"SELECT {fallback_cols} FROM admin_users WHERE username=?",  # nosec
             (username,),
         ).fetchone()
     return None

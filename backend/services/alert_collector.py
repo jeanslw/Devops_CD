@@ -13,7 +13,7 @@ logger = logging.getLogger("cd.alert")
 
 def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
     """连接服务器，根据 resource_type 采集指标，返回超标项列表"""
-    results = []
+    results: list[dict] = []
     resource_type = (rule.get("resource_type") or "").lower()
     threshold = rule.get("threshold", 80)
 

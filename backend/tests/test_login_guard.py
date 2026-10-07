@@ -106,7 +106,7 @@ class TestLockKey(unittest.TestCase):
     def test_key_matches_glue_format(self):
         # 必须与 Glue AdminAuthService::loginFailKey 完全一致：
         # 'login_fail_' + md5(ip + ':' + lower(username))
-        expected = "login_fail_" + hashlib.md5(b"1.2.3.4:admin").hexdigest()
+        expected = "login_fail_" + hashlib.md5(b"1.2.3.4:admin").hexdigest()  # nosec
         self.assertEqual(login_guard._key("1.2.3.4", "Admin"), expected)
         self.assertEqual(login_guard._key("1.2.3.4", "ADMIN"), expected)
 

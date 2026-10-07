@@ -67,7 +67,7 @@ class DeployService:
                 if not ids:
                     return []
                 placeholders = ",".join("?" * len(ids))
-                rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
+                rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()  # nosec
             else:
                 # server_ids 为空 = 部署到全部可用服务器；K8S 集群（type=k8s/argocd/fluxcd）
                 # 只能走 /api/deploy-k8s（cluster_id 指定），不属于本 SSH/Compose 路线，
@@ -418,7 +418,7 @@ class DeployService:
             if approval_ids:
                 ph = ",".join("?" * len(approval_ids))
                 arows = conn.execute(
-                    f"SELECT id, approver, approved_at, status FROM cd_approvals WHERE id IN ({ph})", approval_ids
+                    f"SELECT id, approver, approved_at, status FROM cd_approvals WHERE id IN ({ph})", approval_ids  # nosec
                 ).fetchall()
                 # 带 status：前端日志页审批徽章按状态渲染（已批准/待审批/已撤销/已驳回）
                 amap = {

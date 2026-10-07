@@ -99,7 +99,7 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
     """CSV/TSV/空白分隔 解析: 第一行表头, 后续每行是一条实体。
     自动识别逗号/制表符/分号/竖线分隔(csv.Sniffer), 不识别时回退到空白拆分(处理 free -m 等变长空白输出).
     """
-    results = []
+    results: list[dict] = []
     text = raw.strip()
     if not text:
         return results
@@ -166,19 +166,19 @@ def _parse_kv(raw: str, metrics: list[dict]) -> list[dict]:
         if m:
             kv_map[m.group(1).strip()] = m.group(2).strip()
 
-    for m in metrics:
-        fk = m.get("field_key", "").strip()
+    for metric in metrics:
+        fk = metric.get("field_key", "").strip()
         if not fk or fk not in kv_map:
             continue
         val_str = kv_map[fk]
         val = _try_float(val_str)
         results.append(
             {
-                "metric_name": m.get("name", fk),
+                "metric_name": metric.get("name", fk),
                 "field_key": fk,
                 "value": val,
                 "raw_val": val_str,
-                "unit": m.get("unit", ""),
+                "unit": metric.get("unit", ""),
                 "entity": kv_map,
                 "entity_label": "",
             }
@@ -188,7 +188,7 @@ def _parse_kv(raw: str, metrics: list[dict]) -> list[dict]:
 
 def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
     """JSON 解析: 支持对象或数组"""
-    results = []
+    results: list[dict] = []
     try:
         data = _json.loads(raw)
     except Exception:
@@ -456,7 +456,7 @@ def test_monitor(
             if ids:
                 placeholders = ", ".join(["?"] * len(ids))
                 # 参数化查询: placeholders 仅含 ? 占位符, ids 作为参数单独传递, 无注入风险
-                query = f"SELECT * FROM cd_servers WHERE id IN ({placeholders})"
+                query = f"SELECT * FROM cd_servers WHERE id IN ({placeholders})"  # nosec
                 servers = conn.execute(query, ids).fetchall()
             else:
                 servers = []

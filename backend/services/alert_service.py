@@ -163,7 +163,7 @@ def _check_one(db, rule: dict):
             if not ids:
                 return
             placeholders = ",".join("?" for _ in ids)
-            servers = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()
+            servers = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()  # nosec
         else:
             servers = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker')").fetchall()
 

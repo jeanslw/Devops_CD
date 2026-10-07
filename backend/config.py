@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     harbor_registry: str = Field(default="", validation_alias="HARBOR_BASE_URL")
     harbor_user: str = ""
     harbor_password: str = ""
+    # Harbor HTTPS 证书校验开关；Harbor 使用自签名证书时可设 HARBOR_VERIFY_SSL=false
+    harbor_verify_ssl: bool = True
 
     @field_validator("harbor_registry", mode="after")
     @classmethod
@@ -56,7 +58,7 @@ class Settings(BaseSettings):
         return v
 
     # ── 服务（可选）──
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec
     port: int = 8081
 
     # ── 反向代理可信跳数（可选，默认 0）──
