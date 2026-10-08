@@ -1,6 +1,7 @@
 """认证模块 — 与 php_api 共享 admin_users 表"""
 
-import base64
+import hashlib
+import secrets
 import time
 
 import bcrypt
@@ -16,28 +17,40 @@ CD_SYSTEM = "cd"
 _systems_col_ok = True  # 乐观假设 systems 列存在，查询失败后置 False
 
 
-def _issue_token(username: str, password_hash: str) -> str:
-    """签发 Bearer token：base64(username:hash:过期epoch秒)。
-
-    有效期 settings.auth_token_ttl_hours（默认 24 小时），过期后需重新登录。
-    """
-    expires = int(time.time()) + settings.auth_token_ttl_hours * 3600
-    return base64.b64encode(f"{username}:{password_hash}:{expires}".encode()).decode()
+SESSION_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) ≈ 43 字符，256 位熵
 
 
-def _parse_token(token: str) -> tuple[str, str, int | None]:
-    """解析 token → (username, hash, 过期epoch秒或 None)。
+def _hash_token(token: str) -> str:
+    """会话 token 只存 SHA-256 摘要：数据库泄露不会暴露可用的明文 token。"""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    兼容两种格式：旧格式 base64(username:hash) 无过期段（expires=None，
-    与 Devops-Glue 共享调用）；新格式多一段过期时间戳。
-    username 含 ':' 时旧格式 partition 取首个 ':' 为界；新格式取末段数字为过期时间。
-    """
-    decoded = base64.b64decode(token).decode()
-    parts = decoded.split(":")
-    if len(parts) >= 3 and parts[-1].isdigit():
-        return parts[0], ":".join(parts[1:-1]), int(parts[-1])
-    username, _, pwd_hash = decoded.partition(":")
-    return username, pwd_hash, None
+
+def _create_session(conn, username: str) -> str:
+    """创建登录会话：生成不透明随机 token，库内只存其 SHA-256 摘要。
+    返回原始 token（仅此一次交给客户端，之后无法从库内反推）。
+    顺带清理该用户已过期的旧会话，避免表无限增长。"""
+    token = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
+    now = int(time.time())
+    expires = now + settings.auth_token_ttl_hours * 3600
+    conn.execute("DELETE FROM cd_sessions WHERE username=? AND expires_at<=?", (username, now))
+    conn.execute(
+        "INSERT INTO cd_sessions (token_hash, username, expires_at) VALUES (?, ?, ?)",
+        (_hash_token(token), username, expires),
+    )
+    return token
+
+
+def _lookup_session(conn, token: str):
+    """按 token 摘要查会话，返回 {username, expires_at} 或 None。"""
+    return conn.execute(
+        "SELECT username, expires_at FROM cd_sessions WHERE token_hash=?",
+        (_hash_token(token),),
+    ).fetchone()
+
+
+def _delete_session(conn, token: str) -> None:
+    """删除指定会话（logout / 惰性清理过期 token）。"""
+    conn.execute("DELETE FROM cd_sessions WHERE token_hash=?", (_hash_token(token),))
 
 
 def _has_system(systems: str | None, target: str) -> bool:
@@ -78,21 +91,22 @@ def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Database = Depends(get_db),
 ) -> str:
-    """从 Bearer token 中验证用户身份，返回 username（O(1) 直接查询）。
+    """从 Bearer token 验证用户身份，返回 username。
+    服务端会话表 + 不透明 token：token 本身不携带任何用户信息，
+    校验即查 cd_sessions（O(1) 哈希查找），logout 删行即时失效。
     同时检查 systems 字段（如果存在）是否允许 CD 访问。"""
     if credentials is None:
         raise HTTPException(401, "Please login first")
 
     token = credentials.credentials
-    try:
-        username, _hash, expires = _parse_token(token)
-    except Exception as e:
-        raise HTTPException(401, "Invalid token format") from e
-    if expires is not None and time.time() > expires:
-        raise HTTPException(401, "Token expired, please login again")
-
     with db.conn() as conn:
-        row = _query_user_with_systems(conn, username, "password_hash, systems, status")
+        sess = _lookup_session(conn, token)
+        if sess is None:
+            raise HTTPException(401, "Invalid or expired token")
+        if time.time() > sess["expires_at"]:
+            _delete_session(conn, token)
+            raise HTTPException(401, "Token expired, please login again")
+        row = _query_user_with_systems(conn, sess["username"], "username, systems, status")
 
     if row is None:
         raise HTTPException(401, "Invalid or expired token")
@@ -100,11 +114,7 @@ def verify_token(
     _check_cd_access(row)
     _check_disabled(row)
 
-    # 校验 token 中的口令哈希段与库内一致（防止 path traversal 类攻击）
-    if not _timing_safe_compare(_hash, row["password_hash"]):
-        raise HTTPException(401, "Invalid or expired token")
-
-    return username
+    return sess["username"]
 
 
 def get_current_user(
@@ -112,29 +122,25 @@ def get_current_user(
     db: Database = Depends(get_db),
 ) -> dict:
     """获取当前登录用户完整信息 {username, role, systems, permissions}。
-    同时检查 systems 字段（如果存在）是否允许 CD 访问。"""
+    同 verify_token：服务端会话校验，同时检查 systems 字段是否允许 CD 访问。"""
     if credentials is None:
         raise HTTPException(401, "Please login first")
 
     token = credentials.credentials
-    try:
-        username, _hash, expires = _parse_token(token)
-    except Exception as e:
-        raise HTTPException(401, "Invalid token format") from e
-    if expires is not None and time.time() > expires:
-        raise HTTPException(401, "Token expired, please login again")
-
     with db.conn() as conn:
-        row = _query_user_with_systems(conn, username, "username, password_hash, role, systems, status")
+        sess = _lookup_session(conn, token)
+        if sess is None:
+            raise HTTPException(401, "Invalid or expired token")
+        if time.time() > sess["expires_at"]:
+            _delete_session(conn, token)
+            raise HTTPException(401, "Token expired, please login again")
+        row = _query_user_with_systems(conn, sess["username"], "username, role, systems, status")
 
     if row is None:
         raise HTTPException(401, "Invalid or expired token")
 
     _check_cd_access(row)
     _check_disabled(row)
-
-    if not _timing_safe_compare(_hash, row["password_hash"]):
-        raise HTTPException(401, "Invalid or expired token")
 
     # 查询该角色的权限列表（无角色 → 空权限，deny-by-default）
     role_name = row.get("role") or ""
@@ -224,27 +230,30 @@ def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None
 
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据，同时检查 systems（如果存在）是否允许 CD 访问。
-    成功返回 token；账号已停用抛出 AppException(403) 以区别于密码错误；
+    成功返回不透明会话 token（会话写入 cd_sessions，logout 删行即时吊销）；
+    账号已停用抛出 AppException(403) 以区别于密码错误；
     其余失败返回 None（由调用方统一按"账号或密码错误"处理）"""
     from backend.exceptions import AppException
 
     with db.conn() as conn:
         row = _query_user_with_systems(conn, user, "username, password_hash, systems, status")
 
-    if row is None:
-        return None
+        if row is None:
+            return None
 
-    # status=0 表示账号已停用。必须先于密码校验判断：无论密码对错都提示「已停用」，
-    # 否则停用账号输入错误密码会落到「账号或密码错误」分支，误导用户以为只是密码忘了。
-    # (列不存在时默认为 1 放行,兼容旧库)
-    try:
-        status = row["status"]
-    except (KeyError, IndexError):
-        status = 1
-    if status is not None and int(status) == 0:
-        raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
+        # status=0 表示账号已停用。必须先于密码校验判断：无论密码对错都提示「已停用」，
+        # 否则停用账号输入错误密码会落到「账号或密码错误」分支，误导用户以为只是密码忘了。
+        # (列不存在时默认为 1 放行,兼容旧库)
+        try:
+            status = row["status"]
+        except (KeyError, IndexError):
+            status = 1
+        if status is not None and int(status) == 0:
+            raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
 
-    if bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
+        if not bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
+            return None
+
         if not _has_system(row.get("systems"), CD_SYSTEM):
             # 密码正确但 systems 不含 "cd"：明确提示无权限，而非误导为「账号或密码错误」
             raise AppException(
@@ -252,18 +261,14 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
                 status_code=403,
                 error_key="errors.no_cd_access",
             )
-        return _issue_token(user, row["password_hash"])
-    return None
+        return _create_session(conn, user)
 
 
-def _timing_safe_compare(a: str, b: str) -> bool:
-    """常量时间字符串比较，防止时序攻击"""
-    if len(a) != len(b):
-        return False
-    result = 0
-    for x, y in zip(a, b, strict=True):
-        result |= ord(x) ^ ord(y)
-    return result == 0
+def revoke_session(db: Database, token: str) -> None:
+    """吊销会话（logout）：删除服务端会话行，token 立即失效。
+    幂等：重复调用 / 无效 token 均不报错。"""
+    with db.conn() as conn:
+        _delete_session(conn, token)
 
 
 def load_user_context(db: Database, username: str) -> dict:

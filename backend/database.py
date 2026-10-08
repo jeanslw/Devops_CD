@@ -252,6 +252,15 @@ class Database:
         for tbl, col, col_def in migrations:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
+        # 登录会话表（幂等建表）：老库未重跑 init_mysql.sql 时自愈创建，
+        # 避免首个登录因缺表而 500。token_hash 存 SHA-256 摘要，logout 删行吊销。
+        with suppress(Exception):
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS cd_sessions ("
+                "token_hash VARCHAR(64) PRIMARY KEY, username VARCHAR(64) NOT NULL, "
+                "expires_at INT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "INDEX idx_cds_username (username))"
+            )
         conn.commit()
 
     # ── SQLite 自动建表 ──
@@ -375,6 +384,15 @@ class Database:
         conn.execute("""CREATE TABLE IF NOT EXISTS cd_config (
             key_name VARCHAR(128) PRIMARY KEY,
             value TEXT NOT NULL
+        )""")
+
+        # 登录会话表（不透明 token + 服务端会话）：token_hash 存 SHA-256 摘要，
+        # logout 删除对应行即时吊销；expires_at 为 epoch 秒，过期后拒绝并惰性清理。
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_sessions (
+            token_hash VARCHAR(64) PRIMARY KEY,
+            username VARCHAR(64) NOT NULL,
+            expires_at INTEGER NOT NULL,
+            created_at TEXT DEFAULT ({NOW})
         )""")
 
         # 告警规则表
@@ -535,6 +553,7 @@ class Database:
             ("idx_appr_status", "cd_approvals", "status"),
             ("idx_appr_project", "cd_approvals", "project"),
             ("idx_appr_created", "cd_approvals", "created_at"),
+            ("idx_cds_username", "cd_sessions", "username"),
         ]:
             with suppress(Exception):
                 conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {tbl}({col})")

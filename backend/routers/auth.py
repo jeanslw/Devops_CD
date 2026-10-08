@@ -1,8 +1,9 @@
 """认证路由"""
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials
 
-from backend.auth import get_current_user, get_db
+from backend.auth import get_current_user, get_db, revoke_session, security
 from backend.database import Database
 from backend.exceptions import AppException
 from backend.login_guard import (
@@ -53,3 +54,15 @@ def login(req: LoginRequest, request: Request, db: Database = Depends(get_db)):
 def me(user: dict = Depends(get_current_user)):
     """返回当前登录用户信息"""
     return user
+
+
+@router.post("/api/logout")
+def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: Database = Depends(get_db),
+):
+    """吊销当前会话：删除服务端会话行，token 立即失效。
+    幂等：未登录 / 已过期 / 无效 token 也返回成功（前端本地状态照常清理）。"""
+    if credentials is not None:
+        revoke_session(db, credentials.credentials)
+    return {"success": True}

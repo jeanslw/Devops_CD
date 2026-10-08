@@ -38,7 +38,15 @@ export function useAuth() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      // 通知服务端吊销会话（token 立即失效）；失败不影响本地清理
+      if (state.token) {
+        await fetch('/api/logout', { method: 'POST', headers: A() })
+      }
+    } catch {
+      // 网络异常时跳过：会话会随 TTL 过期自动失效
+    }
     state.token = ''
     state.user = null
     sessionStorage.removeItem('cd_token')

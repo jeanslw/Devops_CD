@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, W
 
 from backend.auth import (
     _check_disabled,
-    _parse_token,
+    _delete_session,
+    _lookup_session,
     _query_permissions,
     _query_user_with_systems,
-    _timing_safe_compare,
     get_db,
     require_perm,
 )
@@ -55,25 +55,22 @@ def _check_dangerous(cmd: str) -> bool:
 
 
 async def _ws_verify(token: str | None = None) -> str:
-    """WebSocket 鉴权：通过 query param token 校验（O(1) 查询）"""
+    """WebSocket 鉴权：通过 query param token 查服务端会话（O(1) 哈希查找）"""
     if not token:
         raise HTTPException(401, "请登录")
-    try:
-        username, _hash, expires = _parse_token(token)
-    except Exception as e:
-        raise HTTPException(401, "token 无效") from e
-    if expires is not None and time.time() > expires:
-        raise HTTPException(401, "token 已过期，请重新登录")
-
     db = get_db()
     with db.conn() as conn:
-        row = _query_user_with_systems(conn, username, "username, password_hash, status")
+        sess = _lookup_session(conn, token)
+        if sess is None:
+            raise HTTPException(401, "token 无效")
+        if time.time() > sess["expires_at"]:
+            _delete_session(conn, token)
+            raise HTTPException(401, "token 已过期，请重新登录")
+        row = _query_user_with_systems(conn, sess["username"], "username, status")
         if row is None:
             raise HTTPException(401, "token 无效")
         # 停用账号即时踢下线：WebSocket（WebShell）是独立鉴权路径，必须与 REST 一致校验 status
         _check_disabled(row)
-        if not _timing_safe_compare(_hash, row["password_hash"]):
-            raise HTTPException(401, "token 无效")
         return row["username"]
 
 

@@ -338,6 +338,16 @@ CREATE TABLE IF NOT EXISTS cd_approval_rules (
     UNIQUE KEY uk_appr_project (project)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 登录会话表（不透明 token + 服务端会话）：token_hash 存 SHA-256 摘要，
+-- logout 删除对应行即时吊销；expires_at 为 epoch 秒，过期后拒绝并惰性清理。
+CREATE TABLE IF NOT EXISTS cd_sessions (
+    token_hash VARCHAR(64) PRIMARY KEY,
+    username   VARCHAR(64) NOT NULL,
+    expires_at INT          NOT NULL,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cds_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ============================================================================
 -- v_glue_deploy_logs：供 Devops-Glue 只读的部署记录契约视图。
 -- 仅暴露审计字段（不含 output/stage_times 等大字段），CD 未来重命名/拆表在此视图内吸收，
