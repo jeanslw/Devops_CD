@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.5.7 (2026-10-08) — Security hardening, observability & CI tooling
+
+### Security
+- **Opaque session tokens** — login tokens are now `secrets.token_urlsafe` opaque strings instead of `base64(username:hash:expires)`; a new `cd_sessions` table stores only the SHA-256 digest (a DB leak no longer exposes usable tokens), and `POST /api/logout` deletes the row for immediate revocation (the old stateless token could not be invalidated). The WebShell WS handshake verifies against the session table too.
+- **Security headers & HttpOnly cookie** — the app now emits `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / CSP, and login sets an `HttpOnly` + `SameSite=Lax` cookie (`Secure` toggled via `COOKIE_SECURE`) so JS cannot read the token; auth reads the cookie first and falls back to the Bearer header. The frontend drops the `?token=` URL / `sessionStorage` token and keeps only a non-sensitive `cd_authed` flag.
+- **Per-deploy PBKDF2 salt** — `_derive_key` now uses a random persistent salt (`.cd_secret_key.salt`) instead of the fixed `cd-service-v1-salt` shared by every deployment (rainbow-table risk); legacy fixed-salt keys are kept as `_legacy_fernet` so pre-upgrade `enc:` values still decrypt. Decrypt failures are now graded (invalid base64 = ERROR, both keys failed = WARN).
+- **Password hash auto-detection** — login verifies bcrypt and argon2id via `verify_password()` (auto-detect by `$argon2` prefix), so CI switching `PASSWORD_HASH_ALGO` to argon2id no longer crashes CD login (`ValueError: Invalid salt` → 500); any verification failure returns `False` without raising.
+
+### New Features
+- **Prometheus `/metrics`** — a no-auth endpoint exposing uptime / version / per-status deploy counts / running count in Prometheus text format.
+- **Append-only deploy log** — `cd_deploy_logs` now forbids `DELETE` via a `BEFORE DELETE` trigger (`trg_cdl_no_delete`, SQLite + MySQL), making the audit trail immutable; runtime state transitions (`UPDATE`) remain allowed.
+- **Idempotent command retry** — `retry_idempotent` retries safely-rerunnable commands (`docker compose up -d`, `kubectl apply`) a bounded number of times to absorb transient SSH/network blips; configurable via `deploy_retry_attempts` / `deploy_retry_delay` (`=1` disables).
+- **Container resource limits** — `docker-compose.yml` gains `resources.limits` / `reservations` (override via `CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE`).
+
+### Changed
+- **Container hardening** — `cap_drop: ALL`, `no-new-privileges`, `read_only` root FS + `/tmp` tmpfs, and the port defaults to `127.0.0.1` (reverse-proxy deployment; `CD_BIND_IP=0.0.0.0` for direct exposure). `env-check` now requires `SECRET_KEY` under MySQL + read_only.
+- **`ALLOW_EMPTY_SYSTEMS` config** — empty `admin_users.systems` defaults to allow (legacy data); strict environments can set `false` for deny-by-default.
+- **Health check asserts DB** — the compose healthcheck now hits `/api/info` and requires `status=running` + `db_connected=true`, so a dead DB no longer reports a false green.
+
+### CI / Tooling
+- **Full test suite in CI** — pytest full run + `--cov` coverage with `.coveragerc`; pinned `ruff==0.16.5` / `pip-audit==2.10.1` / `pytest==9.1.1` / `pytest-cov==7.1.0`.
+- **Type check & lint in CI** — mypy (`mypy==1.13.0`) joins the code-quality job; ESLint 9 flat config + `eslint-plugin-vue` v10 with a new `npm run lint` step.
+- **Supply-chain hardening** — all 5 workflows' `uses:` pinned from `@vX` tags to commit SHAs; `setup-python` bumped v5→v6 to drop the Node 20 deprecation warning.
+
+### Tests
+- **No-shell-wrapper & quoting regression** — asserts SSH/Ansible/Compose build commands without explicit shell wrappers and that every `image/project/tag/path/inventory` placeholder is `shlex.quote`-d (a project containing `; rm -rf …` is neutralized).
+- **`v_glue_deploy_logs` contract test** — locks the Glue-facing view columns and asserts SQLite and `init_mysql.sql` expose identical columns.
+
 ## v1.5.6 (2026-10-05) — Read-only deploy-log view for Glue
 
 ### New Features

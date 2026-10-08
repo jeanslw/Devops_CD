@@ -1,5 +1,33 @@
 # 更新日志
 
+## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
+
+### 安全
+- **不透明会话令牌** — 登录 token 由 `base64(username:hash:expires)` 改为 `secrets.token_urlsafe` 不透明随机串；新增 `cd_sessions` 会话表只存 SHA-256 摘要（库泄露不再暴露可用 token），`POST /api/logout` 删行即时吊销（原无状态 token 无法主动失效）。WebShell WS 握手同步改为会话校验。
+- **安全响应头 & HttpOnly Cookie** — 应用统一附加 `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / CSP；登录下发 `HttpOnly` + `SameSite=Lax` Cookie（`Secure` 由 `COOKIE_SECURE` 开关），JS 无法读取 token；鉴权优先读 Cookie、回退 Bearer 头。前端移除 `?token=` URL / `sessionStorage` token，仅保留非敏感 `cd_authed` 标志。
+- **按部署随机 PBKDF2 盐** — `_derive_key` 改用随机持久化盐（`.cd_secret_key.salt`），消除所有部署共享固定盐 `cd-service-v1-salt` 的彩虹表风险；历史固定盐保留为 `_legacy_fernet`，升级前 `enc:` 旧数据仍可解密。解密失败分级告警（非法 base64 = ERROR，双密钥均失败 = WARN）。
+- **密码哈希自动识别** — 登录经 `verify_password()` 校验 bcrypt 与 argon2id（按 `$argon2` 前缀自动分派），CI 切换 `PASSWORD_HASH_ALGO` 到 argon2id 不再使 CD 登录崩溃（`ValueError: Invalid salt` → 500）；任何校验失败返回 `False` 不抛异常。
+
+### 新增功能
+- **Prometheus `/metrics`** — 无需认证的指标端点，输出 uptime / version / 各状态部署计数 / running 数（Prometheus 文本格式）。
+- **部署记录只增不删** — `cd_deploy_logs` 通过 `BEFORE DELETE` 触发器（`trg_cdl_no_delete`，SQLite + MySQL）禁止 `DELETE`，审计轨迹不可篡改；运行期状态流转（`UPDATE`）仍允许。
+- **幂等命令重试入口** — `retry_idempotent` 对可安全重跑命令（`docker compose up -d`、`kubectl apply`）做有限重试，消化瞬时 SSH/网络抖动；`deploy_retry_attempts` / `deploy_retry_delay` 可调（`=1` 关闭）。
+- **容器资源限制** — `docker-compose.yml` 增加 `resources.limits` / `reservations`（`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
+
+### 变更
+- **容器加固** — `cap_drop: ALL`、`no-new-privileges`、根文件系统 `read_only` + `/tmp` tmpfs，端口默认只绑 `127.0.0.1`（配合反代；`CD_BIND_IP=0.0.0.0` 恢复直连）。`env-check` 在 MySQL + read_only 下强制要求 `SECRET_KEY`。
+- **`ALLOW_EMPTY_SYSTEMS` 配置** — `admin_users.systems` 为空默认放行（兼容旧数据）；严格环境可设 `false` 改为 deny-by-default。
+- **健康检查断言 DB** — compose healthcheck 改走 `/api/info`，要求 `status=running` 且 `db_connected=true`，DB 挂了不再误报绿灯。
+
+### CI / 工具链
+- **全量测试进 CI** — pytest 全量 + `--cov` 覆盖率，新增 `.coveragerc`；锁定 `ruff==0.16.5` / `pip-audit==2.10.1` / `pytest==9.1.1` / `pytest-cov==7.1.0`。
+- **类型检查 & lint 进 CI** — mypy（`mypy==1.13.0`）加入 code-quality job；ESLint 9 flat config + `eslint-plugin-vue` v10，新增 `npm run lint` 步骤。
+- **供应链加固** — 5 个 workflow 的 `uses:` 由 `@vX` 全部钉到 commit SHA；`setup-python` 升级 v5→v6 消除 Node 20 弃用告警。
+
+### 测试
+- **无 shell 包装 + 占位符 quote 回归** — 断言 SSH/Ansible/Compose 命令构建不包显式 shell 包装，且 `image/project/tag/path/inventory` 占位符一律 `shlex.quote`（含 `; rm -rf …` 的 project 被中性化）。
+- **`v_glue_deploy_logs` 契约测试** — 锁定 Glue 视图列，断言 SQLite 与 `init_mysql.sql` 暴露列完全一致。
+
 ## v1.5.6 (2026-10-05) — 供 Glue 只读的部署日志契约视图
 
 ### 新增功能
