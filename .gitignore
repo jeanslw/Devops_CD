@@ -17,6 +17,7 @@ start.bat
 
 # 加密密钥（crypto.py 无 SECRET_KEY 时自动生成，绝不提交）
 .cd_secret_key
+.cd_secret_key.salt
 
 # IDE
 .vscode/

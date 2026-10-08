@@ -44,5 +44,44 @@ class TestInsecureDefaultKeys(unittest.TestCase):
             self.assertEqual(crypto._get_secret_key(), crypto._derive_key(strong))
 
 
+class TestPerDeploySaltAndBackwardCompat(unittest.TestCase):
+    """按部署随机盐：持久化稳定 + 旧数据兼容解密 + 解密失败分级告警。"""
+
+    def test_roundtrip_with_new_salt(self):
+        secret = "s3cr3t-p@ssw0rd-123"
+        enc = crypto.encrypt(secret)
+        self.assertTrue(enc.startswith(crypto.ENCRYPT_PREFIX))
+        self.assertEqual(crypto.decrypt(enc), secret)
+
+    def test_salt_is_persisted_and_stable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            salt_file = Path(tmp) / ".cd_secret_key.salt"
+            with patch.object(crypto, "_salt_file_path", return_value=salt_file):
+                s1 = crypto._get_or_create_salt()
+                s2 = crypto._get_or_create_salt()
+            self.assertEqual(s1, s2)  # 二次读取稳定复用
+            self.assertTrue(salt_file.exists())
+
+    def test_random_salt_differs_from_legacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            salt_file = Path(tmp) / ".cd_secret_key.salt"
+            with patch.object(crypto, "_salt_file_path", return_value=salt_file):
+                new_salt = crypto._get_or_create_salt()
+        self.assertNotEqual(new_salt, crypto._LEGACY_SALT)
+
+    def test_legacy_ciphertext_still_decrypts(self):
+        # 升级前用历史固定盐派生的兼容密钥加密的数据，升级后应仍可解密
+        token = crypto._legacy_fernet.encrypt(b"legacy-secret-value")
+        self.assertEqual(crypto.decrypt(crypto.ENCRYPT_PREFIX + token.decode()), "legacy-secret-value")
+
+    def test_malformed_ciphertext_returns_empty(self):
+        # 非法 base64 → 分级 ERROR 日志 + 空值降级（不抛异常）
+        self.assertEqual(crypto.decrypt("enc:!!!not-base64!!!"), "")
+
+    def test_plaintext_passthrough_unchanged(self):
+        # 无 enc: 前缀的历史明文原样返回
+        self.assertEqual(crypto.decrypt("plain-password"), "plain-password")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
