@@ -618,6 +618,7 @@ export default {
     select_cluster: '请选择目标集群',
     deploy_error: '❌ 部署失败: {error}',
     exec_cmd: '执行命令 {n}: {cmd}',
+    retry_attempt: '⚠️ 命令失败，正在第 {attempt}/{max_attempts} 次重试...',
     rollback_start: '正在回滚 [{name}] 到上一版本...',
     ssh_exec_start: '开始执行命令...',
     ssh_exec_done: '执行命令完成',

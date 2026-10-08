@@ -618,6 +618,7 @@ export default {
     select_cluster: 'Please select target cluster',
     deploy_error: '❌ Deploy failed: {error}',
     exec_cmd: 'Execute command {n}: {cmd}',
+    retry_attempt: '⚠️ Command failed, retrying ({attempt}/{max_attempts})...',
     rollback_start: 'Rolling back [{name}] to previous revision...',
     ssh_exec_start: 'Executing command...',
     ssh_exec_done: 'Command completed',

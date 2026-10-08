@@ -24,7 +24,7 @@ import shlex
 
 from backend.config import settings
 from backend.deploy_run import normalize_deploy_status, normalize_rollback_type
-from backend.deployers.base import DeployTarget, InvalidTag, split_image_ref, validate_tag
+from backend.deployers.base import DeployTarget, InvalidTag, retry_idempotent, split_image_ref, validate_tag
 from backend.deployers.compose import ComposeDeployer
 from backend.deployers.k8s_argocd import ArgoCDDeployer
 from backend.deployers.k8s_fluxcd import _build_flux_image_patch, _discover_flux_resource
@@ -504,6 +504,58 @@ class TestNoShellCommand(unittest.TestCase):
         self.assertEqual(result.status, "ok", result.output)
         self.assertIn(shlex.quote("hub.example.com/grp/app:v9"), captured["cmd"])
         self._assert_no_shell_wrapper(captured["cmd"])
+
+
+# ─────────────────────────────────────────────────────────────
+# 幂等命令重试入口（base.retry_idempotent）
+# ─────────────────────────────────────────────────────────────
+class TestRetryIdempotent(unittest.TestCase):
+    """仅用于 docker compose up -d / kubectl apply 等可安全重跑的命令。"""
+
+    def test_success_on_first_attempt_does_not_retry(self):
+        calls = []
+
+        def func():
+            calls.append(1)
+            return ("ok", 0)
+
+        out, ec = retry_idempotent(func, attempts=3, delay=0)
+        self.assertEqual((out, ec), ("ok", 0))
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_until_success_and_logs_attempts(self):
+        calls = []
+        logs = []
+
+        def func():
+            calls.append(1)
+            return ("ok" if len(calls) >= 3 else "fail", 0 if len(calls) >= 3 else 1)
+
+        out, ec = retry_idempotent(func, attempts=3, delay=0, log_fn=logs.append)
+        self.assertEqual((out, ec), ("ok", 0))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(logs, [2, 3])  # 第 2、3 次尝试前各触发一次重试提示
+
+    def test_returns_last_failure_without_raising(self):
+        calls = []
+
+        def func():
+            calls.append(1)
+            return ("always fail", 1)
+
+        out, ec = retry_idempotent(func, attempts=3, delay=0)
+        self.assertEqual((out, ec), ("always fail", 1))
+        self.assertEqual(len(calls), 3)
+
+    def test_attempts_one_disables_retry(self):
+        calls = []
+
+        def func():
+            calls.append(1)
+            return ("x", 1)
+
+        retry_idempotent(func, attempts=1, delay=0)
+        self.assertEqual(len(calls), 1)
 
 
 # ─────────────────────────────────────────────────────────────

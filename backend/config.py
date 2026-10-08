@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     # ── Docker 部署（可选）──
     container_restart_policy: str = "always"
 
+    # ── 部署重试（可选）──
+    # 幂等命令（docker compose up -d / kubectl apply）失败时的重试入口：
+    # 这些命令可安全重跑，重试能消化瞬时 SSH/网络抖动，避免一次抖动就判整个部署失败。
+    # attempts 为含首次在内的最大执行次数（=1 即关闭重试）；delay 为两次尝试间隔秒数。
+    deploy_retry_attempts: int = 3
+    deploy_retry_delay: float = 2.0
+
     # ── K8s 部署（可选）──
     flux_namespace: str = "flux-system"
     k8s_helm_timeout: int = 300  # helm upgrade --install --timeout（秒）

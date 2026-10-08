@@ -316,6 +316,34 @@ def _ssh_cmd(ssh, cmd: str, timeout: int = 130) -> str:
     return o or e
 
 
+def retry_idempotent(func, attempts: int = 3, delay: float = 2.0, log_fn=None):
+    """幂等命令的有限重试入口。
+
+    仅用于可安全重跑的命令（docker compose up -d / kubectl apply）——
+    失败后重跑不会产生重复副作用，因此可以用重试消化瞬时 SSH/网络抖动。
+
+    - func: 无参可调用，返回 tuple，其**最后一个元素**必须是 exit_code（0=成功）。
+    - attempts: 含首次在内的最大执行次数（=1 即关闭重试）。
+    - delay: 两次尝试之间的间隔秒数。
+    - log_fn: 可选回调 log_fn(retry_number)，在每次重试前触发（供 SSE 输出提示）。
+
+    全部失败时返回最后一次结果（不抛异常），由调用方按原逻辑判定成败，
+    保证重试只是「多给几次机会」，不改变既有失败语义。
+    """
+    last = None
+    for attempt in range(1, attempts + 1):
+        if attempt > 1 and log_fn is not None:
+            log_fn(attempt)
+        result = func()
+        last = result
+        exit_code = result[-1] if result else 1
+        if exit_code == 0:
+            return result
+        if attempt < attempts:
+            time.sleep(delay)
+    return last
+
+
 # 进度条特征：终端用 \r 刷新，形如 "[==>                ]" 或 "[=====>     ]"
 _PROGRESS_BAR = re.compile(r"\[[=> ]+\]")
 

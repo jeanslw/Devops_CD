@@ -104,6 +104,17 @@ services:
       retries: 3
       start_period: 20s
 
+    # ── 资源治理 ──
+    # Python 常驻进程 + paramiko 并发部署，内存/CPU 峰值未实测：设上限防止单容器 OOM
+    # 拖垮宿主机，同时给保留值避免被邻居抢占。按实际负载用 CD_MEM_LIMIT / CD_CPU_LIMIT 覆盖。
+    resources:
+      limits:
+        cpus: ${CD_CPU_LIMIT:-2.0}
+        memory: ${CD_MEM_LIMIT:-512m}
+      reservations:
+        cpus: ${CD_CPU_RESERVE:-0.25}
+        memory: ${CD_MEM_RESERVE:-256m}
+
     # MySQL / MariaDB 模式（推荐）：和 PHP 端共用 devops_glue 库
     # 需要在 .env 中配置 DB_DRIVER=mysql 及连接信息
     # ── SQLite 模式（可选，取消下面注释）──

@@ -7,7 +7,7 @@ import yaml
 
 from backend.config import settings
 from backend.deploy_log import S
-from backend.deployers.base import DeployTarget, ssh_connect
+from backend.deployers.base import DeployTarget, retry_idempotent, ssh_connect
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import (
     _exec_exit,
@@ -264,7 +264,19 @@ class KubectlDeployer(K8sSubDeployer):
             for i, c in enumerate(cmds):
                 check_cancelled()
                 _log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
-                o, e, ec = _exec_exit(ssh, c)
+                # kubectl apply 幂等，可安全重试；rollout restart 失败按原逻辑直接判败
+                if i == 0:
+                    o, e, ec = retry_idempotent(
+                        lambda: _exec_exit(ssh, c),
+                        attempts=settings.deploy_retry_attempts,
+                        delay=settings.deploy_retry_delay,
+                        log_fn=lambda n: _log(
+                            callback,
+                            S("deploy_log.retry_attempt", attempt=n, max_attempts=settings.deploy_retry_attempts),
+                        ),
+                    )
+                else:
+                    o, e, ec = _exec_exit(ssh, c)
                 if o:
                     deploy_log.append(o)
                     _log(callback, o)

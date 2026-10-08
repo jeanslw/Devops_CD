@@ -11,6 +11,7 @@ from .base import (
     DeployResult,
     DeployTarget,
     _exec_on,
+    retry_idempotent,
     split_image_ref,
     ssh_exec_stream,
     ssh_session,
@@ -288,12 +289,19 @@ class ComposeDeployer(Deployer):
                 self._log(callback, S("deploy_log.current_version"))
                 self._log(callback, before.output or S("deploy_log.no_output"))
 
-                # 6. 执行部署
+                # 6. 执行部署（up -d 幂等，可安全重试，消化瞬时 SSH/网络抖动）
                 self._log(callback, S("deploy_log.starting_deploy"))
-                deploy_text, _ = self._ssh_exec_stream(
-                    ssh,
-                    f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {shlex.quote(project_short)} 2>&1",
-                    callback,
+                up_cmd = (
+                    f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {shlex.quote(project_short)} 2>&1"
+                )
+                deploy_text, _ = retry_idempotent(
+                    lambda: self._ssh_exec_stream(ssh, up_cmd, callback),
+                    attempts=settings.deploy_retry_attempts,
+                    delay=settings.deploy_retry_delay,
+                    log_fn=lambda n: self._log(
+                        callback,
+                        S("deploy_log.retry_attempt", attempt=n, max_attempts=settings.deploy_retry_attempts),
+                    ),
                 )
 
                 # 7. 部署后验证
