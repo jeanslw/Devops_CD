@@ -1,6 +1,6 @@
 import { createI18n } from 'vue-i18n'
-import en from './en.js'
-import zh from './zh.js'
+// 预编译文案由 unplugin-vue-i18n 在构建期生成（AST），运行时不再 new Function
+import messages from '@intlify/unplugin-vue-i18n/messages'
 
 const urlParams = new URLSearchParams(window.location.search)
 const langParam = urlParams.get('lang')
@@ -11,7 +11,7 @@ const i18n = createI18n({
   legacy: false,
   locale: defaultLocale,
   fallbackLocale: 'en',
-  messages: { en, zh }
+  messages,
 })
 
 export function setLang(locale) {
