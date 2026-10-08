@@ -357,3 +357,19 @@ CREATE OR REPLACE VIEW v_glue_deploy_logs AS
 SELECT id, project, tag, image, deploy_type, target, status, triggered_by,
        deploy_note, created_at
 FROM cd_deploy_logs;
+
+-- ============================================================================
+-- 审计完整性触发器：部署记录只增不删（append-only）。
+-- 部署状态机在运行期间仍会就地 UPDATE（pending→running→终态，及恢复流转），
+-- 这些是应用自身驱动的合法更新，故只禁止 DELETE 抹掉历史。
+-- 幂等：DROP IF EXISTS + CREATE，重跑本脚本不报错。
+-- ============================================================================
+DROP TRIGGER IF EXISTS trg_cdl_no_delete;
+DELIMITER $$
+CREATE TRIGGER trg_cdl_no_delete
+BEFORE DELETE ON cd_deploy_logs
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'cd_deploy_logs is append-only: DELETE forbidden';
+END $$
+DELIMITER ;

@@ -261,6 +261,16 @@ class Database:
                 "expires_at INT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
                 "INDEX idx_cds_username (username))"
             )
+        # 审计完整性：部署记录只增不删（append-only），对齐 SQLite 侧触发器。
+        # 老库未重跑 init_mysql.sql 时在此自愈创建；无 TRIGGER 权限时静默跳过（防御纵深）。
+        with suppress(Exception):
+            conn.execute("DROP TRIGGER IF EXISTS trg_cdl_no_delete")
+        with suppress(Exception):
+            conn.execute(
+                "CREATE TRIGGER trg_cdl_no_delete BEFORE DELETE ON cd_deploy_logs "
+                "FOR EACH ROW SIGNAL SQLSTATE '45000' "
+                "SET MESSAGE_TEXT = 'cd_deploy_logs is append-only: DELETE forbidden'"
+            )
         conn.commit()
 
     # ── SQLite 自动建表 ──
@@ -339,6 +349,14 @@ class Database:
             conn.execute("DROP INDEX IF EXISTS idx_cdl_deploy_id")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs DROP COLUMN deploy_id")
+        # 审计完整性：部署记录只增不删（append-only）。部署状态机在运行期间仍会就地 UPDATE
+        # （pending→running→ok/failed/terminated/interrupted，及恢复时的 interrupted→pending），
+        # 这些是应用自身驱动的合法流转，故只禁止 DELETE 抹掉历史，不改动 UPDATE。
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_cdl_no_delete "
+            "BEFORE DELETE ON cd_deploy_logs "
+            "BEGIN SELECT RAISE(ABORT, 'cd_deploy_logs is append-only: DELETE forbidden'); END"
+        )
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_bots (
             id {PK},
