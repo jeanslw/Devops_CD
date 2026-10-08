@@ -42,9 +42,10 @@ def _parse_token(token: str) -> tuple[str, str, int | None]:
 
 def _has_system(systems: str | None, target: str) -> bool:
     """检查 systems 字段是否包含指定系统（逗号分隔，trim 后精确匹配）。
-    systems 为 None/空时默认放行（兼容旧数据）。"""
+    systems 为 None/空时按 settings.allow_empty_systems 决定：默认放行（兼容旧数据），
+    可置 False 改为 deny-by-default（空 systems 即无 CD 权限）。"""
     if not systems:
-        return True  # 字段为空 → 兼容老数据，默认有权限
+        return settings.allow_empty_systems
     return target in [s.strip() for s in systems.split(",")]
 
 

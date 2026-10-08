@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # 与 Devops-Glue 共享账号/token 的调用不受影响。
     auth_token_ttl_hours: int = 24
 
+    # ── 认证访问控制 ──
+    # admin_users.systems 为空时是否放行 CD 访问。
+    # True（默认）：兼容历史数据，空 systems 视为有权限；False：deny-by-default，空即无权限。
+    allow_empty_systems: bool = True
+
     # ── Harbor 镜像仓库（必填）──
     # 统一读 HARBOR_BASE_URL（带 scheme 的完整地址，如 https://hub.example.com）：
     # CI(Glue) 直接使用；CD 内部剥掉 scheme 供 Docker 镜像引用，HarborClient 自动探测 https→http。
