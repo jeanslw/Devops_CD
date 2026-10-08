@@ -5,7 +5,7 @@ import secrets
 import time
 
 import bcrypt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.config import settings
@@ -53,6 +53,16 @@ def _delete_session(conn, token: str) -> None:
     conn.execute("DELETE FROM cd_sessions WHERE token_hash=?", (_hash_token(token),))
 
 
+def _extract_token(request: Request, credentials: HTTPAuthorizationCredentials | None) -> str | None:
+    """提取 token：优先 HttpOnly cookie（浏览器同源自动携带），回退 Bearer 头（兼容 API 客户端 / 脚本）。"""
+    cookie_token = request.cookies.get("cd_token")
+    if cookie_token:
+        return cookie_token
+    if credentials is not None:
+        return credentials.credentials
+    return None
+
+
 def _has_system(systems: str | None, target: str) -> bool:
     """检查 systems 字段是否包含指定系统（逗号分隔，trim 后精确匹配）。
     systems 为 None/空时按 settings.allow_empty_systems 决定：默认放行（兼容旧数据），
@@ -88,17 +98,18 @@ def get_db() -> Database:
 
 
 def verify_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Database = Depends(get_db),
 ) -> str:
-    """从 Bearer token 验证用户身份，返回 username。
+    """从 cookie / Bearer token 验证用户身份，返回 username。
     服务端会话表 + 不透明 token：token 本身不携带任何用户信息，
     校验即查 cd_sessions（O(1) 哈希查找），logout 删行即时失效。
     同时检查 systems 字段（如果存在）是否允许 CD 访问。"""
-    if credentials is None:
+    token = _extract_token(request, credentials)
+    if not token:
         raise HTTPException(401, "Please login first")
 
-    token = credentials.credentials
     with db.conn() as conn:
         sess = _lookup_session(conn, token)
         if sess is None:
@@ -118,15 +129,16 @@ def verify_token(
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Database = Depends(get_db),
 ) -> dict:
     """获取当前登录用户完整信息 {username, role, systems, permissions}。
     同 verify_token：服务端会话校验，同时检查 systems 字段是否允许 CD 访问。"""
-    if credentials is None:
+    token = _extract_token(request, credentials)
+    if not token:
         raise HTTPException(401, "Please login first")
 
-    token = credentials.credentials
     with db.conn() as conn:
         sess = _lookup_session(conn, token)
         if sess is None:

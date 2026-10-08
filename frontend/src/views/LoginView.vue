@@ -40,8 +40,8 @@ async function doLogin() {
       body: JSON.stringify({ user: user.value.trim(), password: password.value })
     })
     const d = await r.json()
-    if (r.ok && d.token) {
-      auth.setToken(d.token)
+    if (r.ok) {
+      auth.setAuthenticated()
       router.push('/')
     } else {
       err.value = d.error || t('login.loginFailed')

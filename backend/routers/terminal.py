@@ -76,8 +76,9 @@ async def _ws_verify(token: str | None = None) -> str:
 
 @router.websocket("/ws/terminal/{server_id}")
 async def terminal(websocket: WebSocket, server_id: int):
-    # 从 query string 获取 token 并校验
-    token = websocket.query_params.get("token")
+    # 优先取 HttpOnly cookie（浏览器同源 WS 握手自动携带，token 不再进 URL/日志），
+    # 回退 query param（兼容旧客户端 / 脚本直连）。
+    token = websocket.cookies.get("cd_token") or websocket.query_params.get("token")
     try:
         username = await _ws_verify(token)
     except HTTPException:

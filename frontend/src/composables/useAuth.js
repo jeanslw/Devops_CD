@@ -1,18 +1,21 @@
 import { reactive } from 'vue'
 
+// token 存于 HttpOnly cookie（服务端下发），JS 不可读（防 XSS 窃取）。
+// sessionStorage 只放一个非敏感标志 cd_authed（仅供路由守卫同步判断，无凭证价值）。
 const state = reactive({
-  token: sessionStorage.getItem('cd_token') || '',
-  initialized: !!sessionStorage.getItem('cd_token'),
+  authenticated: !!sessionStorage.getItem('cd_authed'),
+  initialized: !!sessionStorage.getItem('cd_authed'),
   user: null,          // { username, role, permissions: [...] }
   loadError: false,    // 首次加载用户信息失败
 })
 
 export function useAuth() {
-  const A = () => (state.token ? { Authorization: 'Bearer ' + state.token } : {})
+  // 同源 fetch 默认携带 cookie（credentials: 'same-origin'），无需手动加 Authorization 头
+  const A = () => ({})
 
-  function setToken(t) {
-    state.token = t
-    sessionStorage.setItem('cd_token', t)
+  function setAuthenticated() {
+    sessionStorage.setItem('cd_authed', '1')
+    state.authenticated = true
     state.initialized = true
     fetchMe()
   }
@@ -22,12 +25,14 @@ export function useAuth() {
   }
 
   async function fetchMe() {
-    if (!state.token) return
+    if (!state.authenticated) return
     try {
       const r = await fetch('/api/me', { headers: A() })
       if (r.ok) {
         state.user = await r.json()
         state.loadError = false
+      } else if (r.status === 401) {
+        logout()  // cookie 失效/过期：清理本地状态
       } else {
         if (!state.user) state.loadError = true
         state.user = null
@@ -40,16 +45,14 @@ export function useAuth() {
 
   async function logout() {
     try {
-      // 通知服务端吊销会话（token 立即失效）；失败不影响本地清理
-      if (state.token) {
-        await fetch('/api/logout', { method: 'POST', headers: A() })
-      }
+      // 通知服务端吊销会话 + 清除 HttpOnly cookie；失败不影响本地清理
+      await fetch('/api/logout', { method: 'POST', headers: A() })
     } catch {
-      // 网络异常时跳过：会话会随 TTL 过期自动失效
+      // 网络异常时跳过：服务端会话会随 TTL 过期自动失效
     }
-    state.token = ''
+    state.authenticated = false
     state.user = null
-    sessionStorage.removeItem('cd_token')
+    sessionStorage.removeItem('cd_authed')
     state.initialized = false
   }
 
@@ -99,7 +102,7 @@ export function useAuth() {
   function canTriggerBuild()  { return hasPerm('ci.trigger') || isSuperAdmin() }
 
   return {
-    state, A, setToken, setUser, fetchMe, logout, handle401,
+    state, A, setAuthenticated, setUser, fetchMe, logout, handle401,
     hasPerm, isSuperAdmin,
     // 一级
     canBuildManage, canDeployManage, canServerManage, canWebshell,

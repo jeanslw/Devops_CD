@@ -1,9 +1,10 @@
 """认证路由"""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 
-from backend.auth import get_current_user, get_db, revoke_session, security
+from backend.auth import _extract_token, get_current_user, get_db, revoke_session, security
+from backend.config import settings
 from backend.database import Database
 from backend.exceptions import AppException
 from backend.login_guard import (
@@ -18,7 +19,7 @@ router = APIRouter(tags=["auth"])
 
 
 @router.post("/api/login")
-def login(req: LoginRequest, request: Request, db: Database = Depends(get_db)):
+def login(req: LoginRequest, request: Request, response: Response, db: Database = Depends(get_db)):
     # 登录失败限流：与 CI（Devops-Glue）共享 cache 表计数，5 次失败锁 15 分钟。
     # 必须在验密之前检查，任何失败（含停用/无 CD 权限）都计数，成功才清零。
     ip = client_ip(request)
@@ -45,6 +46,17 @@ def login(req: LoginRequest, request: Request, db: Database = Depends(get_db)):
         raise
     if token:
         clear_login_failure(db, ip, username)
+        # HttpOnly cookie：JS 不可读，XSS 无法窃取；同源请求自动携带，前端无需手动带 Authorization 头。
+        # Secure 由 settings.cookie_secure 控制（nginx 以 HTTPS 对外时应开启）。
+        response.set_cookie(
+            "cd_token",
+            token,
+            httponly=True,
+            samesite="lax",
+            path="/",
+            secure=settings.cookie_secure,
+            max_age=settings.auth_token_ttl_hours * 3600,
+        )
         return {"token": token}
     record_login_failure(db, ip, username)
     raise AppException("账号或密码错误", status_code=401, error_key="errors.invalid_credentials")
@@ -58,11 +70,15 @@ def me(user: dict = Depends(get_current_user)):
 
 @router.post("/api/logout")
 def logout(
+    request: Request,
+    response: Response,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Database = Depends(get_db),
 ):
-    """吊销当前会话：删除服务端会话行，token 立即失效。
+    """吊销当前会话：删除服务端会话行，token 立即失效，并清除 HttpOnly cookie。
     幂等：未登录 / 已过期 / 无效 token 也返回成功（前端本地状态照常清理）。"""
-    if credentials is not None:
-        revoke_session(db, credentials.credentials)
+    token = _extract_token(request, credentials)
+    if token:
+        revoke_session(db, token)
+    response.delete_cookie("cd_token", path="/")
     return {"success": True}

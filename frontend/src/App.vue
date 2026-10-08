@@ -1,6 +1,6 @@
 <template>
   <div id="app-root">
-    <div v-if="auth.state.token" class="main-app">
+    <div v-if="auth.state.authenticated" class="main-app">
       <Topbar @logout="auth.logout" @toggle-sidebar="toggleSidebar" />
       <div class="layout">
         <Sidebar :open="sidebarOpen" @close="closeSidebar" />
@@ -65,7 +65,7 @@ function onContentClick() {
 
 // 启动时加载用户信息
 onMounted(() => {
-  if (auth.state.token) auth.fetchMe()
+  if (auth.state.authenticated) auth.fetchMe()
   window.addEventListener('resize', updateSidebarByWidth)
 })
 
@@ -74,7 +74,7 @@ onUnmounted(() => {
 })
 
 // 登录成功后自动跳转到首页
-watch(() => auth.state.token, (val, oldVal) => {
+watch(() => auth.state.authenticated, (val, oldVal) => {
   if (val && !oldVal) {
     router.push('/')
   }

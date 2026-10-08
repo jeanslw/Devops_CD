@@ -33,10 +33,13 @@ class Settings(BaseSettings):
     secret_key: str = ""
 
     # ── 认证 token（可选）──
-    # 登录签发的 Bearer token 有效期（小时），过期后需重新登录，默认 24 小时。
-    # 兼容性：旧格式（无过期段）的 base64(username:hash) token 仍然接受，
-    # 与 Devops-Glue 共享账号/token 的调用不受影响。
+    # 登录签发的会话 token 有效期（小时），过期后需重新登录，默认 24 小时。
+    # token 为不透明随机串，服务端 cd_sessions 表存 SHA-256 摘要；退出登录即时吊销。
     auth_token_ttl_hours: int = 24
+
+    # HttpOnly 会话 cookie 是否加 Secure（仅 HTTPS 下浏览器才回传 cookie）。
+    # 服务在 nginx 之后以 HTTPS 对外时应设 true；直连 HTTP 暴露时保持 false。
+    cookie_secure: bool = False
 
     # ── 认证访问控制 ──
     # admin_users.systems 为空时是否放行 CD 访问。

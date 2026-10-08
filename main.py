@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -98,6 +98,36 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Devops-Glue CD", version=__version__, lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
 _STARTED_AT = datetime.now(timezone.utc)
+
+# ── 安全响应头（所有响应统一附加）──
+# CSP：只允许同源资源 + data: 图片（前端 CSS 有 SVG data URI）+ ws:/wss:（WebShell）。
+# 'unsafe-inline' 仅用于 style（前端大量内联 style= 属性），脚本仍禁内联。
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self' ws: wss:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ),
+}
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for key, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    return response
+
 
 # 注册路由
 app.include_router(auth.router)

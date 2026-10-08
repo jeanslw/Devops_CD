@@ -16,6 +16,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import types
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -75,6 +76,10 @@ class SessionAuthTestCase(unittest.TestCase):
     def _creds(self, token):
         return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
+    def _req(self, cookies=None):
+        # FastAPI 会注入真实 Request；直接调用 verify_token/get_current_user 时用最小 mock
+        return types.SimpleNamespace(cookies=cookies or {})
+
     def test_authenticate_issues_opaque_token(self):
         token = authenticate("alice", "secret123", self.db)
         self.assertIsNotNone(token)
@@ -92,11 +97,16 @@ class SessionAuthTestCase(unittest.TestCase):
 
     def test_verify_token_returns_username(self):
         token = authenticate("alice", "secret123", self.db)
-        self.assertEqual(verify_token(self._creds(token), self.db), "alice")
+        self.assertEqual(verify_token(self._req(), self._creds(token), self.db), "alice")
+
+    def test_verify_token_accepts_cookie(self):
+        token = authenticate("alice", "secret123", self.db)
+        # 优先取 HttpOnly cookie（无需 Authorization 头）
+        self.assertEqual(verify_token(self._req({"cd_token": token}), None, self.db), "alice")
 
     def test_get_current_user_returns_identity(self):
         token = authenticate("alice", "secret123", self.db)
-        user = get_current_user(self._creds(token), self.db)
+        user = get_current_user(self._req(), self._creds(token), self.db)
         self.assertEqual(user["username"], "alice")
         self.assertEqual(user["role"], "deployer")
         self.assertEqual(user["systems"], "cd")
@@ -105,7 +115,7 @@ class SessionAuthTestCase(unittest.TestCase):
         token = authenticate("alice", "secret123", self.db)
         revoke_session(self.db, token)
         with self.assertRaises(HTTPException) as ctx:
-            verify_token(self._creds(token), self.db)
+            verify_token(self._req(), self._creds(token), self.db)
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_logout_idempotent(self):
@@ -121,12 +131,12 @@ class SessionAuthTestCase(unittest.TestCase):
         with self.db.conn() as conn:
             conn.execute("UPDATE cd_sessions SET expires_at=1")  # 强制过期
         with self.assertRaises(HTTPException) as ctx:
-            verify_token(self._creds(token), self.db)
+            verify_token(self._req(), self._creds(token), self.db)
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_invalid_token_rejected(self):
         with self.assertRaises(HTTPException) as ctx:
-            verify_token(self._creds("does-not-exist"), self.db)
+            verify_token(self._req(), self._creds("does-not-exist"), self.db)
         self.assertEqual(ctx.exception.status_code, 401)
 
 
