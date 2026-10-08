@@ -10,7 +10,6 @@
 
 ### New Features
 - **Prometheus `/metrics`** — a no-auth endpoint exposing uptime / version / per-status deploy counts / running count in Prometheus text format.
-- **Append-only deploy log** — `cd_deploy_logs` now forbids `DELETE` via a `BEFORE DELETE` trigger (`trg_cdl_no_delete`, SQLite + MySQL), making the audit trail immutable; runtime state transitions (`UPDATE`) remain allowed.
 - **Idempotent command retry** — `retry_idempotent` retries safely-rerunnable commands (`docker compose up -d`, `kubectl apply`) a bounded number of times to absorb transient SSH/network blips; configurable via `deploy_retry_attempts` / `deploy_retry_delay` (`=1` disables).
 - **Container resource limits** — `docker-compose.yml` gains `resources.limits` / `reservations` (override via `CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE`).
 
