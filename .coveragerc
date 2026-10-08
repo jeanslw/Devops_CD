@@ -1,0 +1,12 @@
+# pytest-cov 覆盖率配置：只统计业务代码，排除测试与包初始化文件
+[run]
+source = backend
+omit =
+    backend/tests/*
+    */__pycache__/*
+    */__init__.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
