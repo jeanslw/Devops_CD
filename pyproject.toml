@@ -18,6 +18,6 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 python_version = "3.10"
 
 [[tool.mypy.overrides]]
-# DBUtils 连接池无官方类型存根
-module = "dbutils.*"
+# 第三方库无官方类型存根，忽略其 import 类型检查（与 dbutils 同理，避免 mypy 误报 import-untyped）
+module = ["dbutils.*", "pymysql", "pymysql.*", "requests", "requests.*", "paramiko", "paramiko.*", "yaml"]
 ignore_missing_imports = true
