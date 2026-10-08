@@ -240,6 +240,29 @@ def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None
         raise HTTPException(403, f"Permission denied: {_MANAGE_PERM} or {required} required")
 
 
+def verify_password(plain: str, hashed: str) -> bool:
+    """校验密码哈希，自动识别算法：argon2id（$argon2 前缀）或 bcrypt（默认）。
+
+    CI 侧 PASSWORD_HASH_ALGO 可在 bcrypt / argon2id 间切换，CD 必须兼容两者，
+    不能硬编码单一算法（否则 CI 一切到 argon2id，CD 登录即抛 ValueError: Invalid salt）。
+    任何校验失败（算法未知 / 哈希格式损坏 / 未安装 argon2-cffi）都返回 False，不抛异常。
+    """
+    if hashed.startswith("$argon2"):
+        try:
+            from argon2 import PasswordHasher
+            from argon2.exceptions import VerificationError
+        except ImportError:  # 未安装 argon2-cffi 时，argon2id 哈希无法校验
+            return False
+        try:
+            return PasswordHasher().verify(hashed, plain)
+        except (VerificationError, ValueError):
+            return False
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
+
+
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据，同时检查 systems（如果存在）是否允许 CD 访问。
     成功返回不透明会话 token（会话写入 cd_sessions，logout 删行即时吊销）；
@@ -263,7 +286,7 @@ def authenticate(user: str, password: str, db: Database) -> str | None:
         if status is not None and int(status) == 0:
             raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
 
-        if not bcrypt.checkpw(password.encode(), row["password_hash"].encode()):
+        if not verify_password(password, row["password_hash"]):
             return None
 
         if not _has_system(row.get("systems"), CD_SYSTEM):

@@ -2,6 +2,7 @@ fastapi==0.141.1
 uvicorn[standard]==0.34.0
 paramiko==5.0.0
 bcrypt==5.0.0
+argon2-cffi==23.1.0
 cryptography==50.0.0
 requests==2.34.2
 pydantic-settings==2.15.0
