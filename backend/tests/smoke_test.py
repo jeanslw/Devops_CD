@@ -63,11 +63,11 @@ print(f"  P0-1 HelmDeployer: {PASS}")
 print(f"  P0-1 FluxCDDeployer: {PASS}")
 
 # P0-2: helm_connecting i18n
-for _, path in [("zh", "frontend/src/locales/zh.js"), ("en", "frontend/src/locales/en.js")]:
+for _, path in [("zh", "frontend/src/locales/zh.json"), ("en", "frontend/src/locales/en.json")]:
     with open(os.path.join(ROOT, path), encoding="utf-8") as f:
         c = f.read()
-    assert "helm_connecting:" in c, f"helm_connecting missing in {path}"
-    assert "flux_connecting:" in c, f"flux_connecting lost from {path}"
+    assert '"helm_connecting":' in c, f"helm_connecting missing in {path}"
+    assert '"flux_connecting":' in c, f"flux_connecting lost from {path}"
 print(f"  P0-2 helm_connecting i18n: {PASS}")
 
 # P0-4: direct import from base
@@ -151,11 +151,11 @@ all_new_keys = [
     "harbor_unavailable",
 ]
 
-for _, path in [("zh", "frontend/src/locales/zh.js"), ("en", "frontend/src/locales/en.js")]:
+for _, path in [("zh", "frontend/src/locales/zh.json"), ("en", "frontend/src/locales/en.json")]:
     with open(os.path.join(ROOT, path), encoding="utf-8") as f:
         c = f.read()
     for key in all_new_keys:
-        assert f"{key}:" in c, f"Key '{key}' missing in {path}"
+        assert f'"{key}":' in c, f"Key '{key}' missing in {path}"
 print(f"  All {len(all_new_keys)} keys present in both locales: {PASS}")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
