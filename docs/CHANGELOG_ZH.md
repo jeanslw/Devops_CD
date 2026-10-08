@@ -10,7 +10,6 @@
 
 ### 新增功能
 - **Prometheus `/metrics`** — 无需认证的指标端点，输出 uptime / version / 各状态部署计数 / running 数（Prometheus 文本格式）。
-- **部署记录只增不删** — `cd_deploy_logs` 通过 `BEFORE DELETE` 触发器（`trg_cdl_no_delete`，SQLite + MySQL）禁止 `DELETE`，审计轨迹不可篡改；运行期状态流转（`UPDATE`）仍允许。
 - **幂等命令重试入口** — `retry_idempotent` 对可安全重跑命令（`docker compose up -d`、`kubectl apply`）做有限重试，消化瞬时 SSH/网络抖动；`deploy_retry_attempts` / `deploy_retry_delay` 可调（`=1` 关闭）。
 - **容器资源限制** — `docker-compose.yml` 增加 `resources.limits` / `reservations`（`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
 
