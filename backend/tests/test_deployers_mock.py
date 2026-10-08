@@ -447,6 +447,65 @@ class TestTagValidation(unittest.TestCase):
         self.assertTrue(all(project_short in c for c in stream_cmds), stream_cmds)
 
 
+class TestNoShellCommand(unittest.TestCase):
+    """部署器命令不得包显式 shell（bash -c / sh -c），占位符必须 shlex.quote。
+
+    SSH exec 通道在远端仍会经登录 shell 执行命令，因此安全边界是：
+    1) 不再额外包一层 sh -c / bash -c（避免二次解释已转义的参数）；
+    2) 所有用户输入（image/project/tag/path/inventory）进命令前 shlex.quote。
+    """
+
+    def _assert_no_shell_wrapper(self, cmd: str) -> None:
+        for wrapper in ("bash -c", "sh -c", "/bin/bash", "/bin/sh", "zsh -c", "dash -c"):
+            self.assertNotIn(wrapper, cmd, f"命令不应包显式 shell，却出现 {wrapper!r}: {cmd}")
+
+    def test_ssh_commands_mode_quotes_placeholders(self):
+        target = DeployTarget(
+            host="h", mode="commands", options={"commands": "docker pull {image} && echo {project}:{tag}"}
+        )
+        cmd = SSHDeployer()._build_commands(target, "hub.example.com/grp/app:v1.0", "grp/app", "v1.0")
+        self.assertIn(shlex.quote("hub.example.com/grp/app:v1.0"), cmd)
+        self.assertIn(shlex.quote("grp/app"), cmd)
+        self.assertIn(shlex.quote("v1.0"), cmd)
+        self._assert_no_shell_wrapper(cmd)
+
+    def test_ssh_commands_mode_neutralizes_metachar_project(self):
+        # project 含 shell 元字符时必须被 shlex.quote 包进单引号，不得裸拼
+        project = "grp/app; rm -rf /tmp/x"
+        target = DeployTarget(host="h", mode="commands", options={"commands": "echo {project}"})
+        cmd = SSHDeployer()._build_commands(target, "img:v1", project, "v1")
+        self.assertIn(shlex.quote(project), cmd)
+        self._assert_no_shell_wrapper(cmd)
+
+    def test_ssh_ansible_mode_quotes_path_and_vars(self):
+        target = DeployTarget(host="h", mode="ansible", path="/srv/playbook.yml", options={"inventory": "inv.ini"})
+        cmd = SSHDeployer()._build_ansible(target, "hub/app:v2", "grp/app", "v2")
+        self.assertIn(shlex.quote("/srv/playbook.yml"), cmd)
+        self.assertIn(shlex.quote("inv.ini"), cmd)
+        self.assertIn(shlex.quote("hub/app:v2"), cmd)
+        self._assert_no_shell_wrapper(cmd)
+
+    def test_compose_commands_mode_no_shell_wrapper(self):
+        captured = {}
+
+        def fake_stream(ssh, cmd, callback):
+            captured["cmd"] = cmd
+            return ("started", 0)
+
+        session = MagicMock()
+        session.__enter__.return_value = MagicMock()
+        session.__exit__.return_value = False
+        target = DeployTarget(host="1.2.3.4", mode="commands", options={"commands": "docker pull {image}"})
+        with (
+            patch("backend.deployers.compose.ssh_session", return_value=session),
+            patch("backend.deployers.compose.ssh_exec_stream", side_effect=fake_stream),
+        ):
+            result = ComposeDeployer().deploy(target, "hub.example.com/grp/app:v9", "grp/app", "v9")
+        self.assertEqual(result.status, "ok", result.output)
+        self.assertIn(shlex.quote("hub.example.com/grp/app:v9"), captured["cmd"])
+        self._assert_no_shell_wrapper(captured["cmd"])
+
+
 # ─────────────────────────────────────────────────────────────
 # 取消信号生命周期（deploy_run.py）
 # ─────────────────────────────────────────────────────────────
