@@ -7,8 +7,9 @@
 #   优先级：进程环境变量 > 根 .env > config/app.env > 代码默认值 ——
 #   临时覆盖业务参数：写进根 .env 或本文件的 environment 即可，无需重建镜像。
 #
-# 联合部署（Devops_Glue 仓库 docker-compose.yml 里注释掉的 devops-cd 段）时，CD 不带任何 volume，
+# 联合部署（Devops_Glue 仓库 docker-compose.yml 里注释掉的 devops-cd 段）时，CD 不挂业务数据卷，
 # 业务参数同样来自镜像内 config/app.env，根 .env 由 Glue 的 env_file 注入。
+# 本文件独立部署时，仅挂载 SSH known_hosts 持久化卷（配合 read_only 容器加固）。
 
 services:
   # 启动前环境变量预检（一次性容器，复用 devops-cd 镜像不增加额外构建）：
@@ -42,6 +43,13 @@ services:
                 print('------------------------------------------------------------------------')
                 print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
                 sys.exit(1)
+            if not os.getenv('SECRET_KEY'):
+                print('[启动中止] DB_DRIVER=mysql 且容器只读（read_only），必须在 .env 配置 SECRET_KEY：')
+                print('[ABORT] DB_DRIVER=mysql + read_only requires SECRET_KEY (auto-generated .cd_secret_key cannot be written / lost on recreate):')
+                print('        生产环境请在 .env 设置固定值 / set a fixed value in .env: openssl rand -base64 32')
+                print('------------------------------------------------------------------------')
+                print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
+                sys.exit(1)
         if not os.getenv('SECRET_KEY'):
             print('[提示 / NOTE] SECRET_KEY 未配置：首次运行将自动生成 .cd_secret_key（容器重建会丢失）；')
             print('       SECRET_KEY is unset: .cd_secret_key is auto-generated on first run (lost when the container is recreated);')
@@ -71,8 +79,22 @@ services:
       #CI_API_URL: http://devops-glue
       #CI_API_TOKEN: dg_xxx   # API token（dg_ 前缀，服务账号 / 第三方）推荐
     ports:
-      - "8081:8081"
+      # 默认只绑定回环地址（配合 nginx 反向代理，不直接暴露公网）。
+      # 无 nginx 直连暴露场景可设 CD_BIND_IP=0.0.0.0 恢复公开监听。
+      - "${CD_BIND_IP:-127.0.0.1}:8081:8081"
     restart: unless-stopped
+    # ── 容器加固 ──
+    # 应用以非 root（appuser）运行，无需任何 Linux capability；禁止 setuid 提权。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # 根文件系统只读：运行时写入仅限 /tmp（临时 ssh key / yaml）与 SSH known_hosts 卷。
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - cd_known_hosts:/home/appuser/.cd_service
     healthcheck:
       test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3).status == 200 else 1)"]
       interval: 30s
@@ -88,3 +110,7 @@ services:
     #   DB_PATH: /data/data.db
     # volumes:
     #   - ../Devops-Glue/config/data:/data:rw
+
+# SSH known_hosts 持久化卷（read_only 加固下唯一需要的运行时写入位置）
+volumes:
+  cd_known_hosts:
