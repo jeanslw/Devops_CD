@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
@@ -194,6 +194,46 @@ def api_info():
         "db_connected": db_ok,
         "uptime_seconds": uptime_seconds,
     }
+
+
+# ── Prometheus 指标（文本格式，供 Prometheus / Grafana 抓取，无需认证）──
+def _escape_label(value: str) -> str:
+    """转义 Prometheus label 值中的反斜杠/引号/换行，防止破坏文本格式。"""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus 文本指标：进程运行时长 + 版本 + 各状态部署计数 + 进行中部署数。
+
+    仅暴露聚合计数（无项目名/用户等敏感维度）；DB 不可用时降级为只返回进程级指标，
+    不让指标抓取因 DB 抖动而拖垮或误报服务不健康。
+    """
+    lines = [
+        "# HELP cd_uptime_seconds Service process uptime in seconds.",
+        "# TYPE cd_uptime_seconds gauge",
+        f"cd_uptime_seconds {int((datetime.now(timezone.utc) - _STARTED_AT).total_seconds())}",
+        "# HELP cd_info Service version information.",
+        "# TYPE cd_info gauge",
+        f'cd_info{{version="{_escape_label(app.version)}"}} 1',
+    ]
+    try:
+        db = Database()
+        with db.conn() as conn:
+            rows = conn.execute("SELECT status, COUNT(*) AS cnt FROM cd_deploy_logs GROUP BY status").fetchall()
+            active = 0
+            for r in rows:
+                raw = r["status"] or "unknown"
+                cnt = int(r["cnt"] or 0)
+                if raw == "running":
+                    active = cnt
+                lines.append(f'cd_deploys_total{{status="{_escape_label(raw)}"}} {cnt}')
+            lines.append("# HELP cd_active_deploys Currently running deploys.")
+            lines.append("# TYPE cd_active_deploys gauge")
+            lines.append(f"cd_active_deploys {active}")
+    except Exception:
+        pass
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 # ── SPA 路由 ──

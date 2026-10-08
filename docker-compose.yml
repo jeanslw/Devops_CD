@@ -96,7 +96,9 @@ services:
     volumes:
       - cd_known_hosts:/home/appuser/.cd_service
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3).status == 200 else 1)"]
+      # 走 /api/info：既要求进程存活，也断言数据库连接（db_connected=true），
+      # 避免 DB 挂了但进程还活着时健康检查误报绿灯。
+      test: ["CMD", "python", "-c", "import sys, json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8081/api/info', timeout=3)); sys.exit(0 if d.get('status')=='running' and d.get('db_connected') else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3

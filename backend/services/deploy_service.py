@@ -392,10 +392,20 @@ class DeployService:
             clear_cancel_checker()
 
     def list_logs(self, project: str = "", page: int = 1, page_size: int = 15) -> dict:
-        """查询部署记录（分页）"""
+        """查询部署记录（分页）。
+
+        列表页只取渲染所需列，剔除 params_json（完整请求快照）/ stage_times（阶段耗时 JSON）
+        两个大字段：前端日志页不消费它们（回滚重放由 rollback_service 直接查库），
+        避免每页把 15 行的快照/耗时 JSON 无谓传给浏览器（日志瘦身/截断）。
+        """
         page = max(page, 1)
         page_size = max(min(page_size, 100), 1)
         offset = (page - 1) * page_size
+        cols = (
+            "id, project, tag, image, deploy_type, target, status, output, triggered_by, "
+            "deploy_note, duration_ms, lock_key, rollback_type, artifact_id, artifact_digest, "
+            "approval_id, runner, heartbeat_at, created_at"
+        )
         with self._db.conn() as conn:
             if project:
                 total = conn.execute(
@@ -403,13 +413,13 @@ class DeployService:
                     (project,),
                 ).fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT *, id AS deploy_id FROM cd_deploy_logs WHERE project=? ORDER BY id DESC LIMIT ? OFFSET ?",
+                    f"SELECT {cols}, id AS deploy_id FROM cd_deploy_logs WHERE project=? ORDER BY id DESC LIMIT ? OFFSET ?",  # nosec
                     (project, page_size, offset),
                 ).fetchall()
             else:
                 total = conn.execute("SELECT COUNT(*) AS cnt FROM cd_deploy_logs").fetchone()["cnt"]
                 rows = conn.execute(
-                    "SELECT *, id AS deploy_id FROM cd_deploy_logs ORDER BY id DESC LIMIT ? OFFSET ?",
+                    f"SELECT {cols}, id AS deploy_id FROM cd_deploy_logs ORDER BY id DESC LIMIT ? OFFSET ?",  # nosec
                     (page_size, offset),
                 ).fetchall()
             items = [dict(r) for r in rows]
