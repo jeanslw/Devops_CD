@@ -14,20 +14,27 @@ import sys
 import types
 import unittest
 from contextlib import contextmanager
+from typing import cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from fastapi import Request
 
 from backend import login_guard
 from backend.config import settings
 
 
-def _req(peer, xff=None):
+def _req(peer, xff=None) -> Request:
+    # 最小鸭子类型 mock（运行期只访问 .client.host / .headers.get），cast 仅用于静态类型检查
     headers = {}
     if xff is not None:
         headers["x-forwarded-for"] = xff
-    return types.SimpleNamespace(
-        client=types.SimpleNamespace(host=peer),
-        headers=types.SimpleNamespace(get=lambda key, default="": headers.get(key, default)),
+    return cast(
+        Request,
+        types.SimpleNamespace(
+            client=types.SimpleNamespace(host=peer),
+            headers=types.SimpleNamespace(get=lambda key, default="": headers.get(key, default)),
+        ),
     )
 
 

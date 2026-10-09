@@ -47,6 +47,12 @@ class TestVerifyPassword(unittest.TestCase):
         # ValueError，verify_password 必须吞掉并返回 False，避免登录 500。
         self.assertFalse(verify_password("secret", "not-a-hash"))
 
+    def test_null_or_empty_hash_returns_false_not_raise(self):
+        # 共享库 password_hash 理论上 NOT NULL，但脏数据 / 直写库可能出现 NULL 或空串：
+        # 此前 None 会让 hashed.startswith 抛 AttributeError → 登录 500。
+        self.assertFalse(verify_password("secret", None))
+        self.assertFalse(verify_password("secret", ""))
+
     def test_argon2_mismatch_is_verification_error(self):
         # 锁定 argon2 走校验分支（而非误入 bcrypt）的哨兵：确保前缀分派正确。
         hashed = _PH.hash("secret")

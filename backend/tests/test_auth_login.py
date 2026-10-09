@@ -8,19 +8,26 @@ import os
 import sys
 import types
 import unittest
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from fastapi import Request
 
 from backend.exceptions import AppException
 from backend.models import LoginRequest
 from backend.routers import auth as auth_router
 
 
-def _req(peer="127.0.0.1"):
-    return types.SimpleNamespace(
-        client=types.SimpleNamespace(host=peer),
-        headers=types.SimpleNamespace(get=lambda key, default="": default),
+def _req(peer="127.0.0.1") -> Request:
+    # 最小鸭子类型 mock（这两个用例在 authenticate() 之前结束，不会真正用到 Request 其余部分）
+    return cast(
+        Request,
+        types.SimpleNamespace(
+            client=types.SimpleNamespace(host=peer),
+            headers=types.SimpleNamespace(get=lambda key, default="": default),
+        ),
     )
 
 

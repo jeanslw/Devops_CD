@@ -28,11 +28,11 @@ def _hash_token(token: str) -> str:
 def _create_session(conn, username: str) -> str:
     """创建登录会话：生成不透明随机 token，库内只存其 SHA-256 摘要。
     返回原始 token（仅此一次交给客户端，之后无法从库内反推）。
-    顺带清理该用户已过期的旧会话，避免表无限增长。"""
+    顺带清理所有用户的过期会话（不限当前登录者），避免表无限增长。"""
     token = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
     now = int(time.time())
     expires = now + settings.auth_token_ttl_hours * 3600
-    conn.execute("DELETE FROM cd_sessions WHERE username=? AND expires_at<=?", (username, now))
+    conn.execute("DELETE FROM cd_sessions WHERE expires_at<=?", (now,))
     conn.execute(
         "INSERT INTO cd_sessions (token_hash, username, expires_at) VALUES (?, ?, ?)",
         (_hash_token(token), username, expires),
@@ -99,7 +99,7 @@ def get_db() -> Database:
 
 def verify_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Database = Depends(get_db),
 ) -> str:
     """从 cookie / Bearer token 验证用户身份，返回 username。
@@ -130,7 +130,7 @@ def verify_token(
 
 def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Database = Depends(get_db),
 ) -> dict:
     """获取当前登录用户完整信息 {username, role, systems, permissions}。
@@ -240,13 +240,16 @@ def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None
         raise HTTPException(403, f"Permission denied: {_MANAGE_PERM} or {required} required")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed: str | None) -> bool:
     """校验密码哈希，自动识别算法：argon2id（$argon2 前缀）或 bcrypt（默认）。
 
     CI 侧 PASSWORD_HASH_ALGO 可在 bcrypt / argon2id 间切换，CD 必须兼容两者，
     不能硬编码单一算法（否则 CI 一切到 argon2id，CD 登录即抛 ValueError: Invalid salt）。
-    任何校验失败（算法未知 / 哈希格式损坏 / 未安装 argon2-cffi）都返回 False，不抛异常。
+    任何校验失败（NULL/空哈希 / 算法未知 / 哈希格式损坏 / 未安装 argon2-cffi）都返回
+    False，不抛异常 —— 登录路径绝不允许因脏数据 500。
     """
+    if not hashed:
+        return False
     if hashed.startswith("$argon2"):
         try:
             from argon2 import PasswordHasher

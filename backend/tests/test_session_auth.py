@@ -5,7 +5,7 @@
   - 会话入库只存 SHA-256 摘要（库泄露不暴露可用 token）
   - verify_token / get_current_user 通过会话校验并返回身份
   - logout（revoke_session）删行后 token 立即失效
-  - 过期会话被拒绝并惰性清理
+  - 过期会话被拒绝并惰性清理（登录时顺带清理所有用户的过期会话，不限当前登录者）
   - 无效 token 被拒绝
 
 运行（项目根）:
@@ -18,11 +18,12 @@ import sys
 import tempfile
 import types
 import unittest
+from typing import cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import bcrypt
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 
 # 测试一律用临时 SQLite，忽略 .env 中可能配置的 MySQL（必须在导入 Database 前设置）
@@ -76,19 +77,27 @@ class SessionAuthTestCase(unittest.TestCase):
     def _creds(self, token):
         return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
-    def _req(self, cookies=None):
+    def _req(self, cookies=None) -> Request:
         # FastAPI 会注入真实 Request；直接调用 verify_token/get_current_user 时用最小 mock
-        return types.SimpleNamespace(cookies=cookies or {})
+        # （运行期只访问 .cookies，鸭子类型足够，cast 仅用于通过静态类型检查）。
+        return cast(Request, types.SimpleNamespace(cookies=cookies or {}))
+
+    def _login(self, username: str = "alice") -> str:
+        """成功登录路径的统一入口（setUp 种子密码固定为 secret123）。
+        authenticate 失败返回 None，此处断言并 cast：让后续调用拿到 str 类型，
+        失败分支本身由 authenticate 的专属用例覆盖。"""
+        token = authenticate(username, "secret123", self.db)
+        self.assertIsNotNone(token)
+        return cast(str, token)
 
     def test_authenticate_issues_opaque_token(self):
-        token = authenticate("alice", "secret123", self.db)
-        self.assertIsNotNone(token)
+        token = self._login()
         # 旧格式是 base64(username:hash:expires)，必然包含用户名与 ':'；新 token 不携带任何用户信息
         self.assertNotIn("alice", token)
         self.assertNotIn(":", token)
 
     def test_session_stored_as_hash_not_plaintext(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         with self.db.conn() as conn:
             row = conn.execute("SELECT token_hash FROM cd_sessions WHERE username='alice'").fetchone()
         self.assertIsNotNone(row)
@@ -96,30 +105,30 @@ class SessionAuthTestCase(unittest.TestCase):
         self.assertEqual(row["token_hash"], _hash_token(token))
 
     def test_verify_token_returns_username(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         self.assertEqual(verify_token(self._req(), self._creds(token), self.db), "alice")
 
     def test_verify_token_accepts_cookie(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         # 优先取 HttpOnly cookie（无需 Authorization 头）
         self.assertEqual(verify_token(self._req({"cd_token": token}), None, self.db), "alice")
 
     def test_get_current_user_returns_identity(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         user = get_current_user(self._req(), self._creds(token), self.db)
         self.assertEqual(user["username"], "alice")
         self.assertEqual(user["role"], "deployer")
         self.assertEqual(user["systems"], "cd")
 
     def test_logout_revokes_session(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         revoke_session(self.db, token)
         with self.assertRaises(HTTPException) as ctx:
             verify_token(self._req(), self._creds(token), self.db)
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_logout_idempotent(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         revoke_session(self.db, token)
         revoke_session(self.db, token)  # 重复吊销不报错
         with self.db.conn() as conn:
@@ -127,11 +136,37 @@ class SessionAuthTestCase(unittest.TestCase):
         self.assertEqual(count, 0)
 
     def test_expired_session_rejected(self):
-        token = authenticate("alice", "secret123", self.db)
+        token = self._login()
         with self.db.conn() as conn:
             conn.execute("UPDATE cd_sessions SET expires_at=1")  # 强制过期
         with self.assertRaises(HTTPException) as ctx:
             verify_token(self._req(), self._creds(token), self.db)
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_login_cleans_expired_sessions_of_all_users(self):
+        """登录惰性清理是全用户范围：清掉所有过期行，且不误删任何用户的有效会话。"""
+        with self.db.conn() as conn:
+            conn.execute(
+                "INSERT INTO admin_users (username, password_hash, role, systems, status) VALUES (?,?,?,?,?)",
+                ("bob", bcrypt.hashpw(b"secret123", bcrypt.gensalt()).decode(), "deployer", "cd", 1),
+            )
+        token_bob = self._login("bob")
+        token_alice = self._login("alice")
+        # 仅让 bob 的会话过期（alice 的保持有效）
+        with self.db.conn() as conn:
+            conn.execute("UPDATE cd_sessions SET expires_at=1 WHERE username='bob'")
+        # alice 再次登录 → _create_session 触发惰性清理
+        self._login("alice")
+        with self.db.conn() as conn:
+            rows = conn.execute("SELECT username, COUNT(*) AS c FROM cd_sessions GROUP BY username").fetchall()
+        counts = {r["username"]: r["c"] for r in rows}
+        self.assertNotIn("bob", counts)  # 其他用户的过期会话也被清理
+        self.assertEqual(counts.get("alice"), 2)  # 当前用户的既有有效会话不受影响
+        # alice 旧 token 仍可用（有效会话未被误删）
+        self.assertEqual(verify_token(self._req(), self._creds(token_alice), self.db), "alice")
+        # bob 的过期 token 已被清理，验证按"无效 token"拒绝
+        with self.assertRaises(HTTPException) as ctx:
+            verify_token(self._req(), self._creds(token_bob), self.db)
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_invalid_token_rejected(self):

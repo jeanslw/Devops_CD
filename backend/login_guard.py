@@ -13,11 +13,12 @@ import hashlib
 import ipaddress
 import logging
 import time
+from contextlib import AbstractContextManager
+from typing import Any, Protocol
 
 from fastapi import Request
 
 from backend.config import settings
-from backend.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,18 @@ CACHE_TABLE = "cache"
 KEY_PREFIX = "login_fail_"
 MAX_ATTEMPTS = 5
 LOCK_SECONDS = 900  # 15 分钟
+
+
+class GuardDB(Protocol):
+    """login_guard 对数据库的全部依赖：一个返回连接上下文的 conn()。
+
+    Database（生产）与测试中的内存 sqlite FakeDB 都结构化满足该协议，
+    无需为测试构造完整的 Database（也不应该让模块依赖具体实现类）。
+    @contextmanager 装饰的函数返回 _GeneratorContextManager，它名义继承
+    AbstractContextManager，因此这里用标准库协议而非手写 __enter__/__exit__。
+    """
+
+    def conn(self) -> AbstractContextManager[Any]: ...
 
 
 def client_ip(request: Request) -> str:
@@ -80,7 +93,7 @@ def _upsert_sql() -> str:
     )
 
 
-def is_login_locked(db: Database, ip: str, username: str) -> bool:
+def is_login_locked(db: GuardDB, ip: str, username: str) -> bool:
     """是否已达锁定阈值（键存在且未过期且计数 >= 5）。"""
     try:
         with db.conn() as conn:
@@ -96,7 +109,7 @@ def is_login_locked(db: Database, ip: str, username: str) -> bool:
         return False
 
 
-def record_login_failure(db: Database, ip: str, username: str) -> None:
+def record_login_failure(db: GuardDB, ip: str, username: str) -> None:
     """失败计数 +1，并刷新 15 分钟窗口。"""
     try:
         key = _key(ip, username)
@@ -112,7 +125,7 @@ def record_login_failure(db: Database, ip: str, username: str) -> None:
         logger.warning("record_login_failure 写入失败（忽略）", exc_info=True)
 
 
-def clear_login_failure(db: Database, ip: str, username: str) -> None:
+def clear_login_failure(db: GuardDB, ip: str, username: str) -> None:
     """登录成功清除计数。"""
     try:
         with db.conn() as conn:
