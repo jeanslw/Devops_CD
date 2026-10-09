@@ -51,7 +51,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # DB_DRIVER=sqlite (default; must point to the same .db file as the PHP API, e.g. ../php_api/config/data/data.db)
 # or DB_DRIVER=mysql (recommended; must share the same database with the PHP API)
-# SECRET_KEY: leave empty to auto-generate .cd_secret_key, or set openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
+# SECRET_KEY: bare-metal may leave it empty (auto-generates .cd_secret_key); docker compose REQUIRES it
+# (read-only container cannot write the key file) — openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
 # Application parameters (timeouts / cache TTLs / intervals / monitoring switch) live in config/app.env with sane defaults
 
 python main.py

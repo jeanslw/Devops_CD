@@ -56,7 +56,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # DB_DRIVER=sqlite（默认，需和 Devops-Glue API 指向同一个 .db 文件，如 ../php_api/config/data/data.db）
 # 或 DB_DRIVER=mysql（推荐，需和 Devops-Glue API 共用同一个库）
-# SECRET_KEY：留空自动生成 .cd_secret_key，生产建议填 openssl rand -base64 32（见 docs/ADMIN_MANUAL_ZH.md）
+# SECRET_KEY：裸机可留空（自动生成 .cd_secret_key）；docker compose 必填（只读容器写不出密钥文件），
+#            用 openssl rand -base64 32（见 docs/ADMIN_MANUAL_ZH.md）
 # 业务参数（超时 / 缓存 TTL / 间隔 / 监控开关等）在 config/app.env，已带合理默认值，一般不用改
 
 python main.py

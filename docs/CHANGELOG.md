@@ -5,18 +5,22 @@
 ### Security
 - **Opaque session tokens** — login tokens are now `secrets.token_urlsafe` opaque strings instead of `base64(username:hash:expires)`; a new `cd_sessions` table stores only the SHA-256 digest (a DB leak no longer exposes usable tokens), and `POST /api/logout` deletes the row for immediate revocation (the old stateless token could not be invalidated). The WebShell WS handshake verifies against the session table too.
 - **Security headers & HttpOnly cookie** — the app now emits `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / CSP, and login sets an `HttpOnly` + `SameSite=Lax` cookie (`Secure` toggled via `COOKIE_SECURE`) so JS cannot read the token; auth reads the cookie first and falls back to the Bearer header. The frontend drops the `?token=` URL / `sessionStorage` token and keeps only a non-sensitive `cd_authed` flag.
-- **Per-deploy PBKDF2 salt** — `_derive_key` now uses a random persistent salt (`.cd_secret_key.salt`) instead of the fixed `cd-service-v1-salt` shared by every deployment (rainbow-table risk); legacy fixed-salt keys are kept as `_legacy_fernet` so pre-upgrade `enc:` values still decrypt. Decrypt failures are now graded (invalid base64 = ERROR, both keys failed = WARN).
+- **Derived PBKDF2 salt** — `_derive_key` now derives the salt from `SECRET_KEY` (`_derive_salt` = SHA-256 of `cd-service-pbkdf2-salt-v2:` + key) instead of the fixed `cd-service-v1-salt` shared by every deployment (rainbow-table risk); unlike the short-lived v1.5.7 `.cd_secret_key.salt` file it needs no filesystem write, so it works in the `read_only` container and stays stable across restarts. Pre-upgrade `enc:` values still decrypt via `_legacy_fernet` (fixed salt) and, while a v1.5.7 salt file is still on disk, via read-only salt-file fallbacks (`_salt_file_fernets`, looking only in the CD project root next to the key file — the `DB_PATH` directory is never read or written). Decrypt failures are now graded (invalid base64 = ERROR, all keys failed = WARN).
 - **Password hash auto-detection** — login verifies bcrypt and argon2id via `verify_password()` (auto-detect by `$argon2` prefix), so CI switching `PASSWORD_HASH_ALGO` to argon2id no longer crashes CD login (`ValueError: Invalid salt` → 500); any verification failure returns `False` without raising.
 
 ### New Features
 - **Prometheus `/metrics`** — a no-auth endpoint exposing uptime / version / per-status deploy counts / running count in Prometheus text format.
 - **Idempotent command retry** — `retry_idempotent` retries safely-rerunnable commands (`docker compose up -d`, `kubectl apply`) a bounded number of times to absorb transient SSH/network blips; configurable via `deploy_retry_attempts` / `deploy_retry_delay` (`=1` disables).
-- **Container resource limits** — `docker-compose.yml` gains `resources.limits` / `reservations` (override via `CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE`).
+- **Container resource limits** — `docker-compose.yml` gains `deploy.resources.limits` / `.reservations` (a service-level top-level `resources:` key is silently dropped by Compose, i.e. the limits would never apply; override via `CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE`).
 
 ### Changed
-- **Container hardening** — `cap_drop: ALL`, `no-new-privileges`, `read_only` root FS + `/tmp` tmpfs, and the port defaults to `127.0.0.1` (reverse-proxy deployment; `CD_BIND_IP=0.0.0.0` for direct exposure). `env-check` now requires `SECRET_KEY` under MySQL + read_only.
+- **Container hardening** — `cap_drop: ALL`, `no-new-privileges`, `read_only` root FS + `/tmp` tmpfs, and the port defaults to `127.0.0.1` (reverse-proxy deployment; `CD_BIND_IP=0.0.0.0` for direct exposure). `env-check` now requires `SECRET_KEY` for **every** DB driver (the container is unconditionally read-only, so an auto-generated `.cd_secret_key` can never be written) and aborts on the public sample values `devops_cd_2026` / `change_me_to_secret`.
 - **`ALLOW_EMPTY_SYSTEMS` config** — empty `admin_users.systems` defaults to allow (legacy data); strict environments can set `false` for deny-by-default.
 - **Health check asserts DB** — the compose healthcheck now hits `/api/info` and requires `status=running` + `db_connected=true`, so a dead DB no longer reports a false green.
+
+### Fixed
+- **Read-only startup no longer dies with a raw `OSError`** — when `SECRET_KEY` is unset and the key file is unwritable, `_resolve_secret()` now raises a bilingual `RuntimeError` naming the exact fix (`openssl rand -base64 32`) instead of an import-time stack trace; `env-check` aborts even earlier, for any DB driver.
+- **No credential loss from the abandoned v1.5.7 salt file** — data encrypted by v1.5.7's `.cd_secret_key.salt` random salt is still decryptable: when the file is still present it is read (never written) as one extra fallback key; a missing/unparsable file is skipped silently.
 
 ### CI / Tooling
 - **Full test suite in CI** — pytest full run + `--cov` coverage with `.coveragerc`; pinned `ruff==0.16.5` / `pip-audit==2.10.1` / `pytest==9.1.1` / `pytest-cov==7.1.0`.

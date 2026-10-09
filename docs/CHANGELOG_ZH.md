@@ -5,18 +5,22 @@
 ### 安全
 - **不透明会话令牌** — 登录 token 由 `base64(username:hash:expires)` 改为 `secrets.token_urlsafe` 不透明随机串；新增 `cd_sessions` 会话表只存 SHA-256 摘要（库泄露不再暴露可用 token），`POST /api/logout` 删行即时吊销（原无状态 token 无法主动失效）。WebShell WS 握手同步改为会话校验。
 - **安全响应头 & HttpOnly Cookie** — 应用统一附加 `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / CSP；登录下发 `HttpOnly` + `SameSite=Lax` Cookie（`Secure` 由 `COOKIE_SECURE` 开关），JS 无法读取 token；鉴权优先读 Cookie、回退 Bearer 头。前端移除 `?token=` URL / `sessionStorage` token，仅保留非敏感 `cd_authed` 标志。
-- **按部署随机 PBKDF2 盐** — `_derive_key` 改用随机持久化盐（`.cd_secret_key.salt`），消除所有部署共享固定盐 `cd-service-v1-salt` 的彩虹表风险；历史固定盐保留为 `_legacy_fernet`，升级前 `enc:` 旧数据仍可解密。解密失败分级告警（非法 base64 = ERROR，双密钥均失败 = WARN）。
+- **派生 PBKDF2 盐** — `_derive_key` 改为从 `SECRET_KEY` 派生盐（`_derive_salt` = `cd-service-pbkdf2-salt-v2:` + 密钥的 SHA-256），取代所有部署共享的固定盐 `cd-service-v1-salt`（彩虹表风险）；与 v1.5.7 短暂存在的 `.cd_secret_key.salt` 文件方案不同，它不需要任何文件写入，因此在 `read_only` 容器中可用且跨重启稳定。升级前 `enc:` 旧数据经 `_legacy_fernet`（固定盐）仍可解密；v1.5.7 盐文件若仍在磁盘上，则由只读的盐文件回退（`_salt_file_fernets`，仅查 CD 项目根目录中与密钥文件同目录的盐文件；`DB_PATH` 目录既不读也不写）解密。解密失败分级告警（非法 base64 = ERROR，全部密钥失败 = WARN）。
 - **密码哈希自动识别** — 登录经 `verify_password()` 校验 bcrypt 与 argon2id（按 `$argon2` 前缀自动分派），CI 切换 `PASSWORD_HASH_ALGO` 到 argon2id 不再使 CD 登录崩溃（`ValueError: Invalid salt` → 500）；任何校验失败返回 `False` 不抛异常。
 
 ### 新增功能
 - **Prometheus `/metrics`** — 无需认证的指标端点，输出 uptime / version / 各状态部署计数 / running 数（Prometheus 文本格式）。
 - **幂等命令重试入口** — `retry_idempotent` 对可安全重跑命令（`docker compose up -d`、`kubectl apply`）做有限重试，消化瞬时 SSH/网络抖动；`deploy_retry_attempts` / `deploy_retry_delay` 可调（`=1` 关闭）。
-- **容器资源限制** — `docker-compose.yml` 增加 `resources.limits` / `reservations`（`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
+- **容器资源限制** — `docker-compose.yml` 增加 `deploy.resources.limits` / `.reservations`（服务级顶层 `resources:` 会被 Compose 静默丢弃、限制根本不生效；`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
 
 ### 变更
-- **容器加固** — `cap_drop: ALL`、`no-new-privileges`、根文件系统 `read_only` + `/tmp` tmpfs，端口默认只绑 `127.0.0.1`（配合反代；`CD_BIND_IP=0.0.0.0` 恢复直连）。`env-check` 在 MySQL + read_only 下强制要求 `SECRET_KEY`。
+- **容器加固** — `cap_drop: ALL`、`no-new-privileges`、根文件系统 `read_only` + `/tmp` tmpfs，端口默认只绑 `127.0.0.1`（配合反代；`CD_BIND_IP=0.0.0.0` 恢复直连）。`env-check` 改为对**所有**数据库模式强制要求 `SECRET_KEY`（容器无条件 `read_only`，自动生成的 `.cd_secret_key` 永远写不出来），并对公开示例值 `devops_cd_2026` / `change_me_to_secret` 直接中止。
 - **`ALLOW_EMPTY_SYSTEMS` 配置** — `admin_users.systems` 为空默认放行（兼容旧数据）；严格环境可设 `false` 改为 deny-by-default。
 - **健康检查断言 DB** — compose healthcheck 改走 `/api/info`，要求 `status=running` 且 `db_connected=true`，DB 挂了不再误报绿灯。
+
+### 修复
+- **只读容器启动不再抛裸 `OSError`** — `SECRET_KEY` 未设置且密钥文件不可写时，`_resolve_secret()` 改为抛出中英双语 `RuntimeError` 并给出确切修复命令（`openssl rand -base64 32`），而不是导入期栈崩溃；`env-check` 在更早阶段对所有数据库模式中止。
+- **被放弃的 v1.5.7 盐文件不再导致凭据静默丢失** — v1.5.7 用 `.cd_secret_key.salt` 随机盐写入的密文仍可解出：该文件若仍存在，则只读地作为一把额外兼容密钥参与解密（绝不写入）；文件缺失或不可解析时自动跳过。
 
 ### CI / 工具链
 - **全量测试进 CI** — pytest 全量 + `--cov` 覆盖率，新增 `.coveragerc`；锁定 `ruff==0.16.5` / `pip-audit==2.10.1` / `pytest==9.1.1` / `pytest-cov==7.1.0`。
