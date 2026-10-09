@@ -193,15 +193,11 @@ class TestRuntimeFilesStayInCdDir(unittest.TestCase):
     _GLUEISH_DB = str(Path("..") / "Devops_Glue" / "config" / "data" / "data.db")
 
     def test_key_file_path_is_cd_root_even_for_sqlite(self):
-        with patch.multiple(
-            crypto, settings=SimpleNamespace(db_driver="sqlite", db_path=self._GLUEISH_DB)
-        ):
+        with patch.multiple(crypto, settings=SimpleNamespace(db_driver="sqlite", db_path=self._GLUEISH_DB)):
             self.assertEqual(crypto._key_file_path(), BASE_DIR / ".cd_secret_key")
 
     def test_salt_paths_are_cd_root_only(self):
-        with patch.multiple(
-            crypto, settings=SimpleNamespace(db_driver="sqlite", db_path=self._GLUEISH_DB)
-        ):
+        with patch.multiple(crypto, settings=SimpleNamespace(db_driver="sqlite", db_path=self._GLUEISH_DB)):
             paths = crypto._salt_file_paths()
         self.assertEqual(paths, [BASE_DIR / ".cd_secret_key.salt"])
         for path in paths:
