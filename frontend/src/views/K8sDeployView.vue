@@ -52,17 +52,20 @@
         <label>{{ $t('k8sDeploy.fluxPath') }}</label>
         <input v-model="path" placeholder="./">
       </div>
-      <div v-if="cdType === 'kubectl' || cdType === 'helm'" style="margin-bottom:8px">
-        <label>{{ $t('k8sDeploy.yamlPath') }}</label>
-        <input v-model="path" placeholder="/opt/k8s/deploy.yaml">
-      </div>
       <div v-if="cdType === 'argocd'" style="margin-bottom:8px">
         <label>{{ $t('k8sDeploy.apiUrl') }}</label>
         <input v-model="apiUrl" placeholder="https://argocd:30443">
       </div>
-      <div v-if="cdType === 'kubectl' || cdType === 'helm' || cdType === 'argocd'" style="margin-bottom:8px">
-        <label>{{ $t('k8sDeploy.namespace') }}</label>
-        <input v-model="k8sNs" placeholder="namespace">
+      <!-- YAML 路径 + 命名空间 同一行（grid2）；Argo CD 无 YAML 路径，命名空间单独占左列 -->
+      <div v-if="cdType === 'kubectl' || cdType === 'helm' || cdType === 'argocd'" class="grid2" style="margin-bottom:8px">
+        <div v-if="cdType === 'kubectl' || cdType === 'helm'">
+          <label>{{ $t('k8sDeploy.yamlPath') }}</label>
+          <input v-model="path" placeholder="/opt/k8s/deploy.yaml">
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.namespace') }}</label>
+          <input v-model="k8sNs" placeholder="namespace">
+        </div>
       </div>
       <div class="grid2" style="margin-bottom:8px">
         <div>
