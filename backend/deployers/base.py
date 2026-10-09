@@ -8,6 +8,7 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from typing import Callable, TypeVar
 
 from backend.deploy_run import DeployCancelled, get_cancel_checker
 
@@ -257,7 +258,7 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     try:
         try:
             ssh.connect(**kwargs)  # type: ignore[arg-type]
-        except paramiko.ssh_exception.SSHException as e:
+        except paramiko.SSHException as e:
             # RejectPolicy 不认识 host 时会抛 SSHException("Server ... not found in known_hosts")
             # 仅在用户明确 trust=True（前端点了"测试连接/信任"按钮）时，先存 host key 再重试
             if trust and "not found in known_hosts" in str(e).lower():
@@ -316,7 +317,15 @@ def _ssh_cmd(ssh, cmd: str, timeout: int = 130) -> str:
     return o or e
 
 
-def retry_idempotent(func, attempts: int = 3, delay: float = 2.0, log_fn=None):
+_RetryResult = TypeVar("_RetryResult", bound=tuple)
+
+
+def retry_idempotent(
+    func: Callable[[], _RetryResult],
+    attempts: int = 3,
+    delay: float = 2.0,
+    log_fn: Callable[[int], None] | None = None,
+) -> _RetryResult:
     """幂等命令的有限重试入口。
 
     仅用于可安全重跑的命令（docker compose up -d / kubectl apply）——
@@ -330,7 +339,7 @@ def retry_idempotent(func, attempts: int = 3, delay: float = 2.0, log_fn=None):
     全部失败时返回最后一次结果（不抛异常），由调用方按原逻辑判定成败，
     保证重试只是「多给几次机会」，不改变既有失败语义。
     """
-    last = None
+    last: _RetryResult | None = None
     for attempt in range(1, attempts + 1):
         if attempt > 1 and log_fn is not None:
             log_fn(attempt)
@@ -341,6 +350,8 @@ def retry_idempotent(func, attempts: int = 3, delay: float = 2.0, log_fn=None):
             return result
         if attempt < attempts:
             time.sleep(delay)
+    # attempts >= 1 时循环至少执行一次，last 必已赋值；给非法 attempts 一个明确错误而非返回 None
+    assert last is not None, "retry_idempotent: attempts 必须 >= 1"
     return last
 
 
