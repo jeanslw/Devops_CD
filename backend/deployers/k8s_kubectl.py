@@ -169,7 +169,8 @@ class KubectlDeployer(K8sSubDeployer):
                 if not isinstance(doc, dict):
                     continue
                 kind = str(doc.get("kind") or "")
-                metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+                raw_metadata = doc.get("metadata")
+                metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
                 doc_ns = str(metadata.get("namespace") or "").strip()
                 if doc_ns and not manifest_ns:
                     manifest_ns = doc_ns

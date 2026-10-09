@@ -221,7 +221,7 @@ class TestArgoCD(unittest.TestCase):
     def _req(self):
         return types.SimpleNamespace(api_url="https://argocd:30443")
 
-    def _deploy(self, image, app_spec):
+    def _deploy(self, image, app_spec) -> tuple[dict, dict]:
         app = {"spec": app_spec, "status": {"health": {"status": "Healthy"}, "sync": {"status": "Synced"}}}
         mock_get = MagicMock(return_value=_Resp(200, app))
         mock_put = MagicMock(return_value=_Resp(200))
@@ -233,7 +233,11 @@ class TestArgoCD(unittest.TestCase):
             patch("time.sleep", return_value=None),
         ):
             result = ArgoCDDeployer().deploy(self._req(), image, "group/app", "argocd-host", pwd="token")
-        return result, mock_put.call_args.kwargs.get("json")
+        patch_body = mock_put.call_args.kwargs.get("json")
+        # 这些用例的契约就是部署成功且发出 sync PUT；原生 assert 同时完成静态类型收窄
+        assert result is not None
+        assert patch_body is not None
+        return result, patch_body
 
     def test_helm_branch_uses_last_colon_for_tag(self):
         result, patch_body = self._deploy("hub.example.com/repo/app:v1.0", {"source": {"helm": {"parameters": []}}})

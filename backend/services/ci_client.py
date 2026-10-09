@@ -266,16 +266,18 @@ class CiClient:
     def list_users(self) -> list[dict]:
         """GET /api/rbac/users → {"users": [{username, role, systems, status}]}（无 password_hash）"""
         result = self._get(self._url(API["rbac_users"]))
-        if isinstance(result, dict) and "users" in result:
-            return result["users"]
-        return result
+        if isinstance(result, dict):
+            users = result.get("users")
+            return users if isinstance(users, list) else []
+        return result if isinstance(result, list) else []
 
     def list_roles(self) -> list[dict]:
         """GET /api/rbac/roles → {"roles": [{name, description}]}"""
         result = self._get(self._url(API["rbac_roles"]))
-        if isinstance(result, dict) and "roles" in result:
-            return result["roles"]
-        return result
+        if isinstance(result, dict):
+            roles = result.get("roles")
+            return roles if isinstance(roles, list) else []
+        return result if isinstance(result, list) else []
 
 
 # ── 单例 ──

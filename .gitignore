@@ -37,3 +37,7 @@ Thumbs.db
 /tmp/
 /cache/
 *.cache
+
+# Coverage（pytest-cov，CI 与本地跑测试都会生成）
+.coverage
+.coverage.*
