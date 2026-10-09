@@ -13,7 +13,9 @@
 
 services:
   # 启动前环境变量预检（一次性容器，复用 devops-cd 镜像不增加额外构建）：
-  # MySQL 模式缺少连接必填项时输出中英双语指引并中止，避免 uvicorn 启动后抛英文连接堆栈。
+  # 1) MySQL 模式缺少连接必填项时输出中英双语指引并中止，避免 uvicorn 启动后抛英文连接堆栈；
+  # 2) SECRET_KEY 未设置或是公开示例值时对**所有 driver** 中止 —— compose 无条件 read_only，
+  #    运行期自动生成 .cd_secret_key 必然写入失败，示例值也会在 crypto.py 启动期被清空后落入同一崩溃。
   env-check:
     build:
       context: .
@@ -43,17 +45,24 @@ services:
                 print('------------------------------------------------------------------------')
                 print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
                 sys.exit(1)
-            if not os.getenv('SECRET_KEY'):
-                print('[启动中止] DB_DRIVER=mysql 且容器只读（read_only），必须在 .env 配置 SECRET_KEY：')
-                print('[ABORT] DB_DRIVER=mysql + read_only requires SECRET_KEY (auto-generated .cd_secret_key cannot be written / lost on recreate):')
-                print('        生产环境请在 .env 设置固定值 / set a fixed value in .env: openssl rand -base64 32')
-                print('------------------------------------------------------------------------')
-                print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
-                sys.exit(1)
-        if not os.getenv('SECRET_KEY'):
-            print('[提示 / NOTE] SECRET_KEY 未配置：首次运行将自动生成 .cd_secret_key（容器重建会丢失）；')
-            print('       SECRET_KEY is unset: .cd_secret_key is auto-generated on first run (lost when the container is recreated);')
-            print('       生产环境建议在 .env 设置固定值 / for production set a fixed value in .env: openssl rand -base64 32')
+        # SECRET_KEY 检查对所有 driver 生效：容器无条件 read_only，未设置时运行期
+        # 自动生成 .cd_secret_key 必然写入失败；公开示例值会在 crypto.py 启动期被
+        # 清空后落入同一条失败路径，因此同样中止。
+        key = os.getenv('SECRET_KEY', '').strip()
+        if not key:
+            print('[启动中止] 容器文件系统只读（read_only），必须在 .env 配置 SECRET_KEY（所有数据库模式均必填）：')
+            print('[ABORT] read_only container requires SECRET_KEY in .env (for any DB driver; auto-generated .cd_secret_key cannot be written):')
+            print('        生成随机密钥 / generate a random key: openssl rand -base64 32')
+            print('------------------------------------------------------------------------')
+            print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
+            sys.exit(1)
+        if key in {'devops_cd_2026', 'change_me_to_secret'}:
+            print('[启动中止] SECRET_KEY 是公开的示例值，运行期会被忽略并触发同样的只读写入失败：')
+            print('[ABORT] SECRET_KEY is a public sample value; it is rejected at runtime and falls into the same read-only write failure:')
+            print('        请改为随机密钥 / set a random key instead: openssl rand -base64 32')
+            print('------------------------------------------------------------------------')
+            print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
+            sys.exit(1)
         print('[预检通过 / PASS] 启动配置检查完成 / Startup configuration check passed')
 
   devops-cd:
@@ -107,13 +116,16 @@ services:
     # ── 资源治理 ──
     # Python 常驻进程 + paramiko 并发部署，内存/CPU 峰值未实测：设上限防止单容器 OOM
     # 拖垮宿主机，同时给保留值避免被邻居抢占。按实际负载用 CD_MEM_LIMIT / CD_CPU_LIMIT 覆盖。
-    resources:
-      limits:
-        cpus: ${CD_CPU_LIMIT:-2.0}
-        memory: ${CD_MEM_LIMIT:-512m}
-      reservations:
-        cpus: ${CD_CPU_RESERVE:-0.25}
-        memory: ${CD_MEM_RESERVE:-256m}
+    # ⚠️ 必须挂在 deploy.resources 下：顶层服务级 resources: 不是合法 compose 键，
+    #    实测 docker compose v5.5.0 会静默丢弃（渲染结果里没有 limits，限制完全不生效）。
+    deploy:
+      resources:
+        limits:
+          cpus: ${CD_CPU_LIMIT:-2.0}
+          memory: ${CD_MEM_LIMIT:-512m}
+        reservations:
+          cpus: ${CD_CPU_RESERVE:-0.25}
+          memory: ${CD_MEM_RESERVE:-256m}
 
     # MySQL / MariaDB 模式（推荐）：和 PHP 端共用 devops_glue 库
     # 需要在 .env 中配置 DB_DRIVER=mysql 及连接信息

@@ -78,7 +78,8 @@ CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/�
 # CI_ADMIN_PASS=                      # 未配置 token 时回退：CI 系统管理员密码
 
 # ── 加密密钥（openssl rand -base64 32；用于加密 SSH 口令/私钥）──
-# 留空时首次运行自动生成并写入 .cd_secret_key 文件（勿提交、勿删除）；
+# docker compose 部署必填：容器根文件系统只读，自动生成的 .cd_secret_key 写不进去，env-check 会在启动前中止。
+# 裸机（非只读）可留空：首次运行自动生成并写入 .cd_secret_key 文件（勿提交、勿删除）。
 # 公开示例值 devops_cd_2026 / change_me_to_secret 会被拒绝并回退随机密钥。
 SECRET_KEY=
 
@@ -423,7 +424,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 ### 密码加密
 
-服务器密码和 SSH 私钥通过 Fernet 对称加密存储，密钥来自 `.env` 的 `SECRET_KEY`（建议 `openssl rand -base64 32`）。留空时自动生成并写入程序目录下的 `.cd_secret_key` 文件（该文件勿提交、勿删除）。公开示例值 `devops_cd_2026` / `change_me_to_secret` 会被拒绝并回退随机密钥。**密钥变更后存量加密数据将解密失败，需重新录入服务器凭据**。
+服务器密码和 SSH 私钥通过 Fernet 对称加密存储，密钥来自 `.env` 的 `SECRET_KEY`（建议 `openssl rand -base64 32`）。留空时自动生成并写入程序目录下的 `.cd_secret_key` 文件（该文件勿提交、勿删除）——**仅限裸机**：`docker compose` 部署的容器根文件系统只读，密钥文件写不进去且 `env-check` 会在启动前中止，因此 compose 下 `SECRET_KEY` 为必填。公开示例值 `devops_cd_2026` / `change_me_to_secret` 会被拒绝并回退随机密钥。**密钥变更后存量加密数据将解密失败，需重新录入服务器凭据**。
 
 ### 用户角色
 

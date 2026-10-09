@@ -79,7 +79,10 @@ CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account /
 # CI_ADMIN_PASS=                      # fallback admin account password (only when token empty)
 
 # ── Encryption key (openssl rand -base64 32; encrypts SSH passwords/private keys) ──
-# Empty = auto-generated on first run into .cd_secret_key (do not commit or delete).
+# Required for docker compose: the container runs read-only, so the auto-generated .cd_secret_key
+# cannot be written and `env-check` aborts before startup.
+# Bare-metal (non-read-only) runs may leave it empty: a key is auto-generated on first run into
+# .cd_secret_key (do not commit or delete).
 # Public sample values devops_cd_2026 / change_me_to_secret are rejected and replaced by a random key.
 SECRET_KEY=
 
@@ -424,7 +427,7 @@ Rollback streams live logs over SSE (`POST /api/deploy/rollback-stream`). Legacy
 
 ### Password Encryption
 
-Server passwords and SSH private keys are encrypted with Fernet symmetric encryption using the `SECRET_KEY` in `.env` (generate with `openssl rand -base64 32`). When empty, a key is auto-generated on first run into a `.cd_secret_key` file in the application directory (do not commit or delete it). Public sample values `devops_cd_2026` / `change_me_to_secret` are rejected and replaced by a random key. **Changing the key makes existing encrypted data undecryptable — server credentials must be re-entered.**
+Server passwords and SSH private keys are encrypted with Fernet symmetric encryption using the `SECRET_KEY` in `.env` (generate with `openssl rand -base64 32`). When empty, a key is auto-generated on first run into a `.cd_secret_key` file in the application directory (do not commit or delete it) — **bare-metal only**: under `docker compose` the root file system is read-only, that key file cannot be written and `env-check` aborts before startup, so `SECRET_KEY` is mandatory there. Public sample values `devops_cd_2026` / `change_me_to_secret` are rejected and replaced by a random key. **Changing the key makes existing encrypted data undecryptable — server credentials must be re-entered.**
 
 ### User Roles
 

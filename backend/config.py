@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # ── 加密密钥（可选）──
     # 用于加密 cd_servers 的 password / ssh_key；留空则自动生成 .cd_secret_key 文件
+    # （仅裸机可留空：compose 部署为 read_only 容器、密钥文件写不出来，由 env-check 强制要求必填）。
     secret_key: str = ""
 
     # ── 认证 token（可选）──
