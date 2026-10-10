@@ -3,76 +3,71 @@
 ## Overall Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        CODE PUSH                            │
-│  GitLab / Gitee / GitHub / Gitea  →  Webhook Trigger        │
-└──────────────────────────┬──────────────────────────────────┘
-                           ↓
-┌─────────────────────────────────────────────────────────────┐
-│                     CI 层：Devops-Glue API (PHP)            │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐   ┌──────────────┐      │
-│  │   Jenkins    │  │  GitLab CI   │   │   自定义 CI  │      │
-│  │ BuildProvider│  │ BuildProvider│   │ BuildProvider│      │
-│  └──────┬───────┘  └──────┬───────┘   └──────┬───────┘      │
-│         └─────────────────┼───────────────-──┘              │
-│                           ↓                                 │
-│              Build → Docker Image → Harbor Registry         │
-│                           ↓                                 │
-│              scan-sync → ci_pipeline_artifacts                   │
-│                                                             │
-│              CI 构建完成事件 ─────┐                         │
-│           (project/tag/image/时间)│                         │
-│                         POST ↓    │                         │
-│              /api/webhooks/receive/{token}   │ CD 公开端点  │
-└──────────────────────────┬──────────┼───────┬───────────────┘
-                           ↓          ↓       │
-┌─────────────────────────────────────────────────────────────┐
-│                    CD 层：cd_service (Python)               │
-│                                                             │
-│  ┌──────────────────────┐       ┌──────────────────────┐    │
-│  │  构建管理（HTTP API）│       │ Webhook 接收/转发    │    │
-│  │ · 触发构建           │       │ · cd_webhooks（配置）│    │
-│  │ · 构建历史/日志      │←─────→│ · cd_webhook_events  │    │
-│  │ · 分支/变量          │   DB  │ · 自动转 Bot 通知    │    │
-│  └──────────┬───────────┘       └──────────┬───────────┘    │
-│             ↓                              │                │
-│             ↓                       可选：自动转发          │
-│   选择 Project + Tag  ──→  部署执行         ↓               │
-│                                                             │
-│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│   │  SSH 脚本    │  │Docker Compose│  │  Kubernetes  │      │
-│   │  Ansible     │  │  SFTP + up   │  │ kubectl/Helm │      │
-│   │              │  │              │  │ ArgoCD/FluxCD│      │
-│   └──────────────┘  └──────────────┘  └──────────────┘      │
-│                           ↓                                 │
-│              cd_deploy_logs (部署记录)                      │
-│                           ↓                                 │
-│              钉钉 / 企业微信 / 自定义 Webhook 通知          │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                CODE PUSH                                     │
+│          GitLab / Gitee / GitHub / Gitea  →  Webhook Trigger                 │
+└────────────────────────────────────┬─────────────────────────────────────────┘
+                                     ↓
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                     CI 层：Devops-Glue API (PHP)                             │
+│                                                                              │
+│  ┌──────────────┐  ┌──────────────┐   ┌──────────────┐    ┌───────────────┐  │
+│  │   Jenkins    │  │  GitLab CI   │   │   Gitea CI   │    │  Custom Push  │<──── User CI
+│  │ BuildProvider│  │ BuildProvider│   │ BuildProvider│    │ (custom_push) │  │   (pusher)
+│  └──────┬───────┘  └──────┬───────┘   └──────┬───────┘    └───────┬───────┘  │
+│         └─────────────────┼──────────────────┼────────── ─────────┼          │
+│                                   ↓                                          │
+│                    Build → Docker Image → Harbor Registry                    │
+│                                   ↓                                          │
+│                      scan-sync → ci_pipeline_artifacts                       │
+└───────────────────────────────────┬─────┬────────────────────────────────────┘
+                                    ↓     ↓
+		┌───────────────────────────────────────────────────────────────┐
+		│                     CD 层：devops-cd (Python)                 │
+		│                                                               │
+		│  ┌────────────────────────┐     ┌────────────────────────┐    │
+		│  │Build manage(HTTP API)  │     │ Webhook Receive/Forward│    │
+		│  │ · Trigger Build        │     │ · cd_webhooks(config)  │    │
+		│  │ · Deployment Execution │←───→│ · BotNotifications     │    │
+		│  │ · Deployment/Build Logs│     │                        │    │
+		│  └──────────┬─────────────┘     └──────────┬─────────────┘    │
+		│             │                          Auto Forward           │
+		│                                                               │
+		│  Select Project / Tag ──→ Run Deployment                      │
+		│                              ↓                                │
+		│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+		│   │  SSH Scripts    │Docker Compose│  │  Kubernetes  │        │
+		│   │  Ansible     │  │  SFTP + up   │  │ kubectl/Helm │        │
+		│   │              │  │              │  │ ArgoCD/FluxCD│        │
+		│   └──────────────┘  └──────────────┘  └──────────────┘        │
+		│                           ↓                                   │
+		│              cd_deploy_logs (Deployment Records)              │
+		│                           ↓                                   │
+		│          DingTalk / WeCom / Custom Webhook Notifications      │
+		└───────────────────────────────────────────────────────────────┘
 ```
 ## Component Relationships
 
 ```
-┌──────────────────────────────────────┐
-│ 共享数据库 (SQLite / MySQL / MariaDB)│
-│                                      │
-│  ci_pipeline_artifacts      ← CI 写/CD 读 │
-│  v_glue_deploy_logs    ← CI 只读视图    │
-│  cd_servers            ← CD 维护     │
-│  cd_deploy_logs        ← CD 写       │
-│  cd_approvals(_rules)  ← CD 写       │
-│  cd_sessions           ← CD 写/删    │
-│  cd_bots               ← CD 维护     │
-│  admin_users           ← 共享        │
-└──────────┬───────────────────────────┘
-           │
-    ┌──────┴──────┐
-    ↓             ↓
-┌────────┐   ┌────────┐
-│ PHP CI │   │PythonCD│
-│:8080   │   │:8081   │
-└────────┘   └────────┘
+		┌─────────────────────────────────────────────┐
+		│ Shared Database (SQLite / MySQL / MariaDB)  │
+		│                                             │
+		│  ci_pipeline_artifacts ← CI write / CD read │
+		│  v_glue_deploy_logs    ← CI read-only view  │
+		│  cd_servers            ←  CD maintain       │
+		│  cd_deploy_logs        ← CD write           │
+		│  cd_approvals(_rules)  ←  CD write          │
+		│  cd_sessions           ← CD write / delete  │
+		│  cd_bots               ← CD maintain        │
+		│  admin_users           ←  shared            │
+		└────────────────────┬────────────────────────┘
+							 │
+					  ┌──────┴──────┐
+					  ↓             ↓
+				  ┌────────┐   ┌────────┐
+				  │ PHP CI │   │PythonCD│
+				  │:8080   │   │:8081   │
+				  └────────┘   └────────┘
 ```
 
 > **Data ownership**: besides the shared tables above, CD maintains its own `cd_*` tables (webhooks, monitors, alerts, registry cache, config, sessions, approvals). CI-specific build data (pipelines, mappings, build records) is fetched from CI over its HTTP API — CD does not read other `ci_*` tables directly.
