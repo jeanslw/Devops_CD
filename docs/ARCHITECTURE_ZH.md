@@ -58,10 +58,12 @@
 ┌──────────────────────────────────────┐
 │ 共享数据库 (SQLite / MySQL / MariaDB)│
 │                                      │
-│  ci_job_git_map        ← CI 只读     │
 │  ci_pipeline_artifacts      ← CI 写/CD 读 │
+│  v_glue_deploy_logs    ← CI 只读视图    │
 │  cd_servers            ← CD 维护     │
 │  cd_deploy_logs        ← CD 写       │
+│  cd_approvals(_rules)  ← CD 写       │
+│  cd_sessions           ← CD 写/删    │
 │  cd_bots               ← CD 维护     │
 │  admin_users           ← 共享        │
 └──────────┬───────────────────────────┘
@@ -73,6 +75,8 @@
 │:8080   │   │:8081   │
 └────────┘   └────────┘
 ```
+
+> **数据归属**：除上述共享表外，CD 自行维护其余 `cd_*` 表（webhook、监控、告警、制品缓存、配置、会话、审批）。CI 侧的构建数据（pipeline、映射、构建记录）由 CD 通过 CI 的 HTTP API 获取，不直接读取其他 `ci_*` 表。
 
 > **数据库选型**：PHP CI 和 CD Service 必须使用同一个数据库实例。
 > - **SQLite**：零配置，适合单机开发/测试。容器部署时必须挂载共享卷，确保两边进程能访问同一个 `.db` 文件。

@@ -137,7 +137,7 @@ NOTIFY_TRUNCATE_CHARS=200
 | 表名 | 说明 |
 |------|------|
 | `cd_servers` | 部署目标服务器 |
-| `cd_deploy_logs` | 部署记录 |
+| `cd_deploy_logs` | 部署记录（含回滚参数快照、`heartbeat_at` 中断恢复心跳） |
 | `cd_bots` | 通知机器人 |
 | `cd_registry_repositories` | Harbor 仓库元数据 |
 | `cd_registry_artifacts` | 制品/Tag 信息 |
@@ -148,6 +148,13 @@ NOTIFY_TRUNCATE_CHARS=200
 | `cd_config` | 系统配置键值对 |
 | `cd_webhooks` | Webhook 接收配置（token + 关联 Bot） |
 | `cd_webhook_events` | Webhook 收到的事件记录（原始 payload） |
+| `cd_sessions` | 不透明会话 Token（仅存 SHA-256 摘要；logout 删行即时吊销） |
+| `cd_approvals` | 部署审批单（状态机：pending → approved → deploying → deployed/failed，另有 rejected/cancelled；`scheduled_at` 定时发布） |
+| `cd_approval_rules` | 按项目配置的审批规则（审批人用户/角色） |
+
+此外会自动创建：
+
+- 视图 `v_glue_deploy_logs`：供 Devops-Glue 只读的部署记录契约视图（仅审计字段，不含 `output` 等大字段）。
 
 ## 4. 快速部署
 
@@ -444,9 +451,10 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 ### 认证
 
-- 登录：POST `/api/login`，用户名 + 密码 → 返回 Bearer Token
-- Token 格式：Base64 编码，含 username 信息
-- 受保护端点需在 Header 中携带 `Authorization: Bearer <token>`
+- 登录：POST `/api/login`，用户名 + 密码 → 返回不透明随机会话 Token（同时写入 `cd_token` HttpOnly cookie；服务端 `cd_sessions` 表只存其 SHA-256 摘要）
+- 登出：POST `/api/logout` 服务端吊销会话 —— Token 立即失效
+- 受保护端点支持 `Authorization: Bearer <token>` 请求头或 HttpOnly cookie 两种方式
+- 登录失败限流：同一 IP+用户名连续失败 5 次锁定 15 分钟
 
 ## 8. CI 构建管理集成（可选）
 

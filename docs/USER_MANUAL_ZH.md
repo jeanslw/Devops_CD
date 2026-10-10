@@ -31,6 +31,7 @@ CD Panel (本项目)
 | 资源监控 | CPU、内存、磁盘、Docker 容器、K8s 节点/Pod 实时监控 |
 | 自定义监控 | 通过 SSH 执行自定义命令，CSV/KV/JSON 多格式解析，监控任意指标 |
 | 告警通知 | 资源阈值告警，钉钉/企微/自定义 Webhook 推送 |
+| 部署审批 | 按项目配置审批规则，命中即生成审批单排队：批准/驳回/撤回、定时发布、红点提醒，申请人凭单执行（SSE 实时日志）|
 | Web Shell | 浏览器内 SSH 终端，支持 SFTP 文件上传 |
 | 制品仓库 | Harbor 镜像浏览、漏洞扫描、Tag 安全删除 |
 | 服务器管理 | 服务器增删改查，Tag 标签分组，SSH/Docker/K8s 三种类型 |
@@ -118,7 +119,7 @@ ps aux | wc -l
 | 进程 CPU/内存 | Top 进程监控 |
 | 自定义 | 自定义监控指标（选择监控项和指标） |
 
-设置阈值后，系统按 `ALERT_CHECK_INTERVAL`（默认 300 秒）周期性检查，超标时通过配置的 Bot 发送通知。
+设置阈值后，系统按 `ALERT_CHECK_INTERVAL`（默认 60 秒）周期性检查，超标时通过配置的 Bot 发送通知。
 
 ## 6. CI 构建管理
 
@@ -195,7 +196,7 @@ ps aux | wc -l
 cd_service/
 ├── main.py              # 入口
 ├── backend/
-│   ├── routers/         # API 路由（16 个模块：+ webhooks, + ci_build）
+│   ├── routers/         # API 路由（17 个模块：+ auth, approvals, webhooks, ci_build）
 │   ├── services/        # 业务逻辑层
 │   └── deployers/       # 部署器（SSH/Compose/kubectl/ArgoCD/FluxCD/Helm）
 ├── frontend/            # Vue 3 前端源码
@@ -211,61 +212,107 @@ cd_service/
 | 标记 | 含义 |
 |:----:|------|
 | — | 无需认证 |
-| ✅ | 需要 Bearer Token（`Authorization: Bearer <token>`）|
-| 🔑 | 需要 Admin 角色 |
+| ✅ | 需要登录（`Authorization: Bearer <token>` 请求头，或登录时下发的 `cd_token` HttpOnly cookie）|
+| 🔑 | 需要登录且具备指定 `cd.*` 权限（权限键见说明栏）|
 
 ### 端点列表
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|:----:|------|
+| **系统与认证** | | | |
 | GET | `/health` | — | 健康检查 |
 | GET | `/api/info` | — | 公开信息（版本、DB 类型/状态、运行时间） |
-| POST | `/api/login` | — | 登录，返回 Token |
+| GET | `/metrics` | — | Prometheus 指标（运行时长、版本、各状态部署计数；仅聚合格） |
+| POST | `/api/login` | — | 登录 → 不透明会话 Token + `cd_token` HttpOnly cookie（失败 5 次锁定 15 分钟） |
+| POST | `/api/logout` | ✅ | 吊销当前会话（立即失效，幂等）并清除 cookie |
 | GET | `/api/me` | ✅ | 当前用户信息 |
+| **项目与标签** | | | |
 | GET | `/api/projects` | ✅ | CI 项目列表（含最新 Tag） |
 | GET | `/api/projects/{p}/pipeline` | ✅ | 项目 Pipeline 状态 |
 | GET | `/api/projects/{p}/tags` | ✅ | 项目所有 Tag |
+| GET | `/api/tags` | ✅ | 标签库（服务器 tags 去重聚合） |
 | **CI 构建管理（代理 CI HTTP API）** | | | |
-| GET | `/api/ci/projects` | ✅ | CI 项目列表 |
-| GET | `/api/ci/{pid}/builds` | ✅ | CI 项目构建历史 |
-| POST | `/api/ci/{pid}/build` | ✅ | 触发构建（分支/Tag + 自定义变量） |
-| GET | `/api/ci/{pid}/build/{bid}/log` | ✅ | 构建控制台日志（流式） |
-| GET | `/api/ci/{pid}/variables` | ✅ | CI 项目构建变量 |
-| GET | `/api/ci/{pid}/branches` | ✅ | 仓库分支/Tag 列表 |
-| GET | `/api/ci/health` | ✅ | CI API 连通性检查 |
+| GET | `/api/ci/projects` | 🔑 | CI 项目列表（`cd.build-manage`） |
+| GET | `/api/ci/projects/{pid}/builds` | 🔑 | CI 项目构建历史 |
+| POST | `/api/ci/projects/{pid}/build` | 🔑 | 触发构建（分支/Tag + 自定义变量，`ci.trigger`） |
+| GET | `/api/ci/projects/{pid}/builds/{bid}/log` | 🔑 | 构建控制台日志（流式） |
+| GET | `/api/ci/projects/{pid}/builds/{bid}/pipeline-log` | 🔑 | Jenkins pipeline 阶段日志 |
+| POST | `/api/ci/projects/{pid}/builds/{bid}/retry` | 🔑 | 重试构建（`ci.trigger`） |
+| POST | `/api/ci/projects/{pid}/builds/{bid}/cancel` | 🔑 | 取消构建（`ci.trigger`） |
+| GET | `/api/ci/projects/{pid}/variables` | 🔑 | CI 项目构建变量 |
+| GET | `/api/ci/projects/{pid}/branches` | 🔑 | 仓库分支/Tag 列表 |
+| GET | `/api/ci/health` | 🔑 | CI API 连通性检查 |
+| **服务器** | | | |
 | GET | `/api/servers` | ✅ | 服务器列表 |
-| POST | `/api/servers` | ✅ | 添加服务器 |
-| PUT | `/api/servers/{id}` | ✅ | 更新服务器 |
-| DELETE | `/api/servers/{id}` | ✅ | 删除服务器 |
-| GET | `/api/servers/tags` | ✅ | Tag 分组 |
-| POST | `/api/deploy` | ✅ | Docker 部署 |
-| POST | `/api/deploy-k8s` | ✅ | K8s 部署 |
-| POST | `/api/stop` | ✅ | 停止服务 |
-| GET | `/api/deploy-logs` | ✅ | 部署记录查询 |
+| POST | `/api/servers` | 🔑 | 添加服务器（`cd.server-manage`） |
+| PUT | `/api/servers/{id}` | 🔑 | 更新服务器 |
+| DELETE | `/api/servers/{id}` | 🔑 | 删除服务器 |
+| GET | `/api/servers/status` | ✅ | 服务器连通状态 |
+| POST | `/api/servers/test-connection` | 🔑 | 保存前测试 SSH 连接 |
+| POST | `/api/servers/{id}/trust` | 🔑 | 信任变更后的 SSH 主机密钥 |
+| **部署与回滚（SSH / Compose）** | | | |
+| POST | `/api/deploy` | 🔑 | 部署（`cd.deploy-manage`；命中审批规则时返回 `pending` + `approval_id`；`scheduled_at` 定时发布） |
+| POST | `/api/deploy-stream` | 🔑 | 部署（SSE 实时日志流） |
+| POST | `/api/deploy/cancel` | ✅ | 取消进行中的部署（按 `deploy_id` 或 `project`） |
+| POST | `/api/stop` | 🔑 | 停止目标服务器服务（`cd.deploy-manage`） |
+| POST | `/api/deploy/rollback` | 🔑 | 回滚：回滚一步 / 回滚到指定 tag / 重放上次成功快照 |
+| POST | `/api/deploy/rollback-stream` | 🔑 | 回滚（SSE 实时日志流） |
+| **K8s 部署** | | | |
+| POST | `/api/deploy-k8s-check` | 🔑 | 预检：YAML Deployment 名称 vs 集群存量资源（`cd.deploy.k8s`） |
+| POST | `/api/deploy-k8s` | 🔑 | K8s 部署 — kubectl/Helm/ArgoCD/FluxCD（`cd.deploy.k8s`） |
+| POST | `/api/deploy-k8s-stream` | 🔑 | K8s 部署（SSE 实时日志流） |
+| POST | `/api/stop-k8s` | 🔑 | 停止 K8s 部署（`cd.deploy.k8s`） |
+| GET | `/api/deploy-logs` | ✅ | 部署记录查询（分页） |
+| **审批** | | | |
+| GET | `/api/approvals` | ✅ | 审批单列表（管理者见全部、普通用户见本人；过滤：status/project/deploy_kind/active/mine） |
+| GET | `/api/approvals/badge` | ✅ | 待审批红点计数（待我审批 + 我的待执行） |
+| GET | `/api/approvals/{id}` | ✅ | 审批单详情（含完整参数快照） |
+| POST | `/api/approvals/{id}/approve` | ✅ | 批准（仅规则指定审批人，原子操作） |
+| POST | `/api/approvals/{id}/reject` | ✅ | 驳回（附备注） |
+| POST | `/api/approvals/{id}/cancel` | ✅ | 申请人撤回自己的待审单 |
+| POST | `/api/approvals/{id}/execute` | ✅ | 申请人凭已批准单执行（JSON，供 API 集成） |
+| POST | `/api/approvals/{id}/execute-stream` | ✅ | 申请人凭已批准单执行（SSE 实时日志流） |
+| GET | `/api/approval-rules` | 🔑 | 审批规则列表（`cd.deploy.approve`） |
+| PUT | `/api/approval-rules/{project}` | 🔑 | 创建/更新项目审批规则 |
+| DELETE | `/api/approval-rules/{project}` | 🔑 | 删除项目审批规则 |
+| GET | `/api/roles` | 🔑 | 角色列表（供审批规则选择审批角色） |
+| **机器人** | | | |
 | GET | `/api/bots` | ✅ | 通知机器人列表 |
-| POST | `/api/bots` | ✅ | 添加机器人 |
-| DELETE | `/api/bots/{id}` | ✅ | 删除机器人 |
-| GET | `/api/monitor/servers` | ✅ | 监控服务器列表 |
-| GET | `/api/monitor/system/{id}` | ✅ | 服务器系统资源 |
-| GET | `/api/monitor/nodes/{id}` | ✅ | K8s 节点指标 |
-| GET | `/api/monitor/pods/{id}` | ✅ | K8s Pod 指标 |
-| GET | `/api/monitor/docker/{id}` | ✅ | Docker 容器指标 |
+| POST | `/api/bots` | 🔑 | 添加机器人（`cd.notification-manage`） |
+| DELETE | `/api/bots/{id}` | 🔑 | 删除机器人 |
+| **监控** | | | |
+| GET | `/api/monitor/status` | 🔑 | 监控子系统状态（`cd.resource-monitor`） |
+| GET | `/api/monitor/servers` | 🔑 | 监控服务器列表 |
+| GET | `/api/monitor/system/{id}` | 🔑 | 服务器系统资源（`cd.monitor.system`） |
+| GET | `/api/monitor/nodes/{id}` | 🔑 | K8s 节点指标（`cd.monitor.app`） |
+| GET | `/api/monitor/pods/{id}` | 🔑 | K8s Pod 指标 |
+| GET | `/api/monitor/pod-detail/{id}` | 🔑 | 单 Pod 详情（容器、重启次数、所在节点） |
+| GET | `/api/monitor/docker/{id}` | 🔑 | Docker 容器指标 |
+| **自定义监控** | | | |
 | GET | `/api/custom-monitors` | ✅ | 自定义监控列表 |
-| POST | `/api/custom-monitors` | ✅ | 创建自定义监控 |
-| PUT | `/api/custom-monitors/{id}` | ✅ | 更新自定义监控 |
-| DELETE | `/api/custom-monitors/{id}` | ✅ | 删除自定义监控 |
-| POST | `/api/custom-monitors/{id}/test` | ✅ | 测试运行 |
+| POST | `/api/custom-monitors` | 🔑 | 创建自定义监控（`cd.server-manage`） |
+| PUT | `/api/custom-monitors/{id}` | 🔑 | 更新自定义监控 |
+| DELETE | `/api/custom-monitors/{id}` | 🔑 | 删除自定义监控 |
+| POST | `/api/custom-monitors/{id}/test` | 🔑 | 测试运行（解析预览 + 诊断信息） |
+| **告警** | | | |
 | GET | `/api/alerts` | ✅ | 告警规则列表 |
-| POST | `/api/alerts` | ✅ | 创建告警规则 |
-| PUT | `/api/alerts/{id}` | ✅ | 更新告警规则 |
-| DELETE | `/api/alerts/{id}` | ✅ | 删除告警规则 |
-| GET | `/api/registry/repositories` | ✅ | Harbor 仓库列表 |
-| GET | `/api/registry/artifacts/{id}` | ✅ | 仓库 Tag/Artifact 列表 |
-| GET | `/api/registry/scan/{id}/{tag}` | ✅ | Tag 漏洞扫描详情 |
-| DELETE | `/api/registry/artifacts/{id}` | ✅ | 删除 Tag（安全校验） |
-| POST | `/api/registry/sync` | ✅ | 触发 Harbor 同步 |
-| WS | `/ws/terminal/{id}` | — | Web Shell 终端 |
-| POST | `/api/upload/{id}` | ✅ | SFTP 文件上传 |
+| POST | `/api/alerts` | 🔑 | 创建告警规则（`cd.monitor.alert`） |
+| PUT | `/api/alerts/{id}` | 🔑 | 更新告警规则 |
+| DELETE | `/api/alerts/{id}` | 🔑 | 删除告警规则 |
+| GET | `/api/alerts/resource-types` | ✅ | 可选资源类型/指标清单 |
+| POST | `/api/alerts/check` | 🔑 | 立即触发一轮告警检查 |
+| **制品仓库（Harbor）** | | | |
+| GET | `/api/registry/repositories` | 🔑 | Harbor 仓库列表（`cd.image-registry`） |
+| GET | `/api/registry/artifacts/{id}` | 🔑 | 仓库 Tag/Artifact 列表 |
+| GET | `/api/registry/scan/report/{id}/{tag}` | 🔑 | Tag 漏洞扫描报告 |
+| POST | `/api/registry/scan/trigger/{id}/{tag}` | 🔑 | 触发漏洞扫描 |
+| DELETE | `/api/registry/artifacts/{id}` | 🔑 | 删除 Tag（安全校验） |
+| POST | `/api/registry/sync` | 🔑 | 触发 Harbor 同步 |
+| GET | `/api/registry/config` | 🔑 | Harbor 连接配置 |
+| PUT | `/api/registry/config` | 🔑 | 更新 Harbor 连接配置 |
+| **Web Shell 与用户** | | | |
+| WS | `/ws/terminal/{id}` | 🔑 | Web Shell 终端（`cd.webshell`；经 `cd_token` cookie 或 `?token=` 鉴权） |
+| POST | `/api/upload/{id}` | 🔑 | SFTP 文件上传（`cd.webshell`） |
 | GET | `/api/users` | 🔑 | 用户列表（供审批规则选择审批人，需 `cd.deploy.approve`；账号管理统一在 CI 侧） |
 | **Webhook 配置管理** | | | |
 | GET | `/api/webhooks` | ✅ | Webhook 配置列表 |

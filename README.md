@@ -29,8 +29,8 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Frontend**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
 - **Database**：No standalone database — shares the same database instance as Devops-Glue API (SQLite / MySQL 8.0+ / MariaDB 10.4+)
 - **Port**：8081
-- **Version**：v1.5.0 (Changelog v1.5.0 updated 2026-08-31)
-- **Authentication**：Shared database with Devops-Glue API; bcrypt + Bearer token. Cannot be used independently.
+- **Version**：v1.5.7 (Changelog v1.5.7 updated 2026-10-08)
+- **Authentication**：Shared database with Devops-Glue API; opaque session tokens (HttpOnly cookie / Bearer header, server-side revocable via logout), bcrypt / argon2id password hashes auto-detected. Cannot be used independently.
 <details>
 ## <summary> Quick Start (click to expand)</summary>
 

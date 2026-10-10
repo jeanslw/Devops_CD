@@ -113,7 +113,7 @@ v<major>.<minor>.<patch>[-<prerelease>]
 
 #### Release Steps
 
-1. Update APP_VERSION in backend/config.py (or the appropriate config file) according to the rules above.
+1. Update `__version__` in `backend/__init__.py` (the single source of truth — `main.py`'s `FastAPI(version=...)` and `GET /api/info` both reference it) according to the rules above.
 2. Add a new entry for the version at the top of docs/CHANGELOG.md:
    ## vX.X.X (YYYY-MM-DD)
    - Change description 1
@@ -127,13 +127,13 @@ v<major>.<minor>.<patch>[-<prerelease>]
 #### Important Rules
 
 - One version, one tag: Each version has its own unique tag. Do NOT reuse the same tag for multiple releases.
-- Tag must match code version: The Git tag MUST exactly match the APP_VERSION value in the code.
+- Tag must match code version: The Git tag MUST exactly match the `__version__` value in `backend/__init__.py`.
 - CHANGELOG entry required: Every version MUST have a corresponding entry in docs/CHANGELOG.md before tagging.
 - No force-pushing tags: Never force-push an existing tag to a different commit. If a release is faulty, bump the patch version and release a fix instead.
 
 #### Example
 
-git add backend/config.py docs/CHANGELOG.md
+git add backend/__init__.py docs/CHANGELOG.md
 git commit -m "chore(release): bump version to v1.5.1"
 git tag v1.5.1
 git push origin main

@@ -31,6 +31,7 @@ CD Panel (this project)
 | Monitoring | CPU, memory, disk, Docker containers, K8s nodes/pods (real-time) |
 | Custom Monitors | Execute custom SSH commands, parse CSV/KV/JSON output, monitor anything |
 | Alerts | Threshold-based resource alerts, push via DingTalk/WeCom/custom webhooks |
+| Deployment Approval | Per-project approval rules; gated deploys queue as tickets — approve/reject/cancel, scheduled publish, badge reminders, requester-triggered execution with live logs |
 | Web Shell | In-browser SSH terminal, SFTP file upload |
 | Artifact Registry | Harbor image browsing, vulnerability scanning, safe tag deletion |
 | Server Management | Server CRUD, tag-based grouping, SSH/Docker/K8s types |
@@ -118,7 +119,7 @@ Set threshold alerts for system resources, Docker containers, K8s pods, and cust
 | Process CPU/Memory | Top process monitoring |
 | Custom | Custom monitor metrics (select monitor + metric) |
 
-The system checks periodically (default: 300s) and sends notifications via configured bots when thresholds are exceeded.
+The system checks periodically (`ALERT_CHECK_INTERVAL`, default 60s) and sends notifications via configured bots when thresholds are exceeded.
 
 ## 6. CI Build Management
 
@@ -195,7 +196,7 @@ Custom Bot templates support `{project}` `{tag}` `{image}` `{status}` `{time}` `
 cd_service/
 ├── main.py              # Entry point
 ├── backend/
-│   ├── routers/         # API routes (16 modules: + webhooks, + ci_build)
+│   ├── routers/         # API routes (17 modules: + auth, approvals, webhooks, ci_build)
 │   ├── services/        # Business logic layer
 │   └── deployers/       # Deployers (SSH/Compose/kubectl/ArgoCD/FluxCD/Helm)
 ├── frontend/            # Vue 3 source
@@ -211,61 +212,107 @@ cd_service/
 | Symbol | Meaning |
 |:------:|---------|
 | — | No authentication required |
-| ✅ | Bearer Token required (`Authorization: Bearer <token>`) |
-| 🔑 | Admin role required |
+| ✅ | Login required (Bearer Token via `Authorization` header, or the `cd_token` HttpOnly cookie issued at login) |
+| 🔑 | Login + a specific `cd.*` permission required (permission key shown in the description) |
 
 ### Endpoints
 
 | Method | Path | Auth | Description |
 |--------|------|:----:|-------------|
+| **System & Auth** | | | |
 | GET | `/health` | — | Health check |
 | GET | `/api/info` | — | Public info (version, DB type/status, uptime) |
-| POST | `/api/login` | — | Login, returns Token |
+| GET | `/metrics` | — | Prometheus metrics (uptime, version, deploy counts by status; aggregates only) |
+| POST | `/api/login` | — | Login → opaque session token + `cd_token` HttpOnly cookie (5 failed attempts → 15 min lock) |
+| POST | `/api/logout` | ✅ | Revoke current session (immediately invalid, idempotent) and clear cookie |
 | GET | `/api/me` | ✅ | Current user info |
+| **Projects & Tags** | | | |
 | GET | `/api/projects` | ✅ | CI project list with latest tag |
 | GET | `/api/projects/{p}/pipeline` | ✅ | Project pipeline status |
 | GET | `/api/projects/{p}/tags` | ✅ | All tags for a project |
+| GET | `/api/tags` | ✅ | Tag library (deduplicated from server tags) |
 | **CI Build (HTTP proxy to CI API)** | | | |
-| GET | `/api/ci/projects` | ✅ | CI project list |
-| GET | `/api/ci/{pid}/builds` | ✅ | Build history for a CI project |
-| POST | `/api/ci/{pid}/build` | ✅ | Trigger build (branch/tag + custom variables) |
-| GET | `/api/ci/{pid}/build/{bid}/log` | ✅ | Build console log (streaming) |
-| GET | `/api/ci/{pid}/variables` | ✅ | CI project build variables |
-| GET | `/api/ci/{pid}/branches` | ✅ | Git branch/tag list |
-| GET | `/api/ci/health` | ✅ | CI API connectivity health check |
+| GET | `/api/ci/projects` | 🔑 | CI project list (`cd.build-manage`) |
+| GET | `/api/ci/projects/{pid}/builds` | 🔑 | Build history for a CI project |
+| POST | `/api/ci/projects/{pid}/build` | 🔑 | Trigger build — branch/tag + custom variables (`ci.trigger`) |
+| GET | `/api/ci/projects/{pid}/builds/{bid}/log` | 🔑 | Build console log (streaming) |
+| GET | `/api/ci/projects/{pid}/builds/{bid}/pipeline-log` | 🔑 | Jenkins pipeline stage log |
+| POST | `/api/ci/projects/{pid}/builds/{bid}/retry` | 🔑 | Retry build (`ci.trigger`) |
+| POST | `/api/ci/projects/{pid}/builds/{bid}/cancel` | 🔑 | Cancel build (`ci.trigger`) |
+| GET | `/api/ci/projects/{pid}/variables` | 🔑 | CI project build variables |
+| GET | `/api/ci/projects/{pid}/branches` | 🔑 | Git branch/tag list |
+| GET | `/api/ci/health` | 🔑 | CI API connectivity check |
+| **Servers** | | | |
 | GET | `/api/servers` | ✅ | Server list |
-| POST | `/api/servers` | ✅ | Add server |
-| PUT | `/api/servers/{id}` | ✅ | Update server |
-| DELETE | `/api/servers/{id}` | ✅ | Delete server |
-| GET | `/api/servers/tags` | ✅ | Tag groups |
-| POST | `/api/deploy` | ✅ | Docker deployment |
-| POST | `/api/deploy-k8s` | ✅ | K8s deployment |
-| POST | `/api/stop` | ✅ | Stop service |
-| GET | `/api/deploy-logs` | ✅ | Deployment log query |
+| POST | `/api/servers` | 🔑 | Add server (`cd.server-manage`) |
+| PUT | `/api/servers/{id}` | 🔑 | Update server (`cd.server-manage`) |
+| DELETE | `/api/servers/{id}` | 🔑 | Delete server (`cd.server-manage`) |
+| GET | `/api/servers/status` | ✅ | Server connectivity status |
+| POST | `/api/servers/test-connection` | 🔑 | Test SSH connection before saving (`cd.server-manage`) |
+| POST | `/api/servers/{id}/trust` | 🔑 | Trust the server's changed SSH host key (`cd.server-manage`) |
+| **Deploy & Rollback (SSH / Compose)** | | | |
+| POST | `/api/deploy` | 🔑 | Deploy (`cd.deploy-manage`; returns `pending` + `approval_id` when an approval rule matches; `scheduled_at` for scheduled publish) |
+| POST | `/api/deploy-stream` | 🔑 | Deploy with SSE live log stream |
+| POST | `/api/deploy/cancel` | ✅ | Cancel a running deployment (by `deploy_id` or `project`) |
+| POST | `/api/stop` | 🔑 | Stop services on target servers (`cd.deploy-manage`) |
+| POST | `/api/deploy/rollback` | 🔑 | Rollback: one step / to a tag / replay last successful snapshot (`cd.deploy-manage`) |
+| POST | `/api/deploy/rollback-stream` | 🔑 | Rollback with SSE live log stream |
+| **K8s Deploy** | | | |
+| POST | `/api/deploy-k8s-check` | 🔑 | Pre-check: YAML Deployment name vs existing cluster resources (`cd.deploy.k8s`) |
+| POST | `/api/deploy-k8s` | 🔑 | K8s deploy — kubectl/Helm/ArgoCD/FluxCD (`cd.deploy.k8s`) |
+| POST | `/api/deploy-k8s-stream` | 🔑 | K8s deploy with SSE live log stream |
+| POST | `/api/stop-k8s` | 🔑 | Stop K8s deployment (`cd.deploy.k8s`) |
+| GET | `/api/deploy-logs` | ✅ | Deployment log query (paged) |
+| **Approvals** | | | |
+| GET | `/api/approvals` | ✅ | Approval tickets (managers see all, users see their own; filters: status/project/deploy_kind/active/mine) |
+| GET | `/api/approvals/badge` | ✅ | Pending badge count (to approve + to execute) |
+| GET | `/api/approvals/{id}` | ✅ | Approval detail incl. full parameter snapshot |
+| POST | `/api/approvals/{id}/approve` | ✅ | Approve (only rule-designated approvers; atomic) |
+| POST | `/api/approvals/{id}/reject` | ✅ | Reject with note |
+| POST | `/api/approvals/{id}/cancel` | ✅ | Requester cancels own pending ticket |
+| POST | `/api/approvals/{id}/execute` | ✅ | Requester executes approved ticket (JSON; for API integrations) |
+| POST | `/api/approvals/{id}/execute-stream` | ✅ | Requester executes with SSE live log stream |
+| GET | `/api/approval-rules` | 🔑 | Approval rules list (`cd.deploy.approve`) |
+| PUT | `/api/approval-rules/{project}` | 🔑 | Create/update a project's approval rule (`cd.deploy.approve`) |
+| DELETE | `/api/approval-rules/{project}` | 🔑 | Delete a project's approval rule (`cd.deploy.approve`) |
+| GET | `/api/roles` | 🔑 | Role list for picking approver roles (`cd.deploy.approve`) |
+| **Bots** | | | |
 | GET | `/api/bots` | ✅ | Notification bots list |
-| POST | `/api/bots` | ✅ | Add bot |
-| DELETE | `/api/bots/{id}` | ✅ | Delete bot |
-| GET | `/api/monitor/servers` | ✅ | Monitor server list |
-| GET | `/api/monitor/system/{id}` | ✅ | Server system resources |
-| GET | `/api/monitor/nodes/{id}` | ✅ | K8s node metrics |
-| GET | `/api/monitor/pods/{id}` | ✅ | K8s pod metrics |
-| GET | `/api/monitor/docker/{id}` | ✅ | Docker container metrics |
+| POST | `/api/bots` | 🔑 | Add bot (`cd.notification-manage`) |
+| DELETE | `/api/bots/{id}` | 🔑 | Delete bot (`cd.notification-manage`) |
+| **Monitoring** | | | |
+| GET | `/api/monitor/status` | 🔑 | Monitoring subsystem status (`cd.resource-monitor`) |
+| GET | `/api/monitor/servers` | 🔑 | Monitor server list (`cd.resource-monitor`) |
+| GET | `/api/monitor/system/{id}` | 🔑 | Server system resources (`cd.monitor.system`) |
+| GET | `/api/monitor/nodes/{id}` | 🔑 | K8s node metrics (`cd.monitor.app`) |
+| GET | `/api/monitor/pods/{id}` | 🔑 | K8s pod metrics (`cd.monitor.app`) |
+| GET | `/api/monitor/pod-detail/{id}` | 🔑 | Single pod detail — containers, restarts, node (`cd.monitor.app`) |
+| GET | `/api/monitor/docker/{id}` | 🔑 | Docker container metrics (`cd.monitor.app`) |
+| **Custom Monitors** | | | |
 | GET | `/api/custom-monitors` | ✅ | Custom monitor list |
-| POST | `/api/custom-monitors` | ✅ | Create custom monitor |
-| PUT | `/api/custom-monitors/{id}` | ✅ | Update custom monitor |
-| DELETE | `/api/custom-monitors/{id}` | ✅ | Delete custom monitor |
-| POST | `/api/custom-monitors/{id}/test` | ✅ | Test run |
+| POST | `/api/custom-monitors` | 🔑 | Create custom monitor (`cd.server-manage`) |
+| PUT | `/api/custom-monitors/{id}` | 🔑 | Update custom monitor |
+| DELETE | `/api/custom-monitors/{id}` | 🔑 | Delete custom monitor |
+| POST | `/api/custom-monitors/{id}/test` | 🔑 | Test run — parse preview + diagnostics |
+| **Alerts** | | | |
 | GET | `/api/alerts` | ✅ | Alert rules list |
-| POST | `/api/alerts` | ✅ | Create alert rule |
-| PUT | `/api/alerts/{id}` | ✅ | Update alert rule |
-| DELETE | `/api/alerts/{id}` | ✅ | Delete alert rule |
-| GET | `/api/registry/repositories` | ✅ | Harbor repository list |
-| GET | `/api/registry/artifacts/{id}` | ✅ | Repository tag/artifact list |
-| GET | `/api/registry/scan/{id}/{tag}` | ✅ | Tag vulnerability scan |
-| DELETE | `/api/registry/artifacts/{id}` | ✅ | Delete tag (safety check) |
-| POST | `/api/registry/sync` | ✅ | Trigger Harbor sync |
-| WS | `/ws/terminal/{id}` | — | Web Shell terminal |
-| POST | `/api/upload/{id}` | ✅ | SFTP file upload |
+| POST | `/api/alerts` | 🔑 | Create alert rule (`cd.monitor.alert`) |
+| PUT | `/api/alerts/{id}` | 🔑 | Update alert rule |
+| DELETE | `/api/alerts/{id}` | 🔑 | Delete alert rule |
+| GET | `/api/alerts/resource-types` | ✅ | Resource types/metrics available for rules |
+| POST | `/api/alerts/check` | 🔑 | Trigger an immediate alert check cycle |
+| **Artifact Registry (Harbor)** | | | |
+| GET | `/api/registry/repositories` | 🔑 | Harbor repository list (`cd.image-registry`) |
+| GET | `/api/registry/artifacts/{id}` | 🔑 | Repository tag/artifact list |
+| GET | `/api/registry/scan/report/{id}/{tag}` | 🔑 | Tag vulnerability scan report |
+| POST | `/api/registry/scan/trigger/{id}/{tag}` | 🔑 | Trigger a vulnerability scan |
+| DELETE | `/api/registry/artifacts/{id}` | 🔑 | Delete tag (with safety checks) |
+| POST | `/api/registry/sync` | 🔑 | Trigger Harbor sync |
+| GET | `/api/registry/config` | 🔑 | Harbor connection config |
+| PUT | `/api/registry/config` | 🔑 | Update Harbor connection config |
+| **Web Shell & Users** | | | |
+| WS | `/ws/terminal/{id}` | 🔑 | Web Shell terminal (`cd.webshell`; auth via `cd_token` cookie or `?token=`) |
+| POST | `/api/upload/{id}` | 🔑 | SFTP file upload (`cd.webshell`) |
 | GET | `/api/users` | 🔑 | User list (for picking approvers in approval rules, requires `cd.deploy.approve`; account management lives in CI) |
 | **Webhooks (notification management)** | | | |
 | GET | `/api/webhooks` | ✅ | Webhook config list |

@@ -57,10 +57,12 @@
 ┌──────────────────────────────────────┐
 │ 共享数据库 (SQLite / MySQL / MariaDB)│
 │                                      │
-│  ci_job_git_map        ← CI 只读     │
 │  ci_pipeline_artifacts      ← CI 写/CD 读 │
+│  v_glue_deploy_logs    ← CI 只读视图    │
 │  cd_servers            ← CD 维护     │
 │  cd_deploy_logs        ← CD 写       │
+│  cd_approvals(_rules)  ← CD 写       │
+│  cd_sessions           ← CD 写/删    │
 │  cd_bots               ← CD 维护     │
 │  admin_users           ← 共享        │
 └──────────┬───────────────────────────┘
@@ -72,6 +74,8 @@
 │:8080   │   │:8081   │
 └────────┘   └────────┘
 ```
+
+> **Data ownership**: besides the shared tables above, CD maintains its own `cd_*` tables (webhooks, monitors, alerts, registry cache, config, sessions, approvals). CI-specific build data (pipelines, mappings, build records) is fetched from CI over its HTTP API — CD does not read other `ci_*` tables directly.
 
 **Database Selection**: PHP CI and CD Service must use the same database instance.
 - **SQLite**: Zero-config, suitable for single-host dev/test. Container deployments must mount a shared volume so both processes can access the same `.db` file.
