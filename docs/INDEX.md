@@ -41,6 +41,7 @@
 | `docker-publish.yml` | push `vX.Y.Z` Tag | 构建多架构镜像并推送 GHCR |
 | `release.yml` | push `vX.Y.Z` Tag | 自动生成 GitHub Release（含 Changelog） |
 | `security.yml` | 每次 push / PR | Python 语法检查 + 硬编码密钥扫描 |
+| `codeql.yml` | push / PR 到 `main` / `release/**`；每周一 17:23 UTC 定时 | CodeQL 代码扫描（Python 后端 + JS/TS 前端，经 `.github/codeql/codeql-config.yml` 排除已知误报） |
 
 ### 变更记录 Changelog
 

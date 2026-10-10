@@ -140,7 +140,7 @@ On first startup, the following CD tables are created automatically:
 | Table | Description |
 |-------|-------------|
 | `cd_servers` | Deployment target servers |
-| `cd_deploy_logs` | Deployment records |
+| `cd_deploy_logs` | Deployment records (incl. rollback parameter snapshots, `heartbeat_at` for interrupted-deploy recovery) |
 | `cd_bots` | Notification bots |
 | `cd_registry_repositories` | Harbor repository metadata |
 | `cd_registry_artifacts` | Artifact/tag information |
@@ -151,6 +151,13 @@ On first startup, the following CD tables are created automatically:
 | `cd_config` | System configuration key-value pairs |
 | `cd_webhooks` | Webhook receiver config (token + linked Bot) |
 | `cd_webhook_events` | Incoming webhook event log (raw payload) |
+| `cd_sessions` | Opaque session tokens (SHA-256 digests; logout deletes the row for immediate revocation) |
+| `cd_approvals` | Deployment approval tickets (status machine: pending → approved → deploying → deployed/failed, plus rejected/cancelled; `scheduled_at` for scheduled publish) |
+| `cd_approval_rules` | Per-project approval rules (approver users / roles) |
+
+Also created automatically:
+
+- View `v_glue_deploy_logs`: read-only deployment-record contract view for Devops-Glue (audit fields only, excludes large columns such as `output`).
 
 ## 4. Deployment
 
@@ -447,9 +454,10 @@ All other roles (e.g. `deployer`, `viewer`, or any custom role defined in CI) ge
 
 ### Authentication
 
-- Login: POST `/api/login` with username + password → returns Bearer Token
-- Token format: Base64 encoded, contains username
-- Protected endpoints require `Authorization: Bearer <token>` header
+- Login: POST `/api/login` with username + password → returns an opaque random session token (also set as the `cd_token` HttpOnly cookie; only its SHA-256 digest is stored server-side in `cd_sessions`)
+- Logout: POST `/api/logout` revokes the session server-side — the token becomes invalid immediately
+- Protected endpoints accept either the `Authorization: Bearer <token>` header or the HttpOnly cookie
+- Failed logins are rate-limited: 5 consecutive failures (per IP+username) lock login for 15 minutes
 
 ## 8. CI Build Management Integration (optional)
 

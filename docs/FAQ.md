@@ -68,7 +68,7 @@ MySQL is strongly recommended. SQLite experiences lock contention when CD and PH
 
 ### Q: Sync is too slow?
 
-Full sync pulls all projects, repositories, and tags. Set `REGISTRY_SYNC_INTERVAL` for periodic incremental sync, or trigger sync manually with a `project` parameter.
+Full sync pulls all projects, repositories, and tags. Set `REGISTRY_SYNC_INTERVAL` (in **minutes**, default 30, 0 disables) for periodic incremental sync, or trigger sync manually with a `project` parameter.
 
 ---
 
@@ -148,14 +148,19 @@ environment:
 
 ### Q: `npm run build` produces a blank page?
 
-FastAPI caches `static/index.html` at startup. Restart the CD service after rebuilding, or ensure the code re-reads the file on each request (already fixed in v1.1.1).
+Since v1.1.1 the SPA route re-reads `static/index.html` from disk on every request (HTML is never cached), so no service restart is needed after a rebuild. If a blank page still appears: hard-refresh the browser (Ctrl+F5) to bypass the cached HTML/assets, and confirm the build actually wrote to `static/` (run `npm run build` inside `frontend/`).
 
 ### Q: Dev mode (`npm run dev`) shows 404?
 
-Vite dev server runs on port 5173. Ensure `vite.config.js` has proxy configured for API calls to port 8001:
+Vite dev server runs on port 5173. `vite.config.js` proxies `/api`, `/static` and `/ws` to the CD backend on port `8000` — start the backend with `PORT=8000` (or adjust the proxy target to your backend port):
 ```js
 server: {
-  proxy: { '/api': 'http://localhost:8001', '/ws': { target: 'ws://localhost:8001', ws: true } }
+  port: 5173,
+  proxy: {
+    '/api': 'http://localhost:8000',
+    '/static': 'http://localhost:8000',
+    '/ws': { target: 'ws://localhost:8000', ws: true }
+  }
 }
 ```
 
@@ -223,6 +228,8 @@ DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 0 2 * * * mysql -u root -p'password' devops_glue -e "DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);"
 ```
 
-**Background tasks**: The CD service has two built-in background threads (`threading.Event.wait`), configured via `config/app.env`:
-- Harbor sync: `REGISTRY_SYNC_INTERVAL` (default 3600s = 1 hour)
-- Alert checking: `ALERT_CHECK_INTERVAL` (default 300s = 5 minutes)
+**Background tasks**: The CD service runs the following built-in background threads (intervals configured via `config/app.env`):
+- Harbor registry sync: `REGISTRY_SYNC_INTERVAL` (default 30 **minutes**, 0 disables)
+- Alert checking: `ALERT_CHECK_INTERVAL` (default 60s)
+- Scheduled publish executor: drains approved deployment approval tickets whose `scheduled_at` time has arrived
+- Deploy heartbeat: refreshes `cd_deploy_logs.heartbeat_at` so interrupted deploys can be detected and recovered on restart

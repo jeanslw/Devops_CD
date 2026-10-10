@@ -34,8 +34,8 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 - **前端**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
 - **数据库**：无独立数据库，完全跟随 Devops-Glue API 的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+
 - **端口**：8081
-- **版本**：v1.5.0（Changelog / v1.5.0 tag 2026-08-31 更新）
-- **认证**：与 Devops-Glue API 共享数据库，bcrypt + Bearer token，不可单独使用
+- **版本**：v1.5.7（Changelog / v1.5.7 tag 2026-10-08 更新）
+- **认证**：与 Devops-Glue API 共享数据库，不透明会话 token（HttpOnly cookie / Bearer 头，logout 可即时吊销），密码哈希自动识别（bcrypt / argon2id），不可单独使用
 <details>
 ## <summary>快速开始</summary>
 

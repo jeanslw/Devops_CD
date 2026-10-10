@@ -112,7 +112,7 @@ v<主版本>.<次版本>.<补丁>[-<预发布标识>]
 
 #### 发布步骤
 
-1. 根据上述规则，在 backend/config.py（或相应配置文件）中递增 APP_VERSION。
+1. 根据上述规则，在 `backend/__init__.py` 中递增 `__version__`（版本号统一在此维护——`main.py` 的 `FastAPI(version=...)` 与 `GET /api/info` 均引用该常量）。
 2. 在 docs/CHANGELOG.md 顶部为当前版本新增条目：
    ## vX.X.X (YYYY-MM-DD)
    - 变更描述 1
@@ -126,13 +126,13 @@ v<主版本>.<次版本>.<补丁>[-<预发布标识>]
 #### 重要规则
 
 - 一个版本，一个 Tag：每个版本有自己唯一的 Tag。禁止多个版本共用同一个 Tag。
-- Tag 必须与代码版本一致：Git Tag 必须与代码中的 APP_VERSION 值完全匹配。
+- Tag 必须与代码版本一致：Git Tag 必须与 `backend/__init__.py` 中的 `__version__` 值完全匹配。
 - CHANGELOG 条目必须存在：每个版本在打 Tag 前，必须在 docs/CHANGELOG.md 中有对应条目。
 - 禁止强制推送 Tag：禁止用 git push --force 覆盖已存在的 Tag。如果发布有缺陷，应递增补丁版本并重新发布修复版本。
 
 #### 示例
 
-git add backend/config.py docs/CHANGELOG.md
+git add backend/__init__.py docs/CHANGELOG.md
 git commit -m "chore(release): 版本号升至 v1.5.1"
 git tag v1.5.1
 git push origin main

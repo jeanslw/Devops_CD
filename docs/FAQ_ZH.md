@@ -69,7 +69,7 @@ volumes:
 
 ### Q: 同步很慢？
 
-全量同步会拉取所有项目、仓库、Tag。可通过配置 `REGISTRY_SYNC_INTERVAL=3600`（秒）定时增量同步，或在 CD 面板手动触发同步时传入 `project` 参数做增量。
+全量同步会拉取所有项目、仓库、Tag。可通过配置 `REGISTRY_SYNC_INTERVAL`（单位：分钟，默认 30，0 关闭）定时增量同步，或在 CD 面板手动触发同步时传入 `project` 参数做增量。
 
 ---
 
@@ -150,14 +150,19 @@ environment:
 
 ### Q: `npm run build` 后页面空白？
 
-FastAPI 在启动时缓存了 `static/index.html`。重新构建后需重启 CD 服务，或者通过代码确保每次请求重新读取（已修复）。
+v1.1.1 起 SPA 路由每次请求都从磁盘重读 `static/index.html`（HTML 不缓存），重新构建后无需重启服务。若仍空白：强制刷新浏览器（Ctrl+F5）绕过缓存的 HTML/静态资源，并确认构建产物确实输出到了 `static/`（在 `frontend/` 下执行 `npm run build`）。
 
 ### Q: 开发模式（npm run dev）页面 404？
 
-Vite 开发服务器在 5173 端口，需要在 `vite.config.js` 中配置代理转发 API 到 8000 端口：
+Vite 开发服务器在 5173 端口，`vite.config.js` 已把 `/api`、`/static`、`/ws` 代理到 CD 后端的 `8000` 端口 —— 后端需以 `PORT=8000` 启动（或按实际后端端口调整代理目标）：
 ```js
 server: {
-  proxy: { '/api': 'http://localhost:8001', '/ws': { target: 'ws://localhost:8001', ws: true } }
+  port: 5173,
+  proxy: {
+    '/api': 'http://localhost:8000',
+    '/static': 'http://localhost:8000',
+    '/ws': { target: 'ws://localhost:8000', ws: true }
+  }
 }
 ```
 
@@ -225,6 +230,8 @@ DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 0 2 * * * mysql -u root -p'password' devops_glue -e "DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);"
 ```
 
-**后台任务说明**：CD 服务自身有两个内置后台线程（`threading.Event.wait`），通过 `config/app.env` 配置间隔：
-- Harbor 同步：`REGISTRY_SYNC_INTERVAL`（默认 3600 秒 = 1 小时）
-- 告警检查：`ALERT_CHECK_INTERVAL`（默认 300 秒 = 5 分钟）
+**后台任务说明**：CD 服务内置以下后台线程（间隔通过 `config/app.env` 配置）：
+- Harbor 同步：`REGISTRY_SYNC_INTERVAL`（默认 30 **分钟**，0 关闭）
+- 告警检查：`ALERT_CHECK_INTERVAL`（默认 60 秒）
+- 定时发布调度器：到点自动执行已批准且设定了 `scheduled_at` 的审批单
+- 部署心跳：刷新 `cd_deploy_logs.heartbeat_at`，进程重启时可据此检测并收敛中断的部署
