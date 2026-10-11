@@ -1,4 +1,11 @@
 -- CD Service 建表脚本（兼容 MySQL 5.7+ / MariaDB 10.4+）
+--
+-- ⚠️ 本脚本就是「启用 CD」的闸门：CD 表全部由这里建立，应用（MySQL 模式）不会代为建表。
+--    必须「建全」14 张表 —— 少任何一张都算未部署：启动日志会报错，登录与所有接口
+--    统一返回 503 errors.cd_not_deployed（错误信息会列出缺哪些表）。
+--    脚本幂等（CREATE TABLE IF NOT EXISTS + INFORMATION_SCHEMA 守卫），可安全重复执行；
+--    升级后请再跑一次以补齐新增表/新列。
+--
 -- 使用前请确保已创建数据库，例如: CREATE DATABASE devops_glue CHARACTER SET utf8mb4;
 -- 执行: mysql -u root -p devops_glue < database/init_mysql.sql
 

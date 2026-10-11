@@ -9,11 +9,13 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.config import settings
-from backend.database import Database
+from backend.database import Database, cd_deploy_hint
 
 security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
+# 中性措辞：具体动作按驱动追加（cd_deploy_hint），避免对 SQLite 用户说出「导入 MySQL 脚本」这种错指令
+CD_NOT_DEPLOYED_MSG = "CD 服务未部署：CD 数据表未建全"
 _systems_col_ok = True  # 乐观假设 systems 列存在，查询失败后置 False
 
 
@@ -97,6 +99,41 @@ def get_db() -> Database:
     return Database(settings.db_path)
 
 
+def cd_deploy_gate(db: Database) -> None:
+    """部署闸门：CD_REQUIRED_TABLES 清单没建全时禁止一切操作（清单就是「CD 启用了吗」的分水岭）。
+
+    MySQL 模式的 CD 表由管理员手动导入 database/init_mysql.sql 建立，应用绝不代为建表
+    （零 DDL）；SQLite 模式随库自动建全（见 Database._ensure_cd_tables 的清单自检）。
+    因此这里只做「报警 + 拒绝」，绝不修补 schema：
+
+    - 表不齐全 → 抛 503 errors.cd_not_deployed，带上缺失表明细 + 按驱动给出正确动作
+      （SQLite 重启即自愈；MySQL 才需要导入建表脚本），让运维一次补齐；
+    - 半套 schema 一律不放行：登录后各功能只会缺表 500、甚至写坏数据，宁可在入口整体拒绝；
+    - 覆盖范围：登录（routers/auth.login，排在限流计数之前）+ authenticate + 所有带
+      verify_token / get_current_user 的接口 + 公开 Webhook 接收端点 + WebShell 的 WS 握手
+      —— 即「即使能登录，也禁止做任何操作」；无认证的探活接口（/health、/api/info、/metrics）
+      保持可用。
+
+    该拒绝属于「部署状态」而非「凭据失败」，因此不计入与 Devops-Glue 共享的登录失败锁。
+
+    另一种 503 与之严格区分：数据库**当前不可用**（连不上/建不了表/被锁/只读）抛的是
+    backend.database.DatabaseUnavailableError → 503 errors.db_unavailable（排查连接、配置、
+    文件权限、磁盘空间），绝不混进 errors.cd_not_deployed 骗人去重跑建表脚本。
+    """
+    from backend.exceptions import AppException
+
+    missing = db.cd_missing_tables()
+    if not missing:
+        return
+    preview = "、".join(missing[:6]) + ("…" if len(missing) > 6 else "")
+    raise AppException(
+        f"{CD_NOT_DEPLOYED_MSG}（缺失 {len(missing)} 张：{preview}）。{cd_deploy_hint(db.driver)}",
+        status_code=503,
+        error_key="errors.cd_not_deployed",
+        error_params={"tables": "、".join(missing)},
+    )
+
+
 def verify_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -109,6 +146,10 @@ def verify_token(
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
+
+    # 部署闸门：CD 表没建全时，会话校验必然缺表 500；统一 503 并提示补齐（见 cd_deploy_gate）。
+    # 放在会话查询之前：不依赖 cd_sessions 是否存在，缺表时也能给出可操作的错误。
+    cd_deploy_gate(db)
 
     with db.conn() as conn:
         sess = _lookup_session(conn, token)
@@ -138,6 +179,9 @@ def get_current_user(
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
+
+    # 部署闸门：与 verify_token 一致 —— CD 未部署/表不全时禁止任何已登录操作（503）。
+    cd_deploy_gate(db)
 
     with db.conn() as conn:
         sess = _lookup_session(conn, token)
@@ -269,9 +313,14 @@ def verify_password(plain: str, hashed: str | None) -> bool:
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据，同时检查 systems（如果存在）是否允许 CD 访问。
     成功返回不透明会话 token（会话写入 cd_sessions，logout 删行即时吊销）；
-    账号已停用抛出 AppException(403) 以区别于密码错误；
+    CD 表没建全（MySQL 未导入建表脚本 / SQLite 建表未跑全）抛出 AppException(503)：未部署即禁止登录，
+    应用也绝不代为建表；账号已停用抛出 AppException(403) 以区别于密码错误；
     其余失败返回 None（由调用方统一按"账号或密码错误"处理）"""
     from backend.exceptions import AppException
+
+    # 部署闸门（防御深度）：登录路由已在限流计数前拦过一次，这里再兜一次 ——
+    # 任何调用路径都不会在「CD 表没建全」时去写 cd_sessions（缺表必然报错，见 cd_deploy_gate）。
+    cd_deploy_gate(db)
 
     with db.conn() as conn:
         row = _query_user_with_systems(conn, user, "username, password_hash, systems, status")

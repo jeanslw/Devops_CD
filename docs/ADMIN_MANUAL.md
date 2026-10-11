@@ -133,9 +133,26 @@ NOTIFY_TRUNCATE_CHARS=200
 | `sqlite` | Dev / single instance | Must point to same `.db` file; mount shared volume for containers |
 | `mysql` | Production (recommended) | Avoids SQLite write contention between CD and PHP API |
 
-### Auto-created Tables
+### Who Creates the CD Tables (Deployment Gate)
 
-On first startup, the following CD tables are created automatically:
+**Importing `database/init_mysql.sql` by hand *is* the "CD enabled" gate**: every CD table is created by that script, and the app (**especially in MySQL mode**) never creates tables on its own. The verdict is driven by the single inventory in code, `CD_REQUIRED_TABLES` (14 tables today; when tables are added or removed that list is the one source of truth and the gate, error messages and warnings follow automatically — no hard-coded counts) — **if even one table from the list is missing, CD counts as *not enabled***:
+
+- startup logs the missing CD tables one by one (ERROR level) but deliberately does **not** block startup;
+- login is rejected (HTTP 503 `errors.cd_not_deployed`, the message lists the missing tables plus the driver-appropriate fix); that failure is **not counted** in the login-failure lock, so an administrator account is never locked out;
+- **requests carrying an existing session, the public webhook receiver and WebShell (WebSocket handshake) are rejected with 503 too** — "even if login were possible, no operation is allowed": letting a half-imported schema through only produces 500s everywhere and can corrupt data;
+- the unauthenticated liveness endpoints (`/health`, `/api/info`, `/metrics`) stay available for troubleshooting;
+- nothing is left behind as DDL in the shared database (zero DDL in MySQL mode), and missing tables are never created on the fly.
+
+| Driver | How tables are created |
+|--------|------------------------|
+| `sqlite` | Dev / single instance: tables are **created automatically** with the DB file (no manual import); table creation ends with an **inventory self-check** that fails fast if the list and the DDL drift apart, so a half-created DB never runs |
+| `mysql` | **Must** be imported by an administrator via `database/init_mysql.sql` (whole list); incomplete ⇒ login and every operation blocked |
+
+```bash
+mysql -u root -p devops_glue < database/init_mysql.sql
+```
+
+The script is idempotent (`CREATE TABLE IF NOT EXISTS` plus `INFORMATION_SCHEMA`-guarded `__add_column` / `__add_index`), so it is safe to re-run; **re-run it after every upgrade** to pick up new tables/columns. With the current inventory (14 tables) the shared database then contains the CD tables below (the gate list maps to them one-to-one; this table grows/shrinks with the inventory):
 
 | Table | Description |
 |-------|-------------|
@@ -147,7 +164,6 @@ On first startup, the following CD tables are created automatically:
 | `cd_custom_monitors` | Custom monitor definitions |
 | `cd_custom_monitor_metrics` | Monitor metric definitions |
 | `cd_alert_rules` | Alert rules |
-| `cd_alert_logs` | Alert history |
 | `cd_config` | System configuration key-value pairs |
 | `cd_webhooks` | Webhook receiver config (token + linked Bot) |
 | `cd_webhook_events` | Incoming webhook event log (raw payload) |
@@ -155,9 +171,13 @@ On first startup, the following CD tables are created automatically:
 | `cd_approvals` | Deployment approval tickets (status machine: pending → approved → deploying → deployed/failed, plus rejected/cancelled; `scheduled_at` for scheduled publish) |
 | `cd_approval_rules` | Per-project approval rules (approver users / roles) |
 
-Also created automatically:
+The script also creates:
 
 - View `v_glue_deploy_logs`: read-only deployment-record contract view for Devops-Glue (audit fields only, excludes large columns such as `output`).
+
+**Gate behaviour in SQLite mode** (dev / single instance): the CD tables are created automatically with the DB file, so the gate is normally always open and development stays frictionless. If someone manually `DROP TABLE`s one at runtime (e.g. to reproduce an issue), the gate immediately answers 503 for login and every operation (it only reports — it never silently repairs), and **restarting the service re-creates the tables and heals it**; the error message also tells the truth per driver (only MySQL is pointed at the import script), so nobody is sent to the wrong fix.
+
+**The other 503: database unavailable (distinct from the above)** — when the SQLite file is read-only / the disk is full / the file is locked, when the DB file cannot be opened, or when MySQL hands out no connection, login and the endpoints return 503 `errors.db_unavailable` (`error_params` carries the driver and the underlying cause). That is an **environment** problem: check connectivity/configuration, the data directory's write permission and free disk space — do **not** re-run the DDL script (it cannot fix it and you would be looking in the wrong place). In SQLite mode make sure the data directory is writable and the disk is not full.
 
 ## 4. Deployment
 

@@ -927,6 +927,8 @@
     "scan_trigger_failed": "扫描触发失败",
     "harbor_unavailable": "Harbor 镜像仓库连接不可达，请检查 HARBOR_BASE_URL、网络连通性与 Harbor 服务状态",
     "dangerous_command": "命令包含危险关键字，已禁止执行",
+    "cd_not_deployed": "CD 服务未部署：CD 数据表未建全（缺失：{tables}）。请管理员补齐后再试 —— MySQL 模式导入 database/init_mysql.sql；SQLite 模式重启服务会自动建表",
+    "db_unavailable": "数据库当前不可用（{driver} 驱动）：{reason}。请检查数据库连接与配置；SQLite 模式还需确认数据目录可写、磁盘未满",
     "invalid_url": "无效的 URL 地址",
     "no_cd_access": "该账号无 CD 访问权限，请联系管理员",
     "unsupported_cd_type": "不支持的 CD 类型",
