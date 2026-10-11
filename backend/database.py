@@ -9,13 +9,107 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from backend.config import settings
+from backend.exceptions import AppException
+
+
+class DatabaseUnavailableError(AppException):
+    """数据库**当前不可用**（连不上 / 建不了表 / 库被锁或只读 / 磁盘满）—— 与「CD 表未部署」严格区分。
+
+    两种 503 必须分清（提示与排查方向完全不同）：
+      - 「清单里的表没建全」= **部署状态**问题 → 503 errors.cd_not_deployed（让人去补齐建表）；
+      - 「库现在连不上/写不进」= **运行环境**问题 → 本异常 → 503 errors.db_unavailable
+        （让人去查连接、配置、文件权限（SQLite 目录可写）、磁盘空间）。
+    都返回 503，但 error_key 不同：混为一谈会把运维指向错误动作（重跑建表脚本，问题照旧）。
+
+    继承 AppException：由 main.py 的统一异常处理器输出带 error_key/error_params 的 JSON（503），
+    因此无论抛在依赖注入（get_db）还是路由内部，客户端拿到的都是结构化错误而不是裸 500。
+    """
+
+    def __init__(self, message: str, driver: str = "", reason: str = ""):
+        super().__init__(
+            message,
+            status_code=503,
+            error_key="errors.db_unavailable",
+            error_params={"driver": driver, "reason": (reason or message)[:300]},
+        )
+        self.driver = driver
+
 
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
+
+# ── CD 部署闸门：唯一表清单 ────────────────────────────────────────────────────
+# 「CD 到底启用了没有」只看一件事：下面这份清单里的表是否**全部存在**（与清单张数无关，
+# 以后加减表也是同一套判定）。这张清单就是闸门的分水岭：
+#   - MySQL 模式：管理员手动导入 database/init_mysql.sql 建全这些表 = 启用 CD（应用绝不代为建表）；
+#   - SQLite 模式：CD 表随库自有，_ensure_cd_tables() 首次连库时自动建全（结尾有清单自检）。
+# 少任何一张都当作未部署 —— 半套 schema 放行只会让登录后的功能到处 500、甚至写坏数据，
+# 所以抢在入口整体拒绝（见 backend.auth.cd_deploy_gate：登录 + 所有已持有会话的请求统一 503）。
+#
+# 增删一张 CD 表 = 只改三处（清单是唯一真相源；闸门、错误文案、张数全都自动跟随，代码不写死数字）：
+#   1. 下面的 CD_REQUIRED_TABLES（唯一清单，顺序 = 错误提示里的展示顺序）
+#   2. database/init_mysql.sql（MySQL 建表脚本：生产启用 CD 的唯一手段）
+#   3. backend/database.py::_ensure_cd_tables（SQLite 自带建表；结尾自检会当场拦截漏改）
+# 1/2 由 backend/tests/test_cd_deploy_gate.py 双向校验，3 由运行时自检兜底。
+CD_REQUIRED_TABLES: tuple[str, ...] = (
+    "cd_servers",
+    "cd_deploy_logs",
+    "cd_bots",
+    "cd_registry_repositories",
+    "cd_registry_artifacts",
+    "cd_config",
+    "cd_alert_rules",
+    "cd_custom_monitors",
+    "cd_custom_monitor_metrics",
+    "cd_webhooks",
+    "cd_webhook_events",
+    "cd_approvals",
+    "cd_approval_rules",
+    "cd_sessions",
+)
+
+# 列出现存基础表：MySQL 走 information_schema（DATABASE() = 当前共享库），
+# SQLite 走 sqlite_master。视图 v_glue_deploy_logs 是给 Glue 的契约视图、非 CD 自身表，
+# 不参与闸门（故 MySQL 侧限定 BASE TABLE，两驱动语义一致）。
+_CD_TABLE_LIST_SQL = {
+    "mysql": (
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+    ),
+    "sqlite": "SELECT name FROM sqlite_master WHERE type = 'table'",
+}
+
+
+def cd_deploy_hint(driver: str) -> str:
+    """按驱动给出「怎么把清单建全」的正确动作。
+
+    两个驱动的处置方式完全不同，提示必须说实话：SQLite 的 CD 表由本服务随库自动创建
+    （叫它去导入 MySQL 脚本是错误指令），MySQL 才需要管理员手动导入建表脚本。
+    """
+    if driver == "sqlite":
+        return "SQLite 模式：CD 表随库自动创建，重启服务即可补齐（或删除该 .db 文件重新生成）"
+    return "MySQL 模式：请管理员执行 database/init_mysql.sql 建全清单中的 CD 表"
 
 
 def _dict_row_factory(cursor, row):
     """SQLite row_factory：返回普通 dict（支持 .get()），兼容 pymysql DictCursor"""
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
+
+def _first_col_value(row) -> str:
+    """取结果行第一列值（SQLite 自定义 row_factory 与 pymysql DictCursor 都是 dict）"""
+    if isinstance(row, dict):
+        return str(next(iter(row.values())))
+    return str(row[0])
+
+
+def _is_missing_table_error(exc: BaseException) -> bool:
+    """判断异常是否为「表不存在」（跨 SQLite / MySQL）。
+
+    只用于把「CD 表未部署」与「数据库真的不可用」区分开：前者给出可操作提示，
+    后者仍按原样抛出，避免把连接故障误报成「未部署」。
+    """
+    if "no such table" in str(exc).lower():  # SQLite
+        return True
+    return getattr(exc, "args", (None,))[0] == 1146  # MySQL ER_NO_SUCH_TABLE
 
 
 class _MysqlWrapper:
@@ -90,14 +184,23 @@ class _SqliteWrapper:
 
 class Database:
     """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API。
-    SQLite 模式：自动建表。
-    MySQL  模式：请先执行 database/init_mysql.sql 建表，应用只建索引。使用 DBUtils 连接池。
+    SQLite 模式：自动建表（开发/单机场景，随 DB 文件一起生成）。
+    MySQL  模式：绝不建表 —— 全部 CD 表由管理员手动执行 database/init_mysql.sql 建立，
+    该手动导入即「启用 CD」的部署闸门，且必须把 CD_REQUIRED_TABLES 清单里的表建全（少一张 = 未部署），
+    详见 docs/ADMIN_MANUAL_ZH.md。应用只对已存在的表做缺失列幂等迁移，
+    表是否建全一律由 cd_missing_tables() / cd_deployed() 判定（清单即唯一真相源，不建表、不修补）。
+    使用 DBUtils 连接池。
     启动时校验 ci_pipeline_artifacts 表是否存在，不存在则报错（数据库指向错误）。
     """
 
     DRIVERS = ("sqlite", "mysql")
     _tables_ensured = False  # 类变量：建表只执行一次
     _pool = None  # MySQL 连接池实例（延迟初始化）
+
+    @property
+    def driver(self) -> str:
+        """当前驱动（sqlite / mysql）—— 供上层按驱动给出正确的运维提示（见 cd_deploy_hint）"""
+        return self._driver
 
     def __init__(self, db_path: str = ""):
         self._driver = settings.db_driver
@@ -157,14 +260,50 @@ class Database:
                 exists = cur.fetchone() is not None
                 conn.close()
         except Exception as e:
-            raise RuntimeError(
-                f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。当前驱动: {self._driver}，错误: {e}"
+            # 连不上/取不到元数据 = 库当前不可用（503 errors.db_unavailable），不是 500 程序错误
+            raise DatabaseUnavailableError(
+                f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。当前驱动: {self._driver}，错误: {e}",
+                self._driver,
+                str(e),
             ) from e
         if not exists:
-            raise RuntimeError(
+            raise DatabaseUnavailableError(
                 f"未找到 ci_pipeline_artifacts 表。cd_service 无独立数据库，必须和 Devops-Glue共用同一数据库实例。"
-                f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 Devops-Glue 一致。"
+                f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 Devops-Glue 一致。",
+                self._driver,
             )
+
+    def cd_missing_tables(self) -> list[str]:
+        """返回共享库中缺失的 CD 表名（空列表 = 表建全 = CD 已部署）。
+
+        「建全」以 CD_REQUIRED_TABLES 为准（与 database/init_mysql.sql、SQLite 建表逻辑一致）：
+        少任何一张都算未部署 —— 半套 schema 不该放行登录（登录后处处 500 更糟），
+        判定由 backend.auth.cd_deploy_gate 统一消费（登录 + 已持有会话的请求都拒绝）。
+
+        缺失表属于「部署状态」，不是「数据库故障」：连接不可用/建表失败等一律抛
+        DatabaseUnavailableError（503 errors.db_unavailable），避免把库宕机误报成「未部署」而
+        误导运维去重跑建表脚本 —— 两种 503 的 error_key 不同，客户端提示的排查动作也不同。
+        """
+        try:
+            with self.conn() as conn:
+                rows = conn.execute(_CD_TABLE_LIST_SQL[self._driver]).fetchall()
+        except Exception as e:
+            if _is_missing_table_error(e):
+                # 连元数据表都查不到（如 MySQL 1146）：无法证明 CD 已部署，按未部署处理
+                return list(CD_REQUIRED_TABLES)
+            raise
+        existing = {_first_col_value(r) for r in rows}
+        return [t for t in CD_REQUIRED_TABLES if t not in existing]
+
+    def cd_deployed(self) -> bool:
+        """CD 是否已部署（= CD_REQUIRED_TABLES 清单里的表全部存在，与清单张数无关）。
+
+        SQLite 模式随库自动建全（_ensure_cd_tables 建表 + 结尾自检），因此正常恒为 True；
+        但运行期若被人为 DROP 掉某张表，闸门立刻拒绝（不静默补救），重启服务后自动建全。
+        MySQL 模式未导入（或导入不全）时为 False，此时登录与任何已持有会话的请求都会被拒
+        （503 errors.cd_not_deployed）。
+        """
+        return not self.cd_missing_tables()
 
     @contextmanager
     def conn(self):
@@ -174,23 +313,44 @@ class Database:
             self._init_pool()
             pool = Database._pool
             if pool is None:
-                raise RuntimeError("MySQL 连接池初始化失败")
-            raw = pool.connection()
+                raise DatabaseUnavailableError("MySQL 连接池初始化失败", "mysql")
+            try:
+                raw = pool.connection()
+            except Exception as e:
+                # 取不到连接（网络/账号/连接数打满）= 库当前不可用 → 503，而不是裸 500
+                raise DatabaseUnavailableError(f"MySQL 取连接失败：{e}", "mysql", str(e)) from e
             wrapper = _MysqlWrapper(raw)
         else:
-            raw = self._connect_sqlite()
+            try:
+                raw = self._connect_sqlite()
+            except sqlite3.Error as e:
+                # 库文件打不开（目录不存在/不可写/被占用）= 环境故障 → 503 库不可用（不是 500）
+                raise DatabaseUnavailableError(
+                    f"SQLite 打开数据库文件失败（{self._path}）：{e}", "sqlite", str(e)
+                ) from e
             wrapper = _SqliteWrapper(raw)
 
         if not Database._tables_ensured:
-            # 维护 CD 自有表：SQLite 走完整建表+迁移；MySQL 的表已由 init_mysql.sql 初始化
-            # （SQLite 专属 DDL 不适用），仅做缺失列幂等迁移——否则已有库新增列
-            # （如 cd_approvals.scheduled_at）的迁移永远跑不到。
+            # 维护 CD 自有表：SQLite 走完整建表+迁移（开发/单机模式）；MySQL **绝不建表** ——
+            # CD 表由管理员手动导入 database/init_mysql.sql 建立，该导入即「启用 CD」的部署闸门，
+            # 这里只对已存在的表做缺失列幂等迁移（否则已有库新增列如 cd_approvals.scheduled_at
+            # 的迁移永远跑不到）；表不存在时迁移被 suppress 跳过，即零副作用。
             # admin_users/roles 等共享表 schema 由 Devops-Glue 统一管理，CD 不得改动。
             # 必须传 wrapper（统一 .execute/.commit 接口）：MySQL 池化 raw 连接无 execute。
-            if self._driver == "mysql":
-                self._ensure_mysql_migrations(wrapper)
-            else:
-                self._ensure_cd_tables(wrapper)
+            try:
+                if self._driver == "mysql":
+                    self._ensure_mysql_migrations(wrapper)
+                else:
+                    self._ensure_cd_tables(wrapper)
+            except sqlite3.Error as e:
+                # 建表写不进去（只读 / 磁盘满 / 被占用）：CD 表当下不可用 → 503 errors.db_unavailable。
+                # 只吞 sqlite3.Error：_ensure_cd_tables 末尾的清单自检抛 RuntimeError（清单与 DDL 漂移，
+                # 属代码/配置缺陷）必须原样冒泡，不能被伪装成「服务暂时不可用」而掩盖。
+                wrapper.close()  # 失败也必须释放连接（Windows 上未关闭的句柄会锁住库文件）
+                raise DatabaseUnavailableError(f"自动建表失败（{self._driver}）：{e}", self._driver, str(e)) from e
+            except Exception:
+                wrapper.close()  # 异常路径一律不得泄漏连接：否则库文件被锁、下次启动更糟
+                raise
             Database._tables_ensured = True
 
         try:
@@ -230,10 +390,13 @@ class Database:
     # ── MySQL 幂等迁移 ──
 
     def _ensure_mysql_migrations(self, conn):
-        """MySQL 模式：库已由 init_mysql.sql 初始化（SQLite 专属 DDL 不适用），
-        仅做缺失列幂等迁移——否则已有库新增列（如 cd_approvals.scheduled_at）
-        的迁移永远跑不到（此前迁移只在 SQLite 模式执行）。
-        重复加列报 MySQL 1060 duplicate column，suppress 掉即可。
+        """MySQL 模式：绝不建表/建索引 —— 所有 CD 表由管理员手动执行
+        database/init_mysql.sql 建立，该手动导入就是「启用 CD」的部署闸门。
+
+        这里只对**已存在**的表做缺失列幂等迁移（否则已有库新增列如
+        cd_approvals.scheduled_at 的迁移永远跑不到；此前迁移只在 SQLite 模式执行）。
+        表不存在时 ALTER 会报错，由 suppress 吞掉 —— 即「未启用 CD」时本方法零副作用。
+        重复加列报 MySQL 1060 duplicate column，同样 suppress 掉即可。
         共享表（admin_users/roles 等）schema 由 Devops-Glue 统一管理，CD 不得改动。
         注意：MySQL TEXT 列不支持字面 DEFAULT，统一用 VARCHAR。
         """
@@ -252,15 +415,6 @@ class Database:
         for tbl, col, col_def in migrations:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
-        # 登录会话表（幂等建表）：老库未重跑 init_mysql.sql 时自愈创建，
-        # 避免首个登录因缺表而 500。token_hash 存 SHA-256 摘要，logout 删行吊销。
-        with suppress(Exception):
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS cd_sessions ("
-                "token_hash VARCHAR(64) PRIMARY KEY, username VARCHAR(64) NOT NULL, "
-                "expires_at INT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
-                "INDEX idx_cds_username (username))"
-            )
         conn.commit()
 
     # ── SQLite 自动建表 ──
@@ -531,6 +685,18 @@ class Database:
                 "deploy_note, created_at FROM cd_deploy_logs"
             )
         conn.commit()
+
+        # ── 清单自检（CD_REQUIRED_TABLES 是唯一真相源）──
+        # 建表跑完必须覆盖清单里的每一张：清单加了表却忘了在上面补 DDL 时，开发机第一次
+        # 连库就当场报错（宁可启动失败，也不要半套 schema 跑起来等闸门 503 才发现）。
+        existing = {_first_col_value(row) for row in conn.execute(_CD_TABLE_LIST_SQL["sqlite"]).fetchall()}
+        missing = [t for t in CD_REQUIRED_TABLES if t not in existing]
+        if missing:
+            raise RuntimeError(
+                "SQLite 建表逻辑与 CD_REQUIRED_TABLES 清单不一致，缺少："
+                + "、".join(missing)
+                + "。新增/删除 CD 表时须同步 backend/database.py::_ensure_cd_tables 与 database/init_mysql.sql"
+            )
 
     # ── 索引（SQLite / MySQL 共用）──
 

@@ -130,9 +130,26 @@ NOTIFY_TRUNCATE_CHARS=200
 | `sqlite` | 开发/单机测试 | 必须指向同一个 `.db` 文件，容器部署需挂载共享卷 |
 | `mysql` | 生产环境（推荐）| 避免 SQLite 并发写入问题，支持 CD 和 PHP API 同时读写 |
 
-### 自动建表
+### CD 表由谁创建（部署闸门）
 
-首次启动时，系统自动创建以下 CD 表：
+**手动导入 `database/init_mysql.sql` 就是「启用 CD」的闸门**：CD 表全部由该脚本建立，应用（尤其 MySQL 模式）**绝不代为建表**。判定只认代码里的**唯一清单 `CD_REQUIRED_TABLES`**（当前 14 张；以后加表/删表，这张清单就是唯一准绳，闸门、错误文案、告警都会自动跟随，不写死张数）—— **清单里少任何一张都当作「未启用 CD」**：
+
+- 启动日志逐张打印缺失的 CD 表（ERROR 级），但**刻意不阻断启动**；
+- 登录被拒（HTTP 503 `errors.cd_not_deployed`，错误信息列出缺哪些表，并按驱动给出补齐动作）；该失败**不计入**登录失败锁，管理员的账号不会被锁；
+- **已持有登录会话的请求、公开 Webhook 接收端点、WebShell（WebSocket 握手）也一律 503** —— 即「即使能登录，也禁止做任何操作」：半套 schema 放行只会让各功能到处 500、甚至写坏数据；
+- 无认证的探活接口（`/health`、`/api/info`、`/metrics`）保持可用，便于排障；
+- 共享库里不会留下任何 DDL 痕迹（MySQL 模式零 DDL），也不会顺手补建缺失的表。
+
+| 驱动 | 建表方式 |
+|------|----------|
+| `sqlite` | 开发/单机模式：CD 表随库文件**自动建全**（无需手动导入）；建表末尾有**清单自检**，清单里加了表却漏改建表逻辑会当场报错，不会半套运行 |
+| `mysql` | **必须**由管理员手动导入 `database/init_mysql.sql`（清单建全）；未建全 → 禁止登录与任何操作 |
+
+```bash
+mysql -u root -p devops_glue < database/init_mysql.sql
+```
+
+脚本是幂等的（`CREATE TABLE IF NOT EXISTS` + `INFORMATION_SCHEMA` 守卫的 `__add_column` / `__add_index`），可安全重复执行；**升级后也请重跑一次**以补齐新增表/新列。按当前清单（14 张）导入后共享库中会出现以下 CD 表（闸门清单与之一一对应；清单增删表时此表同步增减）：
 
 | 表名 | 说明 |
 |------|------|
@@ -144,7 +161,6 @@ NOTIFY_TRUNCATE_CHARS=200
 | `cd_custom_monitors` | 自定义监控项 |
 | `cd_custom_monitor_metrics` | 监控指标定义 |
 | `cd_alert_rules` | 告警规则 |
-| `cd_alert_logs` | 告警历史 |
 | `cd_config` | 系统配置键值对 |
 | `cd_webhooks` | Webhook 接收配置（token + 关联 Bot） |
 | `cd_webhook_events` | Webhook 收到的事件记录（原始 payload） |
@@ -152,9 +168,13 @@ NOTIFY_TRUNCATE_CHARS=200
 | `cd_approvals` | 部署审批单（状态机：pending → approved → deploying → deployed/failed，另有 rejected/cancelled；`scheduled_at` 定时发布） |
 | `cd_approval_rules` | 按项目配置的审批规则（审批人用户/角色） |
 
-此外会自动创建：
+此外脚本会创建：
 
 - 视图 `v_glue_deploy_logs`：供 Devops-Glue 只读的部署记录契约视图（仅审计字段，不含 `output` 等大字段）。
+
+**SQLite 模式下的闸门行为**（开发/单机）：CD 表随库自动创建，所以正常情况下闸门恒放行，开发零摩擦。若运行期有人手工 `DROP TABLE`（例如为了复现问题），闸门会**立刻**对登录与所有操作返回 503（只报警、**不静默补建**），**重启服务即自动建全自愈**；错误提示也会按驱动说实话（SQLite 提示重启自愈，只有 MySQL 才提示导入建表脚本），不会把运维指向错误的动作。
+
+**另一种 503：数据库不可用（与上面区分）**：SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接时，登录与各接口返回 503 `errors.db_unavailable`（`error_params` 带驱动与底层原因）。这类是**环境**问题 —— 排查连接配置、数据目录写权限、磁盘空间即可，**不要**去重跑建表脚本（那修不了，方向错了）。SQLite 模式请确认数据目录可写、磁盘未满。
 
 ## 4. 快速部署
 

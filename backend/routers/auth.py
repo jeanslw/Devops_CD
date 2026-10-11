@@ -3,7 +3,14 @@
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 
-from backend.auth import _extract_token, get_current_user, get_db, revoke_session, security
+from backend.auth import (
+    _extract_token,
+    cd_deploy_gate,
+    get_current_user,
+    get_db,
+    revoke_session,
+    security,
+)
 from backend.config import settings
 from backend.database import Database
 from backend.exceptions import AppException
@@ -21,8 +28,13 @@ router = APIRouter(tags=["auth"])
 @router.post("/api/login")
 def login(req: LoginRequest, request: Request, response: Response, db: Database = Depends(get_db)):
     # 登录失败限流：与 CI（Devops-Glue）共享 cache 表计数，5 次失败锁 15 分钟。
-    # 必须在验密之前检查，任何失败（含停用/无 CD 权限）都计数，成功才清零。
+    # 必须在验密之前检查，任何失败（含停用/无 CD 权限）都计数，成功才清零——
+    # 唯一例外是「CD 未部署」（见下），它是部署状态而非凭据失败，不计入。
     ip = client_ip(request)
+    # 部署闸门：清单（CD_REQUIRED_TABLES）没建全时禁止登录，且绝不代为建表，提示按驱动给出补齐动作。
+    # 必须排在限流计数之前：未启用的部署不该在共享 cache 表里累积失败次数，
+    # 更不该把管理员的账号锁掉（那把锁属于 Devops-Glue，CD 无权污染）。
+    cd_deploy_gate(db)
     username = (req.user or "").strip().lower()
     # 空用户名直接按凭据错误拒绝：不查锁、不计数，避免所有空用户名失败共享
     # md5(ip+":") 一个桶，也不泄露"该用户名不存在"之外的任何信息。

@@ -42,6 +42,20 @@ Yes. Add multiple metrics under a single monitor item, each targeting a differen
 
 cd_service must share the same database as Devops-Glue API. Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) settings are correct.
 
+### Q: Login fails with "CD is not deployed: the CD tables are incomplete (missing: ...)"?
+
+The CD tables are created by importing `database/init_mysql.sql` by hand — that import *is* the "CD enabled" gate, and **every table in the code inventory `CD_REQUIRED_TABLES` must be present** (14 today; when tables are added or removed that list is the one source of truth, and one missing table means "not deployed"): login returns HTTP 503 (the message lists the missing tables plus the driver-appropriate fix), **requests carrying an existing session, the public webhook receiver and WebShell (WebSocket handshake) are rejected with 503 as well** ("even if login were possible, no operation is allowed"), and CD will **not** create or patch tables on its own (it must not touch the shared database uninvited). Run it once:
+
+```bash
+mysql -u root -p devops_glue < database/init_mysql.sql
+```
+
+The script is idempotent (`CREATE TABLE IF NOT EXISTS` plus existence guards), so it is safe to re-run; re-run it after every upgrade to pick up new tables/columns. A **partially imported** database (or a legacy one that only holds `cd_sessions` left over from the old self-healing logic) is fixed the same way: just re-run the script — it creates whichever table is missing, and the table names in the error message are exactly the to-do list. Conversely, to shut CD down completely and return to a clean not-deployed state, drop all `cd_*` tables (e.g. `DROP TABLE cd_sessions;`, which also discards session/approval data).
+
+> **SQLite mode** (dev / single instance): the CD tables are created automatically with the DB file, so nothing is normally missing; if you manually `DROP TABLE`d one, the gate immediately answers 503 (it reports, it does not repair) and **restarting the service re-creates them and heals it** — you never import the MySQL script there, and the error message says so.
+
+> **Don't confuse the other 503**: `errors.db_unavailable` (the SQLite file is read-only / the disk is full / the file is locked, the DB file cannot be opened, MySQL hands out no connection) is an **environment** problem — check connectivity/configuration, the data directory's write permission and free disk space, and **do not** re-run the DDL script, which cannot fix it.
+
 ### Q: SQLite mode — container deployment shows empty pages?
 
 Mount the database directory as a shared volume in `docker-compose.yml`:

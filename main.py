@@ -5,6 +5,7 @@ FastAPI 部署执行器 — SSH / docker-compose / K8s
 架构: main.py(入口) → routers → services → deployers
 """
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
 from backend.config import settings
-from backend.database import Database
+from backend.database import Database, DatabaseUnavailableError, cd_deploy_hint
 from backend.exceptions import AppException
 from backend.routers import (
     alerts,
@@ -44,6 +45,26 @@ from backend.services.registry_service import RegistryService, start_background_
 async def lifespan(app: FastAPI):
     """启动时：定时同步 + 告警检查 + 审批崩溃恢复"""
     db = Database()
+    # 部署闸门提示：CD_REQUIRED_TABLES 清单里的表必须全部存在（少一张 = 未部署 CD）。
+    # 刻意不阻断启动：/health、/api/info 与 /metrics 仍可用，便于探活与排障；
+    # 但登录与所有接口都会被拒（503 errors.cd_not_deployed），应用绝不代为建表（SQLite 除外，它随库自动建）。
+    try:
+        missing = db.cd_missing_tables()
+        if missing:
+            logging.getLogger(__name__).error(
+                "CD 数据表未建全（缺失 %d 张：%s）：%s —— 当前登录与所有接口均被拒绝（503），应用不会自行建表",
+                len(missing),
+                "、".join(missing),
+                cd_deploy_hint(db.driver),
+            )
+    except DatabaseUnavailableError as e:
+        # 库当前不可用（连不上/建不了表）：请求返回 503 errors.db_unavailable —— 与「未部署」区分开，
+        # 排查方向是连接/权限/磁盘，而不是重跑建表脚本。
+        logging.getLogger(__name__).error(
+            "数据库当前不可用（驱动 %s）：%s —— 请求将返回 503 errors.db_unavailable", db.driver, e.message
+        )
+    except Exception:  # 探测自身的故障不该拖垮启动
+        logging.getLogger(__name__).exception("cd_missing_tables check failed")
     try:
         svc = RegistryService(db)
         interval = svc.get_sync_interval()
@@ -62,8 +83,6 @@ async def lifespan(app: FastAPI):
         recover_on_startup(db)
         start_scheduled_executor()
     except Exception:
-        import logging
-
         logging.getLogger(__name__).exception("approval recovery/scheduler bootstrap failed")
     yield
 

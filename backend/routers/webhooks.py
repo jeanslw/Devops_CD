@@ -7,7 +7,7 @@ from datetime import datetime
 import pymysql
 from fastapi import APIRouter, Depends, Request
 
-from backend.auth import get_db, require_perm, verify_token
+from backend.auth import cd_deploy_gate, get_db, require_perm, verify_token
 from backend.crypto import ENCRYPT_PREFIX, decrypt, encrypt
 from backend.database import Database
 from backend.exceptions import ConflictError, DatabaseError, NotFoundError
@@ -253,6 +253,9 @@ async def receive_webhook(
 ):
     """CI / 外部系统 POST 到此端点，靠 token 匹配 Webhook 配置。
     收到后存记录，若配了 bot_id 则自动转发。"""
+    # 部署闸门：CD 表没建全时这里必然缺表（cd_webhooks / cd_webhook_events）写不进去，
+    # 统一按 503 拒绝（而非 500），与登录/其它接口口径一致。
+    cd_deploy_gate(db)
     with db.conn() as conn:
         wh = _find_enabled_webhook_by_token(conn, token)
         if not wh:

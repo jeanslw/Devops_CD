@@ -16,6 +16,7 @@ from backend.auth import (
     _lookup_session,
     _query_permissions,
     _query_user_with_systems,
+    cd_deploy_gate,
     get_db,
     require_perm,
 )
@@ -23,7 +24,7 @@ from backend.config import settings
 from backend.crypto import decrypt
 from backend.database import Database
 from backend.deployers.base import DeployTarget, ssh_connect
-from backend.exceptions import NotFoundError, ValidationError
+from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.responses import ok
 
 router = APIRouter()
@@ -59,6 +60,13 @@ async def _ws_verify(token: str | None = None) -> str:
     if not token:
         raise HTTPException(401, "请登录")
     db = get_db()
+    # 部署闸门：与 REST 同口径 —— CD 表没建全时 WebShell（最高危操作）一律拒绝。
+    # 这里是独立鉴权路径，若不拦，缺表会在握手期变成未捕获异常（而非干净的拒绝）；
+    # 故把 AppException(503) 转成 HTTPException，由调用方按状态码关闭连接。
+    try:
+        cd_deploy_gate(db)
+    except AppException as exc:
+        raise HTTPException(503, exc.message) from exc
     with db.conn() as conn:
         sess = _lookup_session(conn, token)
         if sess is None:
@@ -81,8 +89,9 @@ async def terminal(websocket: WebSocket, server_id: int):
     token = websocket.cookies.get("cd_token") or websocket.query_params.get("token")
     try:
         username = await _ws_verify(token)
-    except HTTPException:
-        await websocket.close(code=4001, reason="鉴权失败")
+    except HTTPException as e:
+        # 503 = CD 表没建全（未部署/导入不全）：给出可操作原因，而不是笼统的「鉴权失败」
+        await websocket.close(code=4001, reason="CD 未部署" if e.status_code == 503 else "鉴权失败")
         return
 
     # 权限检查：需要 cd.webshell

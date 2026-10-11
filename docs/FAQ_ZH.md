@@ -43,6 +43,20 @@ lscpu | grep -E '^CPU\(s\)|^Thread|^Core|^Socket'
 
 cd_service 必须与 Devops-Glue API 共用同一个数据库。检查 `DB_PATH`（SQLite）或 `DB_*`（MySQL）配置是否正确。
 
+### Q: 登录报错「CD 服务未部署：CD 数据表未建全（缺失：...）」？
+
+CD 表由管理员手动导入 `database/init_mysql.sql` 建立，这就是「启用 CD」的闸门，且必须把**代码清单 `CD_REQUIRED_TABLES` 里的表建全**（当前 14 张；以后加表/删表这张清单就是唯一准绳，少任何一张都当作未部署）：登录返回 HTTP 503（错误信息列出缺哪些表，并按驱动给出补齐动作），**已持有会话的请求、公开 Webhook 接收与 WebShell（WebSocket 握手）也一律 503**（即「即使能登录，也禁止做任何操作」），而 CD **不会**自动建表或补表（它不该越界改动共享库）。执行一次即可：
+
+```bash
+mysql -u root -p devops_glue < database/init_mysql.sql
+```
+
+脚本幂等（`CREATE TABLE IF NOT EXISTS` + 存在性守卫），可重复执行；升级后也请重跑一次以补齐新增表/列。**只导入了一部分**（或历史库里只有旧版自愈逻辑留下的 `cd_sessions`）同样只需重跑脚本：缺哪张建哪张，错误信息里的表名就是待补齐清单。反之，若彻底不想启用 CD、要回到「干净的未部署」状态，可把 `cd_*` 表全部删掉（如 `DROP TABLE cd_sessions;` 等，注意会一并丢弃会话/审批等数据）。
+
+> **SQLite 模式**（开发/单机）：CD 表随库文件自动创建，正常情况下不会缺表；若你手工 `DROP TABLE` 过，闸门会**立刻** 503（只报警、不补建），**重启服务即自动建全自愈** —— 不需要（也不应该）去导入 MySQL 脚本，提示语也会这样告诉你。
+
+> **另一种 503 别搞混**：`errors.db_unavailable`（SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接）是**环境**问题 —— 查连接配置、数据目录写权限、磁盘空间，**不要**去重跑建表脚本（那修不了）。
+
 ### Q: SQLite 模式下，部署容器后页面没数据？
 
 SQLite 模式下，容器需要挂载数据库文件所在目录为共享卷。在 `docker-compose.yml` 中确保：
