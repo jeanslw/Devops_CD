@@ -1,25 +1,9 @@
 # 更新日志
 
-## 未发布 (Unreleased) — 部署闸门：不再自愈建表，表不建全即禁止一切操作
-
-### 变更
-- **MySQL 模式零 DDL（越界修复）** — 移除 `cd_sessions` 的 `CREATE TABLE IF NOT EXISTS` 自愈建表。CD 表全部由管理员手动导入 `database/init_mysql.sql` 建立，**该手动导入就是「启用 CD」的闸门**：未导入时应用绝不建表/建索引，共享库里不留任何 DDL 痕迹。此前那套「半套自愈」既越界又不自洽 —— 14 张 CD 表里只偷偷建了 1 张。仅保留对**已存在**表的缺失列幂等迁移（表不存在时自然跳过，零副作用）。
-- **表必须建全，否则禁止一切操作** — 新增 `Database.cd_missing_tables()` / `cd_deployed()`：按 `CD_REQUIRED_TABLES`（当前 14 张，与 `database/init_mysql.sql` 及 SQLite 建表清单双向校验）逐张核对，**少任何一张都算未部署**。闸门 `auth.cd_deploy_gate()` 覆盖登录（排在限流计数之前）、`authenticate()`、所有 `verify_token` / `get_current_user` 接口、公开 Webhook 接收端点与 WebShell 的 WebSocket 握手（独立鉴权路径，转 503 干净关闭而非握手期未捕获异常） —— 即「**即使能登录，也禁止做任何操作**」：半套 schema 放行只会让各功能到处 500、甚至写坏数据，因此统一返回 503 `errors.cd_not_deployed`（`error_params.tables` 列出缺失表，前端 i18n 插值展示「缺哪张」），并且只报警不补建。无认证的 `/health`、`/api/info`、`/metrics` 保持可用便于排障。该失败属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享 `cache` 表的登录失败锁（未启用的部署不该污染、更不该锁掉管理员账号）。
-- **清单即唯一真相源** — 「CD 到底启用了没有」只由 `CD_REQUIRED_TABLES` 这份清单决定（与清单张数无关）：以后新增/删除 CD 表只改三处（清单 + `database/init_mysql.sql` + `_ensure_cd_tables`），闸门判定、错误文案、启动告警、张数全自动跟随，代码里不写死数字；删表同理，无需改闸门逻辑。
-- **SQLite：建表清单自检 + 提示按驱动说实话** — SQLite 的 CD 表随库自动创建，`_ensure_cd_tables()` 末尾新增**清单自检**：清单里加了表却漏改建表逻辑时，首次连库即 `RuntimeError` 点名缺表（宁可启动失败，也不要半套 schema 跑到线上被闸门 503 才发现）。同时闸门文案不再写死「请导入 init_mysql.sql」，改为**中性描述 + 按驱动动作**（新增 `cd_deploy_hint()` 与 `Database.driver` 只读属性）：SQLite 告诉你去重启（自动建全自愈），只有 MySQL 才告诉你导入建表脚本 —— 不给运维错误指令；前端 `errors.cd_not_deployed` 中英文案同步改为按两种模式分别写明。
-- **启动醒目提示** — 服务启动时探测部署状态，未建全则打印 ERROR 日志并逐张列出缺失的表；刻意不阻断启动，`/health`、`/api/info`、`/metrics` 仍可用于探活与排障。
-- **前端 i18n** — 新增 `errors.cd_not_deployed`（中/英，带 `{tables}` 缺失表插值）。
-- **库不可用 ≠ 未部署：原来漏成裸 500，现在统一 503** — 建表写不进去（SQLite 库文件只读/磁盘满/被占用）、库文件打不开、MySQL 取不到连接、构造期共享库校验失败，原先都会冒成**裸 500**（500 的语义是「程序缺陷」，运维会去查代码而不是环境）。现统一抛 `DatabaseUnavailableError` → **503 `errors.db_unavailable`**（`error_params.driver` / `.reason` 带上驱动与底层原因，前端中英同步新增 `errors.db_unavailable`），与「清单没建全」的 `errors.cd_not_deployed` 严格区分：前者查连接/权限/磁盘，后者才去补建表 —— error_key 不同，给的动作就不同，不会把人指向错误方向；清单自检的 `RuntimeError`（清单与 DDL 漂移 = 代码缺陷）仍原样冒泡，不被 503 掩盖。顺带修掉一个资源泄漏：建表/迁移抛异常时连接未关闭（Windows 上未关闭的句柄会锁住库文件，导致库文件删不掉、下次连库更糟），现在异常路径一律 `close()`。
+## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
 
 ### 升级注意
 - 从 v1.5.7 及更早版本升级请**重跑 `database/init_mysql.sql`**（幂等），以补齐新表/新列。历史库若只导入了一部分表（或只剩旧版自愈逻辑建出的 `cd_sessions`），同样重跑脚本即可 —— 缺哪张建哪张，503 错误里的表名就是待补齐清单。
-
-### 测试
-- 新增 `backend/tests/test_cd_deploy_gate.py`：断言 MySQL 迁移路径只下发 `ALTER TABLE`、绝不出现 `CREATE TABLE` / `CREATE INDEX`（`cd_sessions` 不再被建）；校验闸门清单与 `database/init_mysql.sql`、`database.py` 自动建表**双向一致**（清单漂移即红灯）；覆盖「只缺一张 → 未部署且精确报出该表」、`authenticate` / `verify_token` / `get_current_user` / 公开 Webhook 接收统一 503、未带 token 仍 401、以及连接故障不被误判成「未部署」。
-- `backend/tests/test_auth_login.py` 补部署闸门用例（未建全：不查锁/不计数/不验密并下发缺失表；已建全：正常放行），并修正原用例把 `db` 误传为 `response` 的调用签名。
-- `test_cd_deploy_gate.py` 增加「清单唯一真相源」用例组：SQLite 自动建表必须覆盖清单每一项（集合比较，不写死张数）、清单多了表却缺 SQLite DDL 时首次连库即 `RuntimeError`、运行期 `DROP TABLE` 后闸门立刻拒绝且**重启自愈**、以及补表提示按驱动区分（MySQL 给导入脚本 / SQLite 给重启，绝不给出错指令）；WebShell 503 用例同步断言 SQLite 分支不再出现 `init_mysql.sql`。
-
-## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
 
 ### 安全
 - **不透明会话令牌** — 登录 token 由 `base64(username:hash:expires)` 改为 `secrets.token_urlsafe` 不透明随机串；新增 `cd_sessions` 会话表只存 SHA-256 摘要（库泄露不再暴露可用 token），`POST /api/logout` 删行即时吊销（原无状态 token 无法主动失效）。WebShell WS 握手同步改为会话校验。
@@ -33,6 +17,13 @@
 - **容器资源限制** — `docker-compose.yml` 增加 `deploy.resources.limits` / `.reservations`（服务级顶层 `resources:` 会被 Compose 静默丢弃、限制根本不生效；`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
 
 ### 变更
+- **MySQL 模式零 DDL（越界修复）** — 移除 `cd_sessions` 的 `CREATE TABLE IF NOT EXISTS` 自愈建表。CD 表全部由管理员手动导入 `database/init_mysql.sql` 建立，**该手动导入就是「启用 CD」的闸门**：未导入时应用绝不建表/建索引，共享库里不留任何 DDL 痕迹。此前那套「半套自愈」既越界又不自洽 —— 14 张 CD 表里只偷偷建了 1 张。仅保留对**已存在**表的缺失列幂等迁移（表不存在时自然跳过，零副作用）。
+- **表必须建全，否则禁止一切操作** — 新增 `Database.cd_missing_tables()` / `cd_deployed()`：按 `CD_REQUIRED_TABLES`（当前 14 张，与 `database/init_mysql.sql` 及 SQLite 建表清单双向校验）逐张核对，**少任何一张都算未部署**。闸门 `auth.cd_deploy_gate()` 覆盖登录（排在限流计数之前）、`authenticate()`、所有 `verify_token` / `get_current_user` 接口、公开 Webhook 接收端点与 WebShell 的 WebSocket 握手（独立鉴权路径，转 503 干净关闭而非握手期未捕获异常） —— 即「**即使能登录，也禁止做任何操作**」：半套 schema 放行只会让各功能到处 500、甚至写坏数据，因此统一返回 503 `errors.cd_not_deployed`（`error_params.tables` 列出缺失表，前端 i18n 插值展示「缺哪张」），并且只报警不补建。无认证的 `/health`、`/api/info`、`/metrics` 保持可用便于排障。该失败属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享 `cache` 表的登录失败锁（未启用的部署不该污染、更不该锁掉管理员账号）。
+- **清单即唯一真相源** — 「CD 到底启用了没有」只由 `CD_REQUIRED_TABLES` 这份清单决定（与清单张数无关）：以后新增/删除 CD 表只改三处（清单 + `database/init_mysql.sql` + `_ensure_cd_tables`），闸门判定、错误文案、启动告警、张数全自动跟随，代码里不写死数字；删表同理，无需改闸门逻辑。
+- **SQLite：建表清单自检 + 提示按驱动说实话** — SQLite 的 CD 表随库自动创建，`_ensure_cd_tables()` 末尾新增**清单自检**：清单里加了表却漏改建表逻辑时，首次连库即 `RuntimeError` 点名缺表（宁可启动失败，也不要半套 schema 跑到线上被闸门 503 才发现）。同时闸门文案不再写死「请导入 init_mysql.sql」，改为**中性描述 + 按驱动动作**（新增 `cd_deploy_hint()` 与 `Database.driver` 只读属性）：SQLite 告诉你去重启（自动建全自愈），只有 MySQL 才告诉你导入建表脚本 —— 不给运维错误指令；前端 `errors.cd_not_deployed` 中英文案同步改为按两种模式分别写明。
+- **启动醒目提示** — 服务启动时探测部署状态，未建全则打印 ERROR 日志并逐张列出缺失的表；刻意不阻断启动，`/health`、`/api/info`、`/metrics` 仍可用于探活与排障。
+- **前端 i18n** — 新增 `errors.cd_not_deployed`（中/英，带 `{tables}` 缺失表插值）。
+- **库不可用 ≠ 未部署：原来漏成裸 500，现在统一 503** — 建表写不进去（SQLite 库文件只读/磁盘满/被占用）、库文件打不开、MySQL 取不到连接、构造期共享库校验失败，原先都会冒成**裸 500**（500 的语义是「程序缺陷」，运维会去查代码而不是环境）。现统一抛 `DatabaseUnavailableError` → **503 `errors.db_unavailable`**（`error_params.driver` / `.reason` 带上驱动与底层原因，前端中英同步新增 `errors.db_unavailable`），与「清单没建全」的 `errors.cd_not_deployed` 严格区分：前者查连接/权限/磁盘，后者才去补建表 —— error_key 不同，给的动作就不同，不会把人指向错误方向；清单自检的 `RuntimeError`（清单与 DDL 漂移 = 代码缺陷）仍原样冒泡，不被 503 掩盖。顺带修掉一个资源泄漏：建表/迁移抛异常时连接未关闭（Windows 上未关闭的句柄会锁住库文件，导致库文件删不掉、下次连库更糟），现在异常路径一律 `close()`。
 - **容器加固** — `cap_drop: ALL`、`no-new-privileges`、根文件系统 `read_only` + `/tmp` tmpfs，端口默认只绑 `127.0.0.1`（配合反代；`CD_BIND_IP=0.0.0.0` 恢复直连）。`env-check` 改为对**所有**数据库模式强制要求 `SECRET_KEY`（容器无条件 `read_only`，自动生成的 `.cd_secret_key` 永远写不出来），并对公开示例值 `devops_cd_2026` / `change_me_to_secret` 直接中止。
 - **`ALLOW_EMPTY_SYSTEMS` 配置** — `admin_users.systems` 为空默认放行（兼容旧数据）；严格环境可设 `false` 改为 deny-by-default。
 - **健康检查断言 DB** — compose healthcheck 改走 `/api/info`，要求 `status=running` 且 `db_connected=true`，DB 挂了不再误报绿灯。
@@ -47,6 +38,9 @@
 - **供应链加固** — 5 个 workflow 的 `uses:` 由 `@vX` 全部钉到 commit SHA；`setup-python` 升级 v5→v6 消除 Node 20 弃用告警。
 
 ### 测试
+- 新增 `backend/tests/test_cd_deploy_gate.py`：断言 MySQL 迁移路径只下发 `ALTER TABLE`、绝不出现 `CREATE TABLE` / `CREATE INDEX`（`cd_sessions` 不再被建）；校验闸门清单与 `database/init_mysql.sql`、`database.py` 自动建表**双向一致**（清单漂移即红灯）；覆盖「只缺一张 → 未部署且精确报出该表」、`authenticate` / `verify_token` / `get_current_user` / 公开 Webhook 接收统一 503、未带 token 仍 401、以及连接故障不被误判成「未部署」。
+- `backend/tests/test_auth_login.py` 补部署闸门用例（未建全：不查锁/不计数/不验密并下发缺失表；已建全：正常放行），并修正原用例把 `db` 误传为 `response` 的调用签名。
+- `test_cd_deploy_gate.py` 增加「清单唯一真相源」用例组：SQLite 自动建表必须覆盖清单每一项（集合比较，不写死张数）、清单多了表却缺 SQLite DDL 时首次连库即 `RuntimeError`、运行期 `DROP TABLE` 后闸门立刻拒绝且**重启自愈**、以及补表提示按驱动区分（MySQL 给导入脚本 / SQLite 给重启，绝不给出错指令）；WebShell 503 用例同步断言 SQLite 分支不再出现 `init_mysql.sql`。
 - **无 shell 包装 + 占位符 quote 回归** — 断言 SSH/Ansible/Compose 命令构建不包显式 shell 包装，且 `image/project/tag/path/inventory` 占位符一律 `shlex.quote`（含 `; rm -rf …` 的 project 被中性化）。
 - **`v_glue_deploy_logs` 契约测试** — 锁定 Glue 视图列，断言 SQLite 与 `init_mysql.sql` 暴露列完全一致。
 
