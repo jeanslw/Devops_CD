@@ -4,13 +4,15 @@
 > **Counter-signature (round 3)**: Glue's reply is folded into §2 / §8 / §9 / §11 / §12 — the permissions endpoint returns
 > **404 for an unknown role** (kept strictly apart from "zero permissions"; CD fails closed), `["*"]` means wildcard, `role` is
 > passed through verbatim, the authorization-code TTL is **60 s only**, and every P0 item has landed.
-> **Branch fact**: P0 lives on Glue's branch `feature/cd-oidc-p0` (`d75bde7` → `68181a4`, then 4 doc-only commits, local HEAD
-> `97981e7`). That branch is **local-only — it exists on no remote** (the earlier remote push was withdrawn) and is **not yet
-> merged into `release/2.9.0`** (remote still `a08eb74`). **The gate for CD's staging switch is the *deployed* Glue version,
-> not a ref.** Every Glue `file:line` cited below was re-verified against `97981e7` (doc-only commits move no code;
-> **4 distinct stale anchors, 10 citations in total, were fixed in this revision**).
-> Upstream design doc: `docs/CD接入Glue-OIDC设计文档.md` **v1.0.2**. **Cross-team, refer to acceptance cases by scenario
-> name, not by letter** (§12).
+> **Branch fact (re-checked 2026-10-12)**: P0 lives on Glue's branch `feature/cd-oidc-p0` (`d75bde7` → `68181a4`, then only
+> doc commits) and has since been **fast-forward merged locally into Glue's `release/2.9.0`** (`262d42a` → `97981e7` →
+> `782780c` → `c22c3d1`; Glue reports the post-merge full suite as 389/1699 green). **Nothing is pushed**: all three of Glue's
+> remotes still show `release/2.9.0` = `a08eb74`, and no `feature/*` branch exists on any of them. **The gate for CD's staging
+> switch is therefore the *deployed* Glue build, not a ref.** No code moved after `68181a4` (docs only), so the anchors below
+> stay valid — they were re-verified against the working tree at `c22c3d1` (= `68181a4` code) and **4 distinct stale anchors
+> — 10 citations in total — were fixed in this revision**.
+> Upstream design doc: `docs/CD接入Glue-OIDC设计文档.md` **v1.0.3** (v1.0.2 = the counter-signature record, v1.0.3 = the
+> local-merge record). **Cross-team, refer to acceptance cases by scenario name, not by letter** (§12).
 > **Upstream**: Devops-Glue acts as the OAuth2 / OIDC Provider (see its own `docs/单点登录.md`).
 > **Related**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (deployment gate & CD table inventory),
 > [`ADMIN_MANUAL.md`](ADMIN_MANUAL.md) (`.env` and switch/rollback steps), [`FAQ.md`](FAQ.md) (login troubleshooting).
@@ -373,7 +375,7 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 
 | # | Item | State | Impact |
 |---|---|---|---|
-| **P0-0** | Decide `systemType` per OAuth client (add `'system' => env('CD_OIDC_SYSTEM','cd')` to `oauth_clients['cd']`; `OAuthController:98` then uses `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`) | ✅ **Implemented** (Glue `feature/cd-oidc-p0` `d75bde7`; **local branch only — on no remote**; **still to be merged into `release/2.9.0`** — confirm the target environment runs that build before switching) | Without it **every** CD account fails to log in. And this is the **default path, not an edge case**: CD has no account-creation entry point at all (`routers/users.py` is read-only, `ci_client.rbac_users/rbac_roles` are read-only, none of the 21 frontend views manages users, and `ADMIN_MANUAL_ZH.md:464/476` states plainly that CD does not manage accounts), while both Glue creation paths produce `systems='cd'` (`AdminController::userCreate` defaults to `SYSTEM_CD`, `RbacController::userCreate:99` hard-codes it). Clients that do not register a `system` key fall back to CI, so Jenkins/Harbor/GitLab/Grafana keep their exact behaviour |
+| **P0-0** | Decide `systemType` per OAuth client (add `'system' => env('CD_OIDC_SYSTEM','cd')` to `oauth_clients['cd']`; `OAuthController:98` then uses `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`) | ✅ **Implemented** (Glue `d75bde7`; **fast-forward merged locally into Glue's `release/2.9.0` on 2026-10-12, zero push** — the remote is still `a08eb74`, so confirm the target environment actually runs a build containing P0 before switching) | Without it **every** CD account fails to log in. And this is the **default path, not an edge case**: CD has no account-creation entry point at all (`routers/users.py` is read-only, `ci_client.rbac_users/rbac_roles` are read-only, none of the 21 frontend views manages users, and `ADMIN_MANUAL_ZH.md:464/476` states plainly that CD does not manage accounts), while both Glue creation paths produce `systems='cd'` (`AdminController::userCreate` defaults to `SYSTEM_CD`, `RbacController::userCreate:99` hard-codes it). Clients that do not register a `system` key fall back to CI, so Jenkins/Harbor/GitLab/Grafana keep their exact behaviour |
 | **P0-1** | Register the `cd` client (`secret` + `redirect_uri` matching CD's `CD_OIDC_REDIRECT_URI` **character for character**) | ✅ Implemented (as above) | otherwise `invalid_client` / `invalid_grant` |
 | **P0-2** | Store and verify the `cd` client secret the same way as the others (sha256) | ✅ Implemented (as above) | otherwise the secret check fails |
 | **P0-4** | Add `GET /api/rbac/roles/{role}/permissions` (§8.4) | ✅ Implemented (as above; shape matches §8.4, including the 404 / `['*']` semantics) | otherwise CD cannot obtain `perm_key` and every `require_perm` is dead |
@@ -439,7 +441,7 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 
 ## 12. Acceptance Cases (A–G)
 
-> **Case-letter mapping (anti-divergence)**: Glue's design doc (`CD接入Glue-OIDC设计文档.md` v1.0.2) labels the issuer /
+> **Case-letter mapping (anti-divergence)**: Glue's design doc (`CD接入Glue-OIDC设计文档.md` v1.0.3) labels the issuer /
 > joint-debugging-step-0 case **E** — that is this doc's **F**; and its **F + G** together correspond to this doc's **G**
 > (its F = the Glue-side response shape, its G = the CD-side end-to-end behaviour). **Refer to cases by scenario name across
 > teams, never by letter.**

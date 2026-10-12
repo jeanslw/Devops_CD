@@ -3,10 +3,12 @@
 > **状态**：设计已冻结（v1）；实现见 `feature/oidc-bff` 分支（L1）。
 > **回签（第 3 轮）**：Glue 侧回签已并入 §2 / §8 / §9 / §11 / §12 —— 权限端点 **404 = 角色不存在**（与「零权限」严格区分，
 > CD 侧 fail-closed）、`["*"]` 通配、`role` 原样透传、授权码 TTL 仅 60s、P0 全部落地。
-> **分支事实**：P0 位于 Glue 分支 `feature/cd-oidc-p0`（`d75bde7` → `68181a4`，其后 4 个纯文档提交，本地 HEAD `97981e7`），
-> 该分支**仅本地、不在任何远端**（此前的一次远端推送已按流程撤下），且**尚未合入 `release/2.9.0`**（远端仍 `a08eb74`）。
-> **CD 切档的门禁是「目标环境实际部署的 Glue 版本」，不是某个 ref。** 下文所有 Glue `file:line` 已按 `97981e7` 重新核验
-> （纯文档提交不移动代码；本轮修正 **4 处过期锚点、合计 10 处引用**）。上游设计文档：`docs/CD接入Glue-OIDC设计文档.md` **v1.0.2**；
+> **分支事实（2026-10-12 复核）**：P0 位于 Glue 分支 `feature/cd-oidc-p0`（`d75bde7` → `68181a4`，其后均为文档提交），
+> 且**已于本地快进合入 Glue 的 `release/2.9.0`**（`262d42a` → `97981e7` → `782780c` → `c22c3d1`；Glue 报合入后全量单测
+> 389/1699 全绿）。**但零推送**：Glue 三端远端仍显示 `release/2.9.0` = `a08eb74`，且三端都不存在任何 `feature/*` 分支。
+> **因此 CD 切档的门禁是「目标环境实际部署的 Glue 构建」，不是某个 ref。** `68181a4` 之后代码未移动（纯文档），
+> 故下文行锚点仍然有效——已按 `c22c3d1` 工作树（= `68181a4` 代码）重新核验，本轮修正 **4 处过期锚点、合计 10 处引用**。
+> 上游设计文档：`docs/CD接入Glue-OIDC设计文档.md` **v1.0.3**（v1.0.2 = 回签落档，v1.0.3 = 本地合并落档）；
 > **跨方沟通一律用场景名，不用字母**（§12）。
 > **上游**：Devops-Glue 作为 OAuth2 / OIDC Provider（Glue 侧文档 `docs/单点登录.md`）。
 > **相关**：本仓库 [`ARCHITECTURE_ZH.md`](ARCHITECTURE_ZH.md)（部署闸门与 CD 表清单）、
@@ -358,7 +360,7 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 | # | 项 | 状态 | 影响 |
 |---|---|---|---|
-| **P0-0** | 按 OAuth 客户端决定 `systemType`（`oauth_clients['cd']` 增加 `'system' => env('CD_OIDC_SYSTEM','cd')`；`OAuthController:98` 用 `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`） | ✅ **已实现**（Glue `feature/cd-oidc-p0` `d75bde7`；**仅本地分支、不在任何远端**；**待合入 `release/2.9.0`**，切档前须确认目标环境已部署该版本） | 不修则**所有** CD 账号登录必失败。且这是**默认路径而非边缘场景**：CD 侧无任何建号入口（`routers/users.py` 只读、`ci_client.rbac_users/rbac_roles` 只读、前端 21 个视图无用户管理、`ADMIN_MANUAL_ZH.md:464/476` 明确「CD 不提供账号管理」），而 Glue 两个建号入口都落 `systems='cd'`（`AdminController::userCreate` 默认 `SYSTEM_CD`、`RbacController::userCreate:99` 硬编码）。未注册 `system` 键的既有客户端默认落 CI ⇒ Jenkins/Harbor/GitLab/Grafana **零行为变化** |
+| **P0-0** | 按 OAuth 客户端决定 `systemType`（`oauth_clients['cd']` 增加 `'system' => env('CD_OIDC_SYSTEM','cd')`；`OAuthController:98` 用 `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`） | ✅ **已实现**（Glue `d75bde7`；**已于 2026-10-12 本地快进合入 Glue `release/2.9.0`，零推送** —— 远端仍 `a08eb74`，切档前须确认目标环境实际部署的构建包含 P0） | 不修则**所有** CD 账号登录必失败。且这是**默认路径而非边缘场景**：CD 侧无任何建号入口（`routers/users.py` 只读、`ci_client.rbac_users/rbac_roles` 只读、前端 21 个视图无用户管理、`ADMIN_MANUAL_ZH.md:464/476` 明确「CD 不提供账号管理」），而 Glue 两个建号入口都落 `systems='cd'`（`AdminController::userCreate` 默认 `SYSTEM_CD`、`RbacController::userCreate:99` 硬编码）。未注册 `system` 键的既有客户端默认落 CI ⇒ Jenkins/Harbor/GitLab/Grafana **零行为变化** |
 | **P0-1** | 注册 `cd` 客户端（`secret` + `redirect_uri` 与 CD 侧 `CD_OIDC_REDIRECT_URI` **逐字符一致**） | ✅ 已实现（同上） | 否则 `invalid_client` / `invalid_grant` |
 | **P0-2** | `cd` 客户端密钥按既有方式存储与校验（sha256） | ✅ 已实现（同上） | 密钥校验不过 |
 | **P0-4** | 新增 `GET /api/rbac/roles/{role}/permissions`（§8.4） | ✅ 已实现（同上；形状与 §8.4 一致，含 404 / `['*']` 语义） | CD 拿不到 `perm_key`，`require_perm` 全线失能 |
@@ -418,7 +420,7 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 ## 12. 验收用例（A–G）
 
-> **用例字母对照（防口径分叉）**：Glue 设计文档（`CD接入Glue-OIDC设计文档.md` v1.0.2）把「issuer 口径 / 联调第 0 项」
+> **用例字母对照（防口径分叉）**：Glue 设计文档（`CD接入Glue-OIDC设计文档.md` v1.0.3）把「issuer 口径 / 联调第 0 项」
 > 编号为 **E** —— 即本文的 **F**；其 **F + G** 合起来对应本文的 **G**（其 F = Glue 侧响应形状，G = CD 侧端到端行为）。
 > **跨方沟通一律用场景名指代，不用字母。**
 
