@@ -1,15 +1,23 @@
-"""CD 部署闸门回归：手动导入 init_mysql.sql 且「表建全」才是「启用 CD」的开关。
+"""CD 部署闸门回归：Devops-Glue 的集成服务开关（enabled + provision）决定 CD 能否建表与放行。
+
+契约（CI 是 integrated_services 的唯一写入方；语义见 Devops-Glue 的 ADMIN_MANUAL §16）：
+  - 契约表 / 契约行缺失，或 enabled<>1 → CD **未启用**：零 DDL，入口统一 503 errors.cd_not_enabled；
+  - enabled=1 + provision='auto'   → **授权 CD 自动建表**（MySQL / SQLite 同理），缺表 503 cd_not_deployed；
+  - enabled=1 + provision='manual' → CD **零 DDL**，只认运维预建表（MySQL 导入 database/init_mysql.sql）。
 
 覆盖：
-  - MySQL 模式绝不对共享库下发任何建表/建索引 DDL（未启用 CD 时零副作用）
-  - 闸门清单 CD_REQUIRED_TABLES 与 database/init_mysql.sql、database.py 的建表严格一致（双向）
-  - 清单是唯一真相源：SQLite 自动建表必须覆盖清单每一项，漏改清单/漏改 DDL 当场报错（不写死张数）
-  - 表必须建全：少任何一张 → cd_missing_tables() 精确报出缺失表、cd_deployed() 为 False
-  - 未建全时禁止一切操作：authenticate / verify_token / get_current_user / Webhook 接收 / WebShell 握手
-    统一 503 errors.cd_not_deployed（而不是缺表 500），且绝不顺手建表
-  - 补表动作按驱动说实话（MySQL 导入脚本 / SQLite 重启自愈），不给错指令
-  - 数据库故障（非缺表）不得被误判成「未部署」：库不可用一律 503 errors.db_unavailable（不是裸 500）
-    （建表失败 / 打不开库文件 / 构造期校验失败），而清单自检的 RuntimeError 不得被 503 掩盖
+  - 未启用（契约表缺失 / 契约行缺失 / enabled=0 三种来源）一律 503 errors.cd_not_enabled 且零 DDL；
+  - 启用后**无需重启**即生效（CI 一写契约行，下一个请求就建表/放行）；
+  - auto 模式 MySQL 会下发 CREATE TABLE 覆盖清单全集，且绝不触碰 ci_* / admin_users 等共享表；
+  - manual 模式 MySQL 零 DDL（连 ALTER 都不发）：不越权改共享库结构；
+  - 表必须建全：少任何一张 → 503 errors.cd_not_deployed + 缺表明细，探测/闸门绝不顺手补建；
+  - 补表动作按 provision 说实话（auto：重启自愈；manual：MySQL 导入脚本 / SQLite 交运维）；
+  - 数据库故障（非缺表）一律 503 errors.db_unavailable，清单自检的 RuntimeError 不被掩盖；
+  - 未启用 / 未建全时：authenticate、verify_token、get_current_user、Webhook 接收、WebShell 握手
+    全部被拒（分别是 cd_not_enabled / cd_not_deployed，而不是缺表 500）。
+
+清单与 DDL 的「源码一致性」（CD_REQUIRED_TABLES ↔ init_mysql.sql ↔ _MYSQL_TABLE_DDL ↔ SQLite 建表）
+由 backend/tests/test_cd_schema_sources.py 锁定，本文件只管运行时行为。
 
 运行（项目根）:
     python -m pytest backend/tests/test_cd_deploy_gate.py -q
@@ -17,7 +25,6 @@
 
 import asyncio
 import os
-import re
 import sqlite3
 import sys
 import tempfile
@@ -37,59 +44,142 @@ settings.db_driver = "sqlite"
 from fastapi import HTTPException, Request  # noqa: E402
 from fastapi.security import HTTPAuthorizationCredentials  # noqa: E402
 
-from backend.auth import authenticate, cd_deploy_gate, get_current_user, verify_token  # noqa: E402
+from backend.auth import (  # noqa: E402
+    CD_NOT_ENABLED_MSG,
+    authenticate,
+    cd_deploy_gate,
+    get_current_user,
+    verify_token,
+)
 from backend.database import (  # noqa: E402
     CD_REQUIRED_TABLES,
+    CdIntegrationState,
     Database,
     _is_missing_table_error,
     cd_deploy_hint,
+    cd_not_enabled_hint,
 )
 from backend.exceptions import AppException  # noqa: E402
 from backend.routers.terminal import _ws_verify  # noqa: E402
 from backend.routers.webhooks import receive_webhook  # noqa: E402
 
+from cd_contract import CONTRACT_DDL, set_cd_contract  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
-
-
-class _SqlRecorder:
-    """记录实际下发的 SQL：用来断言 MySQL 迁移路径「绝不建表」。"""
-
-    def __init__(self):
-        self.statements: list[str] = []
-
-    def execute(self, sql, params=None):
-        self.statements.append(" ".join(sql.split()))
-        return self
-
-    def commit(self):
-        pass
+_CONTRACT_DDL = CONTRACT_DDL  # 契约表 DDL 只有一份（backend/tests/cd_contract.py）
 
 
 def _create_marker(path):
     """Database 启动校验要求与 Devops-Glue 共享库（ci_pipeline_artifacts 为标记表）。"""
     conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE ci_pipeline_artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, project_key VARCHAR(255))")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts "
+        "(id INTEGER PRIMARY KEY AUTOINCREMENT, project_key VARCHAR(255))"
+    )
     conn.commit()
     conn.close()
 
 
-class TestMysqlNeverCreatesTables(unittest.TestCase):
-    def test_mysql_migrations_issue_no_ddl(self):
-        """MySQL 迁移路径只允许对已存在的表 ADD COLUMN，不得出现任何 CREATE。"""
-        db = Database.__new__(Database)  # 不跑 __init__（那会连真实数据库）
-        db._driver = "mysql"
-        rec = _SqlRecorder()
-        db._ensure_mysql_migrations(rec)  # type: ignore[arg-type]
+def _write_contract(path, enabled=1, provision="auto", with_row=True, create_table=True):
+    """模拟 CI 后台的启用 / 关闭动作：写集成服务契约行（service_name='cd'）。"""
+    set_cd_contract(path, enabled=enabled, provision=provision, with_row=with_row, create_table=create_table)
 
-        self.assertTrue(rec.statements, "缺失列迁移应至少下发一条 ALTER TABLE")
-        joined = " ".join(rec.statements).lower()
-        for sql in rec.statements:
-            upper = sql.upper()
-            self.assertTrue(upper.startswith("ALTER TABLE"), sql)
-            self.assertNotIn("CREATE TABLE", upper)
-            self.assertNotIn("CREATE INDEX", upper)
-        # 回归：cd_sessions 曾在此被「自愈」建表（既越界又不自洽——只补建清单里的一张表）
-        self.assertNotIn("cd_sessions", joined)
+
+class _FakeMysqlNoTable(Exception):
+    """模拟 MySQL 1146：契约表不存在（CI 侧还没建 integrated_services）。"""
+
+    def __init__(self):
+        super().__init__(1146, "Table 'devops_glue.integrated_services' doesn't exist")
+
+
+class _FakeCursor:
+    """伪游标：把已下发的 CREATE TABLE 伪装成 information_schema 的结果，让清单自检跑通。"""
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class _RecordedCursor:
+    """_MysqlWrapper 需要 raw 连接提供 cursor()：把执行转发给记录器，再回放结果。"""
+
+    def __init__(self, rec):
+        self._rec = rec
+        self._result = _FakeCursor([])
+
+    def execute(self, sql, params=None):
+        self._result = self._rec.execute(sql, params)
+        return self
+
+    def fetchall(self):
+        return self._result.fetchall()
+
+    def fetchone(self):
+        return self._result.fetchone()
+
+    def close(self):
+        pass
+
+
+class _SqlRecorder:
+    """记录实际下发的 SQL —— 用来断言「auto 建表」与「manual / 未启用时零 DDL」。"""
+
+    def __init__(self, contract_row=None, contract_table_missing=False):
+        self.statements: list[str] = []
+        self.contract_row = contract_row  # None = 契约行不存在
+        self.contract_table_missing = contract_table_missing  # True = 契约表不存在（MySQL 1146）
+        self.created_tables: set[str] = set()
+
+    def cursor(self):
+        """raw 连接接口（_MysqlWrapper 会调用它）。"""
+        return _RecordedCursor(self)
+
+    def execute(self, sql, params=None):
+        flat = " ".join(sql.split())
+        self.statements.append(flat)
+        upper = flat.upper()
+        if upper.startswith("SELECT") and "INTEGRATED_SERVICES" in upper:
+            if self.contract_table_missing:
+                raise _FakeMysqlNoTable()
+            return _FakeCursor([self.contract_row] if self.contract_row else [])
+        if upper.startswith("CREATE TABLE IF NOT EXISTS"):
+            name = flat.split("CREATE TABLE IF NOT EXISTS", 1)[1].strip().split("(")[0].strip()
+            self.created_tables.add(name)
+            return _FakeCursor([])
+        if "INFORMATION_SCHEMA.TABLES" in upper:
+            return _FakeCursor([{"table_name": t} for t in sorted(self.created_tables)])
+        return _FakeCursor([])
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def _mysql_db(tmpdir) -> Database:
+    """构造「驱动是 mysql 但不连真库」的 Database（__init__ 会真连 MySQL，故绕过）。"""
+    db = Database.__new__(Database)
+    db._driver = "mysql"
+    db._path = Path(tmpdir)
+    return db
+
+
+def _serve_recorder(rec: _SqlRecorder):
+    """让 db.conn() 直接使用 rec 作为连接，并挡掉 MySQL 连接池初始化。"""
+    pool = types.SimpleNamespace(connection=lambda: rec)
+    return [
+        patch.object(Database, "_init_pool", lambda self: None),
+        patch.object(Database, "_pool", pool),
+    ]
 
 
 def _req(cookies=None) -> Request:
@@ -101,48 +191,259 @@ def _creds(token: str = "any-token") -> HTTPAuthorizationCredentials:
     return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
 
-class TestRequiredTableListMatchesSources(unittest.TestCase):
-    """闸门清单必须与两个建表来源严格一致：多一张/少一张都会误判部署状态。"""
+class TestIntegrationStateReadsContract(unittest.TestCase):
+    """契约直读语义：读不到行就是未启用（不种子、不回退），且绝不越权建表。"""
 
-    def test_list_matches_init_mysql_sql(self):
-        """MySQL 侧：init_mysql.sql 建的表集合 = CD_REQUIRED_TABLES（双向相等）。"""
-        sql = (ROOT / "database" / "init_mysql.sql").read_text(encoding="utf-8")
-        created = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(cd_\w+)\s*\(", sql))
-        self.assertEqual(created, set(CD_REQUIRED_TABLES))
-        # 张数由 CD_REQUIRED_TABLES 自身定义，此处刻意不锁定数字：增删表只改那三处，测试自动跟随。
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self._tmp.name, "test_contract.db")
+        _create_marker(self.db_path)
+        Database._tables_ensured = False
 
-    def test_list_matches_sqlite_autocreate(self):
-        """SQLite 侧：database.py 自动建表必须建全清单里的同样那些表，否则开发模式会被自家闸门拦住。"""
-        src = (ROOT / "backend" / "database.py").read_text(encoding="utf-8")
-        created = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(cd_\w+)\s*\(", src))
-        self.assertEqual(created, set(CD_REQUIRED_TABLES))
+    def tearDown(self):
+        Database._tables_ensured = False
+        self._tmp.cleanup()
 
-    def test_glue_contract_view_not_required(self):
-        """v_glue_deploy_logs 是给 Devops-Glue 的契约视图、非 CD 自身表，不参与闸门。"""
-        self.assertFalse([t for t in CD_REQUIRED_TABLES if not t.startswith("cd_")])
+    def _db(self) -> Database:
+        return Database(self.db_path)
+
+    def _tables(self) -> set[str]:
+        with sqlite3.connect(self.db_path) as conn:
+            return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+    def test_missing_contract_table_means_disabled_without_ddl(self):
+        db = self._db()
+        state = db.cd_integration_state()
+        self.assertFalse(state.enabled)
+        self.assertFalse(state.row_exists)
+        # 未启用 → 一个 DDL 都不该下发：CD 表不许凭空出现
+        self.assertFalse([t for t in self._tables() if t.startswith("cd_")], self._tables())
+        # 闸门统一 503 cd_not_enabled（而不是 cd_not_deployed 骗人去补表）
+        with self.assertRaises(AppException) as ctx:
+            cd_deploy_gate(db)
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+        self.assertEqual(ctx.exception.error_params["service"], "cd")
+        self.assertIn("集成服务", ctx.exception.message)
+
+    def test_contract_table_without_row_means_disabled(self):
+        _write_contract(self.db_path, with_row=False)
+        db = self._db()
+        state = db.cd_integration_state()
+        self.assertFalse(state.enabled)
+        self.assertFalse(state.row_exists, "有表无行 = 从未启用过，不得默认放行")
+        with self.assertRaises(AppException) as ctx:
+            cd_deploy_gate(db)
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+
+    def test_disabled_row_freezes_admission_but_keeps_tables(self):
+        """enabled=0 = 冻结准入：即使 CD 表都在（曾启用过）也必须拒绝，且绝不 DROP 任何表。"""
+        _write_contract(self.db_path, enabled=1, provision="auto")
+        db = self._db()
+        with db.conn():  # auto 模式：首次连库自动建全
+            pass
+        self.assertEqual(db.cd_missing_tables(), [])
+        self.assertIsNone(cd_deploy_gate(db))  # 放行
+        _write_contract(self.db_path, enabled=0, provision="auto")  # CI 后台关闭开关
+        state = db.cd_integration_state()
+        self.assertFalse(state.enabled)
+        self.assertTrue(state.row_exists)
+        with self.assertRaises(AppException) as ctx:
+            cd_deploy_gate(db)
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+        # 关闭只冻结准入：表与数据原样保留
+        self.assertEqual(db.cd_missing_tables(), [])
+        self.assertTrue(set(CD_REQUIRED_TABLES) <= self._tables())
+
+    def test_enable_takes_effect_without_restart(self):
+        """CI 后台一启用，运行中的 CD 下一个请求即生效（无需重启，无需手工重置 _tables_ensured）。"""
+        db = self._db()
+        with self.assertRaises(AppException) as ctx:
+            cd_deploy_gate(db)
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+        self.assertFalse(Database._tables_ensured)
+        _write_contract(self.db_path, enabled=1, provision="auto")
+        self.assertIsNone(cd_deploy_gate(db))
+        self.assertEqual(db.cd_missing_tables(), [], "auto 模式下应已自动建全")
+        self.assertTrue(Database._tables_ensured)
+
+    def test_authenticate_blocked_when_not_enabled(self):
+        """未启用时连登录都拒（503 cd_not_enabled），而不是伪装成「账号密码错误」。"""
+        db = self._db()
+        with self.assertRaises(AppException) as ctx:
+            authenticate("alice", "secret", db)
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+
+    def test_manual_provision_never_creates_tables(self):
+        """manual：即使已启用也不建表（只认预建表）→ 零 DDL，闸门报 cd_not_deployed。"""
+        _write_contract(self.db_path, enabled=1, provision="manual")
+        db = self._db()
+        with db.conn() as conn:
+            conn.execute("SELECT 1")
+        self.assertFalse([t for t in self._tables() if t.startswith("cd_")], self._tables())
+        self.assertEqual(db.cd_missing_tables(), list(CD_REQUIRED_TABLES))
+        with self.assertRaises(AppException) as ctx:
+            cd_deploy_gate(db)
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_deployed")
+        self.assertIn("manual", ctx.exception.message)
 
 
-class TestCdDeployedCompleteness(unittest.TestCase):
-    """表必须「建全」：少任何一张 = 未部署（半套 schema 不放行）。"""
+class TestMysqlProvisionMatrix(unittest.TestCase):
+    """MySQL 侧建表授权完全跟随 provision：auto 建表、manual / 未启用零 DDL（且不碰共享表）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        Database._tables_ensured = False
+
+    def tearDown(self):
+        Database._tables_ensured = False
+        self._tmp.cleanup()
+
+    def _run_conn(self, rec: _SqlRecorder) -> _SqlRecorder:
+        """在「假 MySQL 连接」上跑一次 conn()（触发建表闸门），返回 SQL 记录。"""
+        db = _mysql_db(self._tmp.name)
+        patches = _serve_recorder(rec)
+        for p in patches:
+            p.start()
+        try:
+            with db.conn() as conn:
+                conn.execute("SELECT 1")
+        finally:
+            for p in patches:
+                p.stop()
+        return rec
+
+    def _ddl(self, rec: _SqlRecorder) -> list[str]:
+        return [s for s in rec.statements if s.upper().startswith(("CREATE", "ALTER", "DROP"))]
+
+    def test_auto_creates_every_listed_table(self):
+        rec = self._run_conn(_SqlRecorder(contract_row={"enabled": 1, "provision": "auto"}))
+        self.assertEqual(rec.created_tables, set(CD_REQUIRED_TABLES))
+        self.assertTrue(Database._tables_ensured)
+
+    def test_auto_ddl_never_touches_shared_tables(self):
+        """建表 / 建索引不许出现共享表（ci_* / admin_users / roles）—— CD 只改自己的 cd_* 对象。"""
+        rec = self._run_conn(_SqlRecorder(contract_row={"enabled": 1, "provision": "auto"}))
+        joined = " ".join(rec.statements)
+        for shared in ("ci_pipeline_artifacts", "ci_job_git_map", "admin_users", "roles", "permissions"):
+            self.assertNotIn(shared, joined)
+        self.assertNotIn("DROP ", joined.upper())  # 关闭集成服务也不许 DROP（数据必须留住）
+
+    def test_auto_also_runs_indexes_migrations_and_contract_view(self):
+        rec = self._run_conn(_SqlRecorder(contract_row={"enabled": 1, "provision": "auto"}))
+        joined = " ".join(rec.statements)
+        self.assertIn("CREATE INDEX idx_cdl_project ON cd_deploy_logs(project)", joined)
+        self.assertIn("ALTER TABLE cd_deploy_logs ADD COLUMN lock_key", joined)
+        self.assertIn("CREATE OR REPLACE VIEW v_glue_deploy_logs", joined)
+
+    def test_manual_sends_no_ddl_at_all(self):
+        """manual：一条 CREATE / ALTER / DROP 都不许发（结构归 DBA，CD 只读）。"""
+        rec = self._run_conn(_SqlRecorder(contract_row={"enabled": 1, "provision": "manual"}))
+        self.assertEqual(self._ddl(rec), [])
+        self.assertTrue(Database._tables_ensured, "manual 下无需 DDL：标记完成，避免每请求重读契约")
+
+    def test_row_missing_sends_no_ddl(self):
+        rec = self._run_conn(_SqlRecorder(contract_row=None))
+        self.assertEqual(self._ddl(rec), [])
+        self.assertFalse(Database._tables_ensured, "未启用不得标记完成：CI 一启用就要能立即建表")
+
+    def test_zero_enabled_sends_no_ddl(self):
+        rec = self._run_conn(_SqlRecorder(contract_row={"enabled": 0, "provision": "auto"}))
+        self.assertEqual(self._ddl(rec), [])
+        self.assertFalse(Database._tables_ensured)
+
+    def test_contract_table_missing_sends_no_ddl(self):
+        """契约表不存在（MySQL 1146）= 从未启用：按未启用处理，不许建表。"""
+        rec = self._run_conn(_SqlRecorder(contract_table_missing=True))
+        self.assertEqual(self._ddl(rec), [])
+        self.assertFalse(Database._tables_ensured)
+
+
+class TestDeployHintMatchesProvision(unittest.TestCase):
+    """补表动作必须按 provision 说实话：auto 说「重启自愈」，manual 才说「导入脚本」。"""
+
+    class _FakeDb:
+        """最小 fake：闸门只用到 driver / cd_integration_state / cd_missing_tables。"""
+
+        def __init__(self, driver: str, missing: list[str], provision: str = "auto", enabled: bool = True):
+            self.driver = driver
+            self._missing = missing
+            self._state = CdIntegrationState(enabled, provision, enabled)
+
+        def cd_integration_state(self) -> CdIntegrationState:
+            return self._state
+
+        def cd_missing_tables(self) -> list[str]:
+            return list(self._missing)
+
+    def test_auto_hint_says_restart(self):
+        hint = cd_deploy_hint("mysql", "auto")
+        self.assertIn("重启", hint)
+        self.assertNotIn("init_mysql.sql", hint)
+
+    def test_manual_hint_points_to_script_for_mysql(self):
+        self.assertIn("init_mysql.sql", cd_deploy_hint("mysql", "manual"))
+
+    def test_manual_hint_never_tells_sqlite_to_import_mysql_script(self):
+        """manual + SQLite 是本地库文件：不能叫用户去导入 MySQL 脚本（错误运维指令）。"""
+        hint = cd_deploy_hint("sqlite", "manual")
+        self.assertIn("manual", hint)
+        self.assertNotIn("init_mysql.sql", hint)
+
+    def test_legacy_call_without_provision_keeps_driver_wording(self):
+        self.assertIn("重启", cd_deploy_hint("sqlite"))
+        self.assertIn("init_mysql.sql", cd_deploy_hint("mysql"))
+
+    def test_not_enabled_hint_points_to_ci_console(self):
+        self.assertIn("集成服务", cd_not_enabled_hint())
+
+    def test_gate_message_follows_provision(self):
+        """闸门消息 = 中性描述 + 缺失表 + 按 provision 的动作；error_params 仍只给表名（前端 i18n 插值）。"""
+        for provision in ("auto", "manual"):
+            with self.assertRaises(AppException) as ctx:
+                cd_deploy_gate(cast(Database, self._FakeDb("mysql", ["cd_webhooks", "cd_sessions"], provision)))
+            self.assertEqual(ctx.exception.status_code, 503)
+            self.assertEqual(ctx.exception.error_key, "errors.cd_not_deployed")
+            self.assertIn("cd_webhooks", ctx.exception.message)
+            self.assertIn(cd_deploy_hint("mysql", provision), ctx.exception.message)
+            self.assertEqual(ctx.exception.error_params["tables"], "cd_webhooks、cd_sessions")
+
+    def test_gate_message_when_not_enabled(self):
+        """未启用：用户可见提示只有 CD_NOT_ENABLED_MSG 这一句，动作细节走 detail.hint。
+
+        提示框（登录页 error 框 / toast）只渲染 error_key 或字符串型 detail，
+        dict 型的 detail 不会被展示 —— 所以长文案既进不了提示框，也没丢给排查的人。
+        """
+        with self.assertRaises(AppException) as ctx:
+            cd_deploy_gate(cast(Database, self._FakeDb("mysql", [], "auto", enabled=False)))
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+        self.assertEqual(ctx.exception.message, CD_NOT_ENABLED_MSG)
+        self.assertEqual(ctx.exception.detail["hint"], cd_not_enabled_hint())
+        self.assertNotIn(cd_not_enabled_hint(), ctx.exception.message)
+
+
+class TestCdMissingTablesCompleteness(unittest.TestCase):
+    """表必须建全：少任何一张 = 未部署（半套 schema 不放行），探测绝不顺手补建。"""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_gate.db")
         _create_marker(self.db_path)
+        _write_contract(self.db_path, enabled=1, provision="auto")
         Database._tables_ensured = False
 
     def tearDown(self):
-        Database._tables_ensured = False  # 类变量在测试间共享，恢复默认避免污染其它用例
+        Database._tables_ensured = False
         self._tmp.cleanup()
 
-    def test_sqlite_autocreated_db_is_deployed(self):
-        """SQLite 模式随库自动建表 → 清单全齐 → 已部署（开发/单机场景）。"""
+    def test_autocreated_db_is_deployed(self):
         db = Database(self.db_path)
         with db.conn():
-            pass  # 触发 SQLite 自动建表
+            pass  # 触发 auto 自动建表
         self.assertEqual(db.cd_missing_tables(), [])
         self.assertTrue(db.cd_deployed())
-        with db.conn() as conn:
+        with sqlite3.connect(self.db_path) as conn:
             row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_sessions'").fetchone()
         self.assertIsNotNone(row)
 
@@ -158,7 +459,7 @@ class TestCdDeployedCompleteness(unittest.TestCase):
         self.assertIsNone(row, "探测未部署状态时绝不允许顺手建表")
 
     def test_all_tables_missing_reports_full_list(self):
-        """CD 表从未导入（模拟 MySQL 共享库）→ 清单内全部报缺（张数取 len 清单，不写死），且零 DDL 痕迹。"""
+        """CD 表从未建过（等价 manual 未导入）→ 清单内全部报缺（张数取 len 清单，不写死）。"""
         db = Database(self.db_path)
         with patch.object(Database, "_ensure_cd_tables", lambda self, conn: None):
             self.assertEqual(db.cd_missing_tables(), list(CD_REQUIRED_TABLES))
@@ -167,140 +468,25 @@ class TestCdDeployedCompleteness(unittest.TestCase):
             row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_sessions'").fetchone()
         self.assertIsNone(row, "探测未部署状态时绝不允许顺手建表")
 
-    def test_db_failure_not_reported_as_not_deployed(self):
-        """连接故障（非缺表）原样抛出：不能误导运维去重跑建表脚本掩盖数据库宕机。"""
-        db = Database(self.db_path)
-        with patch.object(Database, "conn", side_effect=RuntimeError("db down")):
-            with self.assertRaises(RuntimeError):
-                db.cd_missing_tables()
-
-    def test_deployed_invalid_token_is_401(self):
-        """已部署时闸门不误伤鉴权：无效 token 仍是 401（而非 503）。"""
-        db = Database(self.db_path)
-        with db.conn():
-            pass
-        with self.assertRaises(HTTPException) as ctx:
-            verify_token(_req(), _creds("bogus"), db)
-        self.assertEqual(ctx.exception.status_code, 401)
-
-    def test_authenticate_rejected_when_tables_incomplete(self):
-        """表不全时 authenticate 抛 503 errors.cd_not_deployed（而非缺表 500 / 静默建表）。"""
-        db = Database(self.db_path)
-        with db.conn() as conn:
-            conn.execute("DROP TABLE cd_webhooks")  # 只缺一张，也必须整体拒绝登录
-        with self.assertRaises(AppException) as ctx:
-            authenticate("alice", "secret", db)
-        self.assertEqual(ctx.exception.status_code, 503)
-        self.assertEqual(ctx.exception.error_key, "errors.cd_not_deployed")
-        self.assertEqual(ctx.exception.error_params["tables"], "cd_webhooks")
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_webhooks'").fetchone()
-        self.assertIsNone(row, "闸门只报警不修补：绝不允许顺手建表")
-
-    def test_authenticate_proceeds_when_deployed(self):
-        """已部署时闸门放行：缺密码哈希/无用户 → 返回 None（凭据失败语义不变）。"""
-        db = Database(self.db_path)
-        with db.conn() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS admin_users ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, username VARCHAR(64) UNIQUE, "
-                "password_hash VARCHAR(255), role VARCHAR(32) DEFAULT '', "
-                "systems VARCHAR(255) DEFAULT '', status INTEGER DEFAULT 1)"
-            )
-        self.assertIsNone(authenticate("nobody", "secret", db))
-
-
-class TestTableInventoryIsSingleSource(unittest.TestCase):
-    """CD_REQUIRED_TABLES 是唯一维护清单：SQLite 自动建表必须与它逐张对齐，漏改当场报错。
-
-    清单以后会加表/删表，所以这里一律用 len(CD_REQUIRED_TABLES) / 集合比较，不写死张数；
-    新增表时三处同步（清单 + init_mysql.sql + _ensure_cd_tables），漏掉任一处都会被拦下。
-    """
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.db_path = os.path.join(self._tmp.name, "test_gate_inv.db")
-        _create_marker(self.db_path)
-        Database._tables_ensured = False
-
-    def tearDown(self):
-        Database._tables_ensured = False
-        self._tmp.cleanup()
-
-    def test_sqlite_autocreate_covers_whole_inventory(self):
-        """SQLite 首次连库建表后，清单里的每一张都存在（且自动建表工作正常）。"""
-        db = Database(self.db_path)
-        with db.conn():
-            pass
-        self.assertEqual(db.cd_missing_tables(), [])
-        self.assertTrue(db.cd_deployed())
-        raw = sqlite3.connect(self.db_path)
-        try:
-            tables = {r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-            views = {r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type='view'").fetchall()}
-        finally:
-            raw.close()
-        self.assertTrue(set(CD_REQUIRED_TABLES) <= tables, set(CD_REQUIRED_TABLES) - tables)
-        # 给 Glue 的契约视图不是 CD 自身表：它在 sqlite_master 里是 view，闸门只核对 table
-        # （MySQL 侧同理限定 BASE TABLE），所以清单里不该出现它
-        self.assertIn("v_glue_deploy_logs", views)
-        self.assertNotIn("v_glue_deploy_logs", CD_REQUIRED_TABLES)
-
-    def test_fail_fast_when_inventory_has_no_sqlite_ddl(self):
-        """清单里多了表、SQLite 建表逻辑却没补 → 首次连库即 RuntimeError 点名该表（绝不半套运行）。"""
-        ghost = "cd_ghost_table"
-        with patch("backend.database.CD_REQUIRED_TABLES", CD_REQUIRED_TABLES + (ghost,)):
-            db = Database(self.db_path)
-            with self.assertRaises(RuntimeError) as ctx:
-                with db.conn():
-                    pass
-        self.assertIn(ghost, str(ctx.exception))
-        self.assertIn("_ensure_cd_tables", str(ctx.exception))
-
     def test_runtime_drop_blocks_then_restart_heals(self):
-        """运行期被人为 DROP：闸门立刻拒绝（不静默补救）；重启服务后自动建全自愈。"""
+        """运行期被人为 DROP：闸门立刻拒绝（不静默补救）；重启（_tables_ensured 复位）后自愈。"""
         db = Database(self.db_path)
         with db.conn():
             pass
         with db.conn() as conn:
             conn.execute("DROP TABLE cd_bots")
         self.assertEqual(db.cd_missing_tables(), ["cd_bots"])
-        with sqlite3.connect(self.db_path) as conn:  # 探测不补建
-            row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_bots'").fetchone()
-        self.assertIsNone(row)
         Database._tables_ensured = False  # 等价于重启服务
         with db.conn():
             pass
         self.assertEqual(db.cd_missing_tables(), [])
 
-
-class TestDeployHintMatchesDriver(unittest.TestCase):
-    """补表动作必须按驱动说实话：SQLite 用户不该被指去导入 MySQL 脚本（那是错误的运维指令）。"""
-
-    class _FakeDb:
-        def __init__(self, driver: str, missing: list[str]):
-            self.driver = driver
-            self._missing = missing
-
-        def cd_missing_tables(self) -> list[str]:
-            return list(self._missing)
-
-    def test_hint_text_per_driver(self):
-        self.assertIn("init_mysql.sql", cd_deploy_hint("mysql"))
-        self.assertNotIn("init_mysql.sql", cd_deploy_hint("sqlite"))
-        self.assertIn("重启", cd_deploy_hint("sqlite"))
-
-    def test_gate_message_follows_driver(self):
-        """闸门消息 = 中性描述 + 缺失表 + 按驱动动作；error_params 仍只给表名（前端 i18n 插值）。"""
-        for driver in ("mysql", "sqlite"):
-            with self.assertRaises(AppException) as ctx:
-                cd_deploy_gate(cast(Database, self._FakeDb(driver, ["cd_webhooks", "cd_sessions"])))
-            msg = ctx.exception.message
-            self.assertEqual(ctx.exception.status_code, 503)
-            self.assertEqual(ctx.exception.error_key, "errors.cd_not_deployed")
-            self.assertIn("cd_webhooks", msg)
-            self.assertIn(cd_deploy_hint(driver), msg)
-            self.assertEqual(ctx.exception.error_params["tables"], "cd_webhooks、cd_sessions")
+    def test_db_failure_not_reported_as_not_deployed(self):
+        """连接故障（非缺表）原样抛出：不能误导运维去重跑建表脚本、掩盖数据库宕机。"""
+        db = Database(self.db_path)
+        with patch.object(Database, "conn", side_effect=RuntimeError("db down")):
+            with self.assertRaises(RuntimeError):
+                db.cd_missing_tables()
 
 
 class TestRequestGateBlocksOperations(unittest.TestCase):
@@ -310,8 +496,9 @@ class TestRequestGateBlocksOperations(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_gate_req.db")
         _create_marker(self.db_path)
+        # 已启用 + auto，但打掉自动建表：模拟「表还没建出来」的窗口（auto 重启前 / manual 未导入）
+        _write_contract(self.db_path, enabled=1, provision="auto")
         Database._tables_ensured = False
-        # 关掉 SQLite 自动建表，模拟「MySQL 共享库里 CD 表从未导入」
         self._no_autocreate = patch.object(Database, "_ensure_cd_tables", lambda self, conn: None)
         self._no_autocreate.start()
 
@@ -358,9 +545,27 @@ class TestRequestGateBlocksOperations(unittest.TestCase):
         finally:
             cfg.db_path = original
         self.assertEqual(ctx.exception.status_code, 503)
-        # SQLite 下补表动作是「重启自动建表」，绝不能告诉用户去导入 MySQL 脚本
+        # auto 模式的补表动作是「重启自动建表」，绝不能告诉用户去导入 MySQL 脚本
         self.assertIn("重启", str(ctx.exception.detail))
         self.assertNotIn("init_mysql.sql", str(ctx.exception.detail))
+
+    def test_webshell_hint_follows_manual_provision(self):
+        """manual 模式下 WebShell 提示必须改口：SQLite 是本地库，不能叫用户去导 MySQL 脚本。"""
+        from backend.config import settings as cfg
+
+        _write_contract(self.db_path, enabled=1, provision="manual")
+        original = cfg.db_path
+        cfg.db_path = self.db_path
+        try:
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(_ws_verify("any-token"))
+        finally:
+            cfg.db_path = original
+        self.assertEqual(ctx.exception.status_code, 503)
+        detail = str(ctx.exception.detail)
+        self.assertIn("manual", detail)
+        self.assertIn("Devops-Glue", detail)
+        self.assertNotIn("init_mysql.sql", detail, "SQLite 用户不该被指去导入 MySQL 脚本")
 
     def test_missing_token_still_401(self):
         """没带 token 依旧是「请先登录」401：部署问题不该掩盖未认证语义。"""
@@ -369,18 +574,27 @@ class TestRequestGateBlocksOperations(unittest.TestCase):
             verify_token(_req(), None, db)
         self.assertEqual(ctx.exception.status_code, 401)
 
+    def test_not_enabled_blocks_webhook_with_its_own_error_key(self):
+        """未启用（而非未建全）时公开 Webhook 报 cd_not_enabled —— 两种 503 不许混。"""
+        _write_contract(self.db_path, with_row=False)  # 清空契约行 = 回到「从未启用」
+        db = self._db()
+        with self.assertRaises(AppException) as ctx:
+            asyncio.run(receive_webhook("tok", cast(Request, types.SimpleNamespace()), db))
+        self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
+
 
 class TestDatabaseUnavailableIs503(unittest.TestCase):
     """库不可用（建不了表 / 打不开库）必须 503 errors.db_unavailable，而不是裸 500。
 
-    与「未部署」严格区分：前者要查环境（连接/权限/磁盘），后者才是去补建表脚本；
-    混为一谈会把运维指向错误动作。但清单自检抛的 RuntimeError 属代码缺陷，必须原样冒泡。
+    与「未启用 / 未部署」严格区分：前者要查环境（连接/权限/磁盘），后者去 CI 后台点开关或补表；
+    混为一谈会把运维指向错误动作。清单自检抛的 RuntimeError 属代码缺陷，必须原样冒泡。
     """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_gate_dbunavail.db")
         _create_marker(self.db_path)
+        _write_contract(self.db_path, enabled=1, provision="auto")  # 已启用：只有这样才会走建表路径
         Database._tables_ensured = False
 
     def tearDown(self):
@@ -398,8 +612,8 @@ class TestDatabaseUnavailableIs503(unittest.TestCase):
         self.assertEqual(ctx.exception.error_key, "errors.db_unavailable")
         self.assertEqual(ctx.exception.error_params["driver"], "sqlite")
         self.assertIn("readonly", ctx.exception.error_params["reason"])
-        # 绝不能报成「未部署」：那会把运维指向「重跑建表脚本」，而真凶是文件权限/磁盘
-        self.assertNotEqual(ctx.exception.error_key, "errors.cd_not_deployed")
+        # 绝不能报成「未启用 / 未部署」：那会把运维指向「点开关 / 补表脚本」，而真凶是文件权限或磁盘
+        self.assertNotIn(ctx.exception.error_key, ("errors.cd_not_enabled", "errors.cd_not_deployed"))
 
     def test_sqlite_open_failure_is_503(self):
         """库文件打不开（目录不存在 / 不可写）→ 503 errors.db_unavailable。"""

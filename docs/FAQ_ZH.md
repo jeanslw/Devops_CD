@@ -43,17 +43,28 @@ lscpu | grep -E '^CPU\(s\)|^Thread|^Core|^Socket'
 
 cd_service 必须与 Devops-Glue API 共用同一个数据库。检查 `DB_PATH`（SQLite）或 `DB_*`（MySQL）配置是否正确。
 
+### Q: 登录报错「CD 服务未启用：请在 Devops-Glue 后台『API集成服务』中启用 Devops-CD」？
+
+「CD 启用了没有」只由 Devops-Glue 的集成服务契约表 `integrated_services` 决定（CI 是唯一写入方）：契约表 / 契约行缺失或 `enabled<>1` 一律视为**未启用**，CD 做零 DDL，登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手统一 503（`errors.cd_not_enabled`）。
+
+**解决**：到 Devops-Glue 后台「API集成服务 → 启用」开启 Devops-CD —— 启用动作会写契约行，并按 CI 的迁移模式写入 `provision`，CD 侧**即时生效**（不需要改配置，也不需要重启）。
+
+> 提示框里**只有上面这一句**：登录页 error 框与 toast 同源 —— 都读 `error_key=errors.cd_not_enabled` 走前端 i18n（所以切 EN 会输出英文，不会出现「后端中文不跟随语言」）；完整动作说明随响应体 `detail.hint` 与 CD 启动日志下发，不会拼进提示框。
+
 ### Q: 登录报错「CD 服务未部署：CD 数据表未建全（缺失：...）」？
 
-CD 表由管理员手动导入 `database/init_mysql.sql` 建立，这就是「启用 CD」的闸门，且必须把**代码清单 `CD_REQUIRED_TABLES` 里的表建全**（当前 14 张；以后加表/删表这张清单就是唯一准绳，少任何一张都当作未部署）：登录返回 HTTP 503（错误信息列出缺哪些表，并按驱动给出补齐动作），**已持有会话的请求、公开 Webhook 接收与 WebShell（WebSocket 握手）也一律 503**（即「即使能登录，也禁止做任何操作」），而 CD **不会**自动建表或补表（它不该越界改动共享库）。执行一次即可：
+说明 CD **已启用**，但清单 `CD_REQUIRED_TABLES`（当前 14 张；以后加表/删表这张清单就是唯一准绳，少任何一张都当作未部署）里的表没建全。补表动作取决于契约行上的 `provision`：
+
+- `provision='auto'`（CI 处于自动迁移模式）：**CD 会自动建表** —— 重建/重启 CD 服务即会建全自愈；错误提示里就是这么写的；
+- `provision='manual'`（CI 处于手动建库模式）：CD **零 DDL**（连补列都不做），必须由管理员导入建表脚本把清单建全，脚本幂等、可重复执行，升级后也请重跑一次以补齐新增表/新列：
 
 ```bash
 mysql -u root -p devops_glue < database/init_mysql.sql
 ```
 
-脚本幂等（`CREATE TABLE IF NOT EXISTS` + 存在性守卫），可重复执行；升级后也请重跑一次以补齐新增表/列。**只导入了一部分**（或历史库里只有旧版自愈逻辑留下的 `cd_sessions`）同样只需重跑脚本：缺哪张建哪张，错误信息里的表名就是待补齐清单。反之，若彻底不想启用 CD、要回到「干净的未部署」状态，可把 `cd_*` 表全部删掉（如 `DROP TABLE cd_sessions;` 等，注意会一并丢弃会话/审批等数据）。
+另：闸门覆盖登录、已持有会话的请求、公开 Webhook 接收与 WebShell 握手（即「即使能登录，也禁止做任何操作」）。**关闭集成服务只冻结准入、不会删除数据**（CD 表与记录原样保留）；若想彻底清空，需自行 `DROP` 那些 `cd_*` 表（会一并丢弃会话/审批数据）。
 
-> **SQLite 模式**（开发/单机）：CD 表随库文件自动创建，正常情况下不会缺表；若你手工 `DROP TABLE` 过，闸门会**立刻** 503（只报警、不补建），**重启服务即自动建全自愈** —— 不需要（也不应该）去导入 MySQL 脚本，提示语也会这样告诉你。
+> **SQLite 模式**（开发/单机）：`provision='auto'` 时 CD 表随库文件自动创建，正常情况下不会缺表；若你手工 `DROP TABLE` 过，闸门会**立刻** 503（只报警、不补建），**重启服务即自动建全自愈**。若 CI 侧是 `manual` 而 CD 用 SQLite，CD 同样不建表 —— 请把 CI 改回自动迁移模式后重新启用，或由运维补建（提示语会这样说，**不会**叫你去导入 MySQL 脚本）。
 
 > **另一种 503 别搞混**：`errors.db_unavailable`（SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接）是**环境**问题 —— 查连接配置、数据目录写权限、磁盘空间，**不要**去重跑建表脚本（那修不了）。
 

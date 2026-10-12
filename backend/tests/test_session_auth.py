@@ -40,6 +40,8 @@ from backend.auth import (  # noqa: E402
 )
 from backend.database import Database  # noqa: E402
 
+from cd_contract import enable_cd  # noqa: E402
+
 
 def _create_marker(path):
     """Database 启动校验要求与 Devops-Glue 共享库（ci_pipeline_artifacts 为标记表）。"""
@@ -54,6 +56,8 @@ class SessionAuthTestCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_session.db")
         _create_marker(self.db_path)
+        # 会话生命周期用例都建在「已启用 CD」的库上（未启用时登录会被闸门 503，另一组用例专门验它）
+        enable_cd(self.db_path)
         # 每个临时库都是"全新库"，强制重新建表（类变量在测试间共享）
         Database._tables_ensured = False
         self.db = Database(self.db_path)

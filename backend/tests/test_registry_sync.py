@@ -39,6 +39,8 @@ from backend.services import registry_service  # noqa: E402
 from backend.services.harbor_client import HarborUnavailableError  # noqa: E402
 from backend.services.registry_service import RegistryService  # noqa: E402
 
+from cd_contract import enable_cd  # noqa: E402
+
 CI_REPOS = [{"project": "job-a", "repo": "job-a/app"}]
 
 # Harbor list_artifacts 期望的字段（少一个键 sync_repo 的 INSERT 就会抛 KeyError）
@@ -64,6 +66,8 @@ class RegistrySyncTestCase(unittest.TestCase):
         self.db_path = os.path.join(self._tmp.name, "test_registry.db")
         # Database 启动校验要求与 Devops-Glue 共享库（ci_pipeline_artifacts 为标记表）
         self._create_marker(self.db_path)
+        # 启用 CD（= 运维在 CI 后台点集成服务开关）：auto 模式下首次连库自动建表，闸门随之放行
+        enable_cd(self.db_path)
         Database._tables_ensured = False
         self.db = Database(self.db_path)
         with self.db.conn() as conn:

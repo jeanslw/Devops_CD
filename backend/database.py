@@ -7,6 +7,7 @@ import re
 import sqlite3
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import NamedTuple
 
 from backend.config import settings
 from backend.exceptions import AppException
@@ -37,19 +38,28 @@ class DatabaseUnavailableError(AppException):
 
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 
-# ── CD 部署闸门：唯一表清单 ────────────────────────────────────────────────────
-# 「CD 到底启用了没有」只看一件事：下面这份清单里的表是否**全部存在**（与清单张数无关，
-# 以后加减表也是同一套判定）。这张清单就是闸门的分水岭：
-#   - MySQL 模式：管理员手动导入 database/init_mysql.sql 建全这些表 = 启用 CD（应用绝不代为建表）；
-#   - SQLite 模式：CD 表随库自有，_ensure_cd_tables() 首次连库时自动建全（结尾有清单自检）。
+# ── CD 部署闸门：集成服务契约 × 唯一表清单 ──────────────────────────────────────
+# 「CD 启用了没有」不再看表在不在，而是看 Devops-Glue 的集成服务契约表 integrated_services
+# 里 service_name='cd' 的那一行（CI 是唯一写入方；语义见 Devops-Glue 的 ADMIN_MANUAL §16）：
+#   - 契约表缺失 / 契约行缺失 / enabled<>1 → **CD 未启用**：应用零 DDL，
+#     登录与所有已持有会话的请求统一 503 errors.cd_not_enabled（去 CI 后台启用）；
+#   - enabled=1 且 provision='auto'   → CD **被授权自动建表**（MySQL / SQLite 皆然）：
+#     首次连库自动建全下面的清单 + 补齐既有表的缺失列，缺表则 503 errors.cd_not_deployed；
+#   - enabled=1 且 provision='manual' → CD **绝不建表**，只认运维预建的清单表
+#     （MySQL 由管理员导入 database/init_mysql.sql），缺表同样 503 errors.cd_not_deployed。
+# 关闭集成服务（enabled=0）只冻结准入，**绝不 DROP / 清空 CD 表** —— 数据原样保留。
+#
+# 下面这份清单仍然在用，但它定义的是「CD 表有哪些」，不再等于「谁负责建」：
+# 建表授权来自 CI 后台开关（enabled + provision），闸门 = 契约状态 × 清单完整性。
 # 少任何一张都当作未部署 —— 半套 schema 放行只会让登录后的功能到处 500、甚至写坏数据，
 # 所以抢在入口整体拒绝（见 backend.auth.cd_deploy_gate：登录 + 所有已持有会话的请求统一 503）。
 #
-# 增删一张 CD 表 = 只改三处（清单是唯一真相源；闸门、错误文案、张数全都自动跟随，代码不写死数字）：
+# 增删一张 CD 表 = 四处同步（清单是唯一真相源；闸门、错误文案、张数全都自动跟随，代码不写死数字）：
 #   1. 下面的 CD_REQUIRED_TABLES（唯一清单，顺序 = 错误提示里的展示顺序）
-#   2. database/init_mysql.sql（MySQL 建表脚本：生产启用 CD 的唯一手段）
-#   3. backend/database.py::_ensure_cd_tables（SQLite 自带建表；结尾自检会当场拦截漏改）
-# 1/2 由 backend/tests/test_cd_deploy_gate.py 双向校验，3 由运行时自检兜底。
+#   2. database/init_mysql.sql（manual 模式：管理员导入的建表脚本）
+#   3. backend/database.py::_MYSQL_TABLE_DDL（auto 模式：MySQL 自动建表 DDL）
+#   4. backend/database.py::_ensure_cd_tables（auto 模式：SQLite 自动建表；结尾自检会当场拦截漏改）
+# 1/2/3 由 backend/tests/test_cd_deploy_gate.py 双向校验，4 由运行时自检兜底。
 CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_servers",
     "cd_deploy_logs",
@@ -77,16 +87,277 @@ _CD_TABLE_LIST_SQL = {
     "sqlite": "SELECT name FROM sqlite_master WHERE type = 'table'",
 }
 
+# ── 集成服务契约（Devops-Glue 侧 integrated_services 表；CI 是唯一写入方）────────────
+# 「CD 是否启用 / 能否建表」的唯一开关：CI 的启用向导把 enabled + provision + 配套服务 token
+# 写进这一行，CD 进闸门时直读它，不再用「表在不在」猜启用状态。
+# enabled=0 只冻结准入：契约行、CD 表、CD 数据全部保留（绝不 DROP / 清空）——
+# 重新启用时 CI 只换掉行上的 token 引用，历史数据继续可用。
+INTEGRATED_SERVICES_TABLE = "integrated_services"
+CD_SERVICE_NAME = "cd"
+PROVISION_AUTO = "auto"  # CI 自动迁移模式（DB_AUTO_MIGRATE 开启）→ 授权 CD 自动建表 / 补列
+PROVISION_MANUAL = "manual"  # CI 手动建库模式 → CD 绝不建表，只认运维预建的 CD 表
 
-def cd_deploy_hint(driver: str) -> str:
-    """按驱动给出「怎么把清单建全」的正确动作。
 
-    两个驱动的处置方式完全不同，提示必须说实话：SQLite 的 CD 表由本服务随库自动创建
-    （叫它去导入 MySQL 脚本是错误指令），MySQL 才需要管理员手动导入建表脚本。
+class CdIntegrationState(NamedTuple):
+    """CD 在集成服务契约表里的启用状态（读不到行就是未启用：不种子、不回退、不建表）。
+
+    provision 只在 enabled 为真时才有意义；未启用时归一化为 PROVISION_AUTO，仅供日志展示措辞。
+    row_exists 区分「契约行不存在」与「行在但 enabled=0」，用于日志/提示更准确（对闸门无影响）。
     """
+
+    enabled: bool
+    provision: str
+    row_exists: bool
+
+
+# ── auto 模式的 MySQL 建表 DDL（与 database/init_mysql.sql 同构）──────────────────
+# 为什么代码里再写一份：.dockerignore 排除了 database/ 目录，运维脚本不进镜像，auto 模式下
+# 容器里的 CD 必须自带 MySQL 方言建表语句。两份 DDL 的「表集合 + 每张表的列集合」与索引清单
+# 由 backend/tests/test_cd_deploy_gate.py 严格比对（漂移即测试失败）；运行期不解析 SQL 文件。
+# 只建 CD 自有表（cd_*）：共享表（admin_users / roles / ci_* 等）schema 归 Devops-Glue，CD 不得触碰。
+_MYSQL_TABLE_DDL: dict[str, str] = {
+    "cd_servers": """CREATE TABLE IF NOT EXISTS cd_servers (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        name       VARCHAR(255) UNIQUE,
+        host       VARCHAR(255),
+        port       INT          DEFAULT 22,
+        user       VARCHAR(64)  DEFAULT 'root',
+        type       VARCHAR(32)  DEFAULT 'ssh',
+        auth_type  VARCHAR(20)  DEFAULT 'password',
+        password   VARCHAR(255) DEFAULT '',
+        ssh_key    VARCHAR(8000) DEFAULT '',
+        tags       VARCHAR(255) DEFAULT '',
+        created_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_deploy_logs": """CREATE TABLE IF NOT EXISTS cd_deploy_logs (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        project      VARCHAR(255),
+        tag          VARCHAR(255),
+        image        VARCHAR(512),
+        deploy_type  VARCHAR(32),
+        target       VARCHAR(255),
+        status       VARCHAR(32),
+        output       TEXT,
+        triggered_by VARCHAR(64)  DEFAULT '',
+        deploy_note  VARCHAR(512) DEFAULT '',
+        duration_ms  INT          DEFAULT 0,
+        stage_times  TEXT,
+        runner       VARCHAR(128) DEFAULT '',
+        heartbeat_at VARCHAR(32)  DEFAULT '',
+        created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_bots": """CREATE TABLE IF NOT EXISTS cd_bots (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        name        VARCHAR(255) UNIQUE,
+        type        VARCHAR(32)  DEFAULT 'custom',
+        webhook_url TEXT         NOT NULL,
+        template    VARCHAR(2000) DEFAULT '',
+        created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_registry_repositories": """CREATE TABLE IF NOT EXISTS cd_registry_repositories (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        project_name VARCHAR(255) NOT NULL,
+        repo_name    VARCHAR(512) NOT NULL,
+        UNIQUE KEY uk_project_repo (project_name, repo_name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_registry_artifacts": """CREATE TABLE IF NOT EXISTS cd_registry_artifacts (
+        id              INT AUTO_INCREMENT PRIMARY KEY,
+        repo_id         INT,
+        tag             VARCHAR(255),
+        digest          VARCHAR(128),
+        artifact_id     INT           DEFAULT 0,
+        artifact_digest VARCHAR(128)  DEFAULT '',
+        size_bytes      BIGINT        DEFAULT 0,
+        push_time       DATETIME      DEFAULT NULL,
+        pull_time       DATETIME      DEFAULT NULL,
+        scan_status     VARCHAR(32)   DEFAULT '',
+        scan_severity   VARCHAR(16)   DEFAULT '',
+        vuln_critical   INT           DEFAULT 0,
+        vuln_high       INT           DEFAULT 0,
+        vuln_medium     INT           DEFAULT 0,
+        vuln_low        INT           DEFAULT 0,
+        vuln_fixable    INT           DEFAULT 0,
+        last_sync       DATETIME      DEFAULT NULL,
+        UNIQUE KEY uk_repo_tag_digest (repo_id, tag, digest),
+        FOREIGN KEY (repo_id) REFERENCES cd_registry_repositories(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_config": """CREATE TABLE IF NOT EXISTS cd_config (
+        key_name VARCHAR(128) PRIMARY KEY,
+        value    TEXT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_alert_rules": """CREATE TABLE IF NOT EXISTS cd_alert_rules (
+        id               INT AUTO_INCREMENT PRIMARY KEY,
+        name             VARCHAR(255),
+        target_type      VARCHAR(32)   DEFAULT 'system',
+        resource_type    VARCHAR(32)   NOT NULL,
+        server_ids       VARCHAR(2048) DEFAULT '',
+        threshold        INT           DEFAULT 80,
+        bot_id           INT           DEFAULT 0,
+        template         VARCHAR(2000) DEFAULT '',
+        enabled          TINYINT(1)    DEFAULT 1,
+        cooldown_minutes INT           DEFAULT 10,
+        duration_minutes INT           DEFAULT 0,
+        last_alert_at    DATETIME      DEFAULT NULL,
+        created_at       DATETIME      DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_custom_monitors": """CREATE TABLE IF NOT EXISTS cd_custom_monitors (
+        id            INT AUTO_INCREMENT PRIMARY KEY,
+        name          VARCHAR(255) NOT NULL,
+        command       TEXT         NOT NULL,
+        output_format VARCHAR(32)  DEFAULT 'auto',
+        description   TEXT,
+        server_ids    VARCHAR(2048) DEFAULT '',
+        enabled       TINYINT(1)   DEFAULT 1,
+        created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_custom_monitor_metrics": """CREATE TABLE IF NOT EXISTS cd_custom_monitor_metrics (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        monitor_id INT          NOT NULL,
+        name       VARCHAR(255) NOT NULL,
+        field_key  VARCHAR(255) NOT NULL,
+        unit       VARCHAR(32)  DEFAULT '',
+        sort_order INT          DEFAULT 0,
+        FOREIGN KEY (monitor_id) REFERENCES cd_custom_monitors(id) ON DELETE CASCADE,
+        INDEX idx_metrics_monitor (monitor_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_webhooks": """CREATE TABLE IF NOT EXISTS cd_webhooks (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        name       VARCHAR(255) UNIQUE,
+        token      VARCHAR(255) UNIQUE NOT NULL,
+        bot_id     INT          DEFAULT 0,
+        enabled    TINYINT(1)   DEFAULT 1,
+        created_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_webhook_events": """CREATE TABLE IF NOT EXISTS cd_webhook_events (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        webhook_id   INT          NOT NULL,
+        payload      TEXT,
+        received_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+        forwarded    TINYINT(1)   DEFAULT 0,
+        forwarded_at DATETIME     DEFAULT NULL,
+        INDEX idx_we_webhook (webhook_id),
+        INDEX idx_we_received (received_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_approvals": """CREATE TABLE IF NOT EXISTS cd_approvals (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        project      VARCHAR(255) NOT NULL,
+        tag          VARCHAR(255) DEFAULT '',
+        image        VARCHAR(512) DEFAULT '',
+        deploy_type  VARCHAR(32)  DEFAULT '',
+        envs         VARCHAR(255) DEFAULT '',
+        params_json  TEXT,
+        status       VARCHAR(16)  DEFAULT 'pending',
+        requester    VARCHAR(64)  DEFAULT '',
+        approver     VARCHAR(64)  DEFAULT '',
+        scheduled_at VARCHAR(32)  DEFAULT '',
+        approve_note VARCHAR(512) DEFAULT '',
+        deploy_id    INT          DEFAULT 0,
+        created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+        approved_at  DATETIME     DEFAULT NULL,
+        updated_at   DATETIME     DEFAULT NULL,
+        INDEX idx_appr_status (status),
+        INDEX idx_appr_project (project),
+        INDEX idx_appr_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_approval_rules": """CREATE TABLE IF NOT EXISTS cd_approval_rules (
+        id                        INT AUTO_INCREMENT PRIMARY KEY,
+        project                   VARCHAR(255)  NOT NULL,
+        enabled                   TINYINT(1)    DEFAULT 0,
+        require_envs              VARCHAR(255)  DEFAULT '',
+        approver_role             VARCHAR(32)   DEFAULT '',
+        approvers                 VARCHAR(1024) DEFAULT '',
+        notify_bot_id             INT           DEFAULT 0,
+        require_rollback_approval TINYINT(1)    DEFAULT 1,
+        created_at                DATETIME      DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_appr_project (project)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    "cd_sessions": """CREATE TABLE IF NOT EXISTS cd_sessions (
+        token_hash VARCHAR(64) PRIMARY KEY,
+        username   VARCHAR(64) NOT NULL,
+        expires_at INT          NOT NULL,
+        created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_cds_username (username)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+}
+
+# auto 模式下的 MySQL 索引清单（幂等：重复建索引报 1061，由 suppress 吞掉）。
+# 只建 CD 自有表的索引 —— init_mysql.sql 里对 ci_pipeline_artifacts / ci_job_git_map 的索引
+# 调用是给运维脚本用的历史遗留，CD 运行期绝不触碰共享表。
+# 元组含义：(索引名, 表名, 列清单, 是否唯一)。
+_MYSQL_INDEXES: tuple[tuple[str, str, str, bool], ...] = (
+    ("idx_cds_type", "cd_servers", "type", False),
+    ("idx_cdl_project", "cd_deploy_logs", "project", False),
+    ("idx_cdl_created", "cd_deploy_logs", "created_at", False),
+    ("idx_cdl_project_tag_status", "cd_deploy_logs", "project, tag, status", False),
+    ("idx_cdl_status", "cd_deploy_logs", "status", False),
+    ("idx_cdl_approval_id", "cd_deploy_logs", "approval_id", False),
+    ("idx_cdl_lock_key", "cd_deploy_logs", "lock_key", True),
+    ("idx_cdr_repo_id", "cd_registry_artifacts", "repo_id", False),
+    ("idx_cdr_enabled", "cd_alert_rules", "enabled", False),
+    ("idx_cdr_created", "cd_alert_rules", "created_at", False),
+    ("idx_cdm_enabled", "cd_custom_monitors", "enabled", False),
+    ("idx_cdm_created", "cd_custom_monitors", "created_at", False),
+    ("idx_cwh_enabled", "cd_webhooks", "enabled", False),
+)
+
+# auto 模式下的 MySQL 缺列迁移（CREATE TABLE IF NOT EXISTS 不会为已存在的表补列）。
+# 与 SQLite 侧 _ensure_cd_tables 的迁移清单在「最终列集合」上必须一致（由测试锁定）。
+# 注意：MySQL 的 TEXT 列不支持字面量 DEFAULT，统一用 VARCHAR。
+_MYSQL_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("cd_deploy_logs", "approval_id", "INT DEFAULT 0"),
+    ("cd_deploy_logs", "runner", "VARCHAR(128) DEFAULT ''"),
+    ("cd_deploy_logs", "heartbeat_at", "VARCHAR(32) DEFAULT ''"),
+    ("cd_deploy_logs", "lock_key", "VARCHAR(255) DEFAULT NULL"),
+    ("cd_deploy_logs", "params_json", "TEXT"),
+    ("cd_deploy_logs", "rollback_type", "VARCHAR(32) DEFAULT 'manual'"),
+    ("cd_deploy_logs", "artifact_id", "INT DEFAULT 0"),
+    ("cd_deploy_logs", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
+    ("cd_approvals", "deploy_id", "INT DEFAULT 0"),
+    ("cd_approvals", "approved_at", "VARCHAR(32) DEFAULT ''"),
+    ("cd_approvals", "scheduled_at", "VARCHAR(32) DEFAULT ''"),
+    ("cd_approvals", "updated_at", "VARCHAR(32) DEFAULT ''"),
+    ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
+    ("cd_registry_artifacts", "artifact_id", "INT DEFAULT 0"),
+    ("cd_registry_artifacts", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
+)
+
+
+def cd_deploy_hint(driver: str, provision: str = "") -> str:
+    """按驱动 + provision 给出「怎么把清单建全」的正确动作。
+
+    三个维度缺一不可，提示必须说实话，否则会把运维指向错误动作：
+      - 未启用（enabled<>1）：由 cd_not_enabled_hint() 提示，不走这里；
+      - provision='auto'   ：CD 已被授权自动建表 —— 重启服务即自愈（MySQL / SQLite 同理）；
+      - provision='manual' ：CD 绝不建表 —— MySQL 要管理员导入 database/init_mysql.sql；
+                             SQLite 是本地库文件，需运维自行补建（或让 CI 改回自动迁移模式）。
+    不传 provision（旧调用点 / 契约缺失）时退化为原有的「按驱动说实话」措辞。
+    """
+    if provision == PROVISION_MANUAL:
+        if driver == "sqlite":
+            return (
+                "当前为 manual（CI 手动建库模式）：CD 不会自动建表，SQLite 单机库请由运维补建这些表，"
+                "或在 Devops-Glue 侧改回自动迁移模式后重新启用 CD"
+            )
+        return (
+            "当前为 manual（CI 手动建库模式）：CD 不会自动建表，请管理员执行 database/init_mysql.sql 建全清单中的 CD 表"
+        )
+    if provision == PROVISION_AUTO:
+        return "当前为 auto（CI 自动迁移模式）：CD 会自动建全这些表，重启 CD 服务即可"
     if driver == "sqlite":
         return "SQLite 模式：CD 表随库自动创建，重启服务即可补齐（或删除该 .db 文件重新生成）"
     return "MySQL 模式：请管理员执行 database/init_mysql.sql 建全清单中的 CD 表"
+
+
+def cd_not_enabled_hint() -> str:
+    """未启用集成服务时的动作提示 —— 与「表没建全」严格区分：先有开关，才谈得上建表。
+
+    CD 不提供自开通入口：启用动作（写契约表 + 签发配套服务 token）只在 Devops-Glue 后台完成，
+    CD 侧只读 enabled/provision，所以提示统一指向 CI 后台的集成服务开关。
+    """
+    return (
+        "请到 Devops-Glue 后台「API集成服务 → 启用」开启 Devops-CD"
+        "（启用动作由 CI 写集成服务契约表并按 DB_AUTO_MIGRATE 决定 provision，CD 侧即时生效，无需改配置、无需重启）"
+    )
 
 
 def _dict_row_factory(cursor, row):
@@ -184,11 +455,15 @@ class _SqliteWrapper:
 
 class Database:
     """统一数据库连接 — 无独立数据库，完全跟随 Devops-Glue API。
-    SQLite 模式：自动建表（开发/单机场景，随 DB 文件一起生成）。
-    MySQL  模式：绝不建表 —— 全部 CD 表由管理员手动执行 database/init_mysql.sql 建立，
-    该手动导入即「启用 CD」的部署闸门，且必须把 CD_REQUIRED_TABLES 清单里的表建全（少一张 = 未部署），
-    详见 docs/ADMIN_MANUAL_ZH.md。应用只对已存在的表做缺失列幂等迁移，
-    表是否建全一律由 cd_missing_tables() / cd_deployed() 判定（清单即唯一真相源，不建表、不修补）。
+
+    启用与建表规则（唯一开关 = Devops-Glue 的集成服务契约表 integrated_services）：
+      - 未启用（契约表 / 契约行缺失，或 enabled<>1）：**零 DDL**，cd_deploy_gate 统一 503
+        errors.cd_not_enabled（让人去 CI 后台开启，而不是去补表）；
+      - enabled=1 + provision='auto'   ：**CD 自动建表**（MySQL / SQLite 同理）—— 首次连库
+        建全 CD_REQUIRED_TABLES + 补既有表缺失列 + 索引 + 契约视图；缺表则 503 errors.cd_not_deployed；
+      - enabled=1 + provision='manual' ：**绝不建表、绝不补列**，只认运维预建的清单表
+        （MySQL 由管理员执行 database/init_mysql.sql，详见 docs/ADMIN_MANUAL_ZH.md）。
+    共享表（admin_users / roles / ci_* 等）schema 归 Devops-Glue，CD 在任何模式下都不得改动。
     使用 DBUtils 连接池。
     启动时校验 ci_pipeline_artifacts 表是否存在，不存在则报错（数据库指向错误）。
     """
@@ -273,12 +548,51 @@ class Database:
                 self._driver,
             )
 
+    # ── 集成服务契约（闸门第一道判据）──
+
+    _CONTRACT_SQL = f"SELECT enabled, provision FROM {INTEGRATED_SERVICES_TABLE} WHERE service_name=?"
+
+    def _read_integration_state(self, conn) -> CdIntegrationState:
+        """（内部）在给定连接上读契约行 —— 契约表 / 契约行缺失或 enabled<>1 一律「未启用」。
+
+        只读不写：CD 既不自开通、也不种子、更不回退默认启用（启用动作只归 CI 后台开关）。
+        """
+        try:
+            row = conn.execute(self._CONTRACT_SQL, (CD_SERVICE_NAME,)).fetchone()
+        except Exception as e:
+            if _is_missing_table_error(e):
+                # 契约表本身不存在（CI 侧尚未启用集成服务 / 尚未升级）：按未启用处理
+                return CdIntegrationState(False, PROVISION_AUTO, False)
+            raise  # 连接 / 权限 / 锁等运行环境故障：交给上层转 503 errors.db_unavailable
+        if row is None:
+            return CdIntegrationState(False, PROVISION_AUTO, False)
+        raw_enabled = row["enabled"] if isinstance(row, dict) else row[0]
+        raw_provision = row["provision"] if isinstance(row, dict) else row[1]
+        # enabled 兼容 int / 字符串（TINYINT / TEXT 两种建法都能正确判定真假）
+        enabled = str(raw_enabled).strip().lower() not in ("", "0", "false", "none")
+        # provision 只认 CI 写入的 'manual'，其余（空值 / 未知值）按 auto —— 与 CI 默认迁移模式一致
+        provision = PROVISION_MANUAL if str(raw_provision or "").strip().lower() == PROVISION_MANUAL else PROVISION_AUTO
+        return CdIntegrationState(enabled, provision, True)
+
+    def cd_integration_state(self) -> CdIntegrationState:
+        """直读 Devops-Glue 的集成服务契约表，得到 CD 的启用状态（闸门的第一道判据）。
+
+        每次调用只做一次单行查询（WHERE service_name='cd' 命中唯一键），供每请求闸门使用 ——
+        因此 CI 后台一关闭开关，运行中的 CD 下一个请求就被拒（无需重启，也无需重连）。
+        库不可用时抛 DatabaseUnavailableError（503 errors.db_unavailable），绝不误报成「未启用」。
+        """
+        with self.conn() as conn:
+            return self._read_integration_state(conn)
+
     def cd_missing_tables(self) -> list[str]:
         """返回共享库中缺失的 CD 表名（空列表 = 表建全 = CD 已部署）。
 
         「建全」以 CD_REQUIRED_TABLES 为准（与 database/init_mysql.sql、SQLite 建表逻辑一致）：
         少任何一张都算未部署 —— 半套 schema 不该放行登录（登录后处处 500 更糟），
         判定由 backend.auth.cd_deploy_gate 统一消费（登录 + 已持有会话的请求都拒绝）。
+
+        注意：本方法只回答「表在不在」，不回答「CD 启用了没有」—— 启用与否由集成服务契约表决定
+        （cd_integration_state），闸门按「先看契约、再看清单」的顺序判定，两种拒绝的 error_key 不同。
 
         缺失表属于「部署状态」，不是「数据库故障」：连接不可用/建表失败等一律抛
         DatabaseUnavailableError（503 errors.db_unavailable），避免把库宕机误报成「未部署」而
@@ -298,10 +612,12 @@ class Database:
     def cd_deployed(self) -> bool:
         """CD 是否已部署（= CD_REQUIRED_TABLES 清单里的表全部存在，与清单张数无关）。
 
-        SQLite 模式随库自动建全（_ensure_cd_tables 建表 + 结尾自检），因此正常恒为 True；
-        但运行期若被人为 DROP 掉某张表，闸门立刻拒绝（不静默补救），重启服务后自动建全。
-        MySQL 模式未导入（或导入不全）时为 False，此时登录与任何已持有会话的请求都会被拒
-        （503 errors.cd_not_deployed）。
+        只在「已启用」的前提下才有意义（闸门先看契约表，再调本方法）：
+          - provision='auto'  ：CD 首次连库自动建全（MySQL 用 _MYSQL_TABLE_DDL、SQLite 用
+            _ensure_cd_tables，两者结尾都有清单自检），正常情况下恒为 True；运行期若被人为 DROP
+            掉某张表，闸门立刻拒绝（不静默补救），重启服务后重新建全；
+          - provision='manual'：表归运维预建（MySQL 导入 database/init_mysql.sql），未建全即为 False，
+            此时登录与任何已持有会话的请求都会被拒（503 errors.cd_not_deployed）。
         """
         return not self.cd_missing_tables()
 
@@ -331,27 +647,32 @@ class Database:
             wrapper = _SqliteWrapper(raw)
 
         if not Database._tables_ensured:
-            # 维护 CD 自有表：SQLite 走完整建表+迁移（开发/单机模式）；MySQL **绝不建表** ——
-            # CD 表由管理员手动导入 database/init_mysql.sql 建立，该导入即「启用 CD」的部署闸门，
-            # 这里只对已存在的表做缺失列幂等迁移（否则已有库新增列如 cd_approvals.scheduled_at
-            # 的迁移永远跑不到）；表不存在时迁移被 suppress 跳过，即零副作用。
+            # 建表授权来自集成服务契约（enabled + provision），不再是「MySQL 永不建表的驱动硬规则」：
+            #   - 未启用 / provision=manual → **零 DDL**（既不建表也不补列）：表齐不齐一律由闸门判定；
+            #     manual 模式下 DDL 归运维（MySQL 跑 database/init_mysql.sql），CD 只读；
+            #   - enabled + provision=auto  → 建全 CD_REQUIRED_TABLES + 缺列迁移 + 索引 + 契约视图
+            #     （MySQL 用 _MYSQL_TABLE_DDL，SQLite 用 _ensure_cd_tables），全部幂等。
+            # 未启用时刻意不置 _tables_ensured：CI 后台一点「启用」，下一个请求就自动建表，无需重启。
             # admin_users/roles 等共享表 schema 由 Devops-Glue 统一管理，CD 不得改动。
             # 必须传 wrapper（统一 .execute/.commit 接口）：MySQL 池化 raw 连接无 execute。
             try:
-                if self._driver == "mysql":
-                    self._ensure_mysql_migrations(wrapper)
-                else:
-                    self._ensure_cd_tables(wrapper)
+                state = self._read_integration_state(wrapper)
+                if state.enabled:
+                    if state.provision == PROVISION_AUTO:
+                        if self._driver == "mysql":
+                            self._ensure_mysql_tables(wrapper)
+                        else:
+                            self._ensure_cd_tables(wrapper)
+                    Database._tables_ensured = True
             except sqlite3.Error as e:
-                # 建表写不进去（只读 / 磁盘满 / 被占用）：CD 表当下不可用 → 503 errors.db_unavailable。
-                # 只吞 sqlite3.Error：_ensure_cd_tables 末尾的清单自检抛 RuntimeError（清单与 DDL 漂移，
-                # 属代码/配置缺陷）必须原样冒泡，不能被伪装成「服务暂时不可用」而掩盖。
+                # 建表 / 读契约写不进去（只读 / 磁盘满 / 被占用）：CD 表当下不可用 → 503 errors.db_unavailable。
+                # 只吞 sqlite3.Error：_ensure_cd_tables / _ensure_mysql_tables 末尾的清单自检抛 RuntimeError
+                # （清单与 DDL 漂移，属代码/配置缺陷）必须原样冒泡，不能被伪装成「服务暂时不可用」而掩盖。
                 wrapper.close()  # 失败也必须释放连接（Windows 上未关闭的句柄会锁住库文件）
                 raise DatabaseUnavailableError(f"自动建表失败（{self._driver}）：{e}", self._driver, str(e)) from e
             except Exception:
                 wrapper.close()  # 异常路径一律不得泄漏连接：否则库文件被锁、下次启动更糟
                 raise
-            Database._tables_ensured = True
 
         try:
             yield wrapper
@@ -387,40 +708,84 @@ class Database:
         )
         return conn
 
-    # ── MySQL 幂等迁移 ──
+    # ── MySQL 自动建表 / 迁移（仅 auto 模式）──
+
+    def _ensure_mysql_tables(self, conn):
+        """MySQL **auto 模式**（契约行 enabled=1 且 provision='auto'）下的自动建表。
+
+        与 manual 模式严格分界：manual 时本方法根本不会被调用（CD 零 DDL，只认运维预建表）。
+        顺序：建表 → 索引 → 缺列迁移 → 契约视图，全部幂等、可安全重复执行；
+        只操作 CD 自有表（cd_*），绝不触碰 Devops-Glue 的共享表（admin_users / roles / ci_* 等）。
+        跑完做清单自检：_MYSQL_TABLE_DDL 与 CD_REQUIRED_TABLES 漂移（漏表）当场报错，
+        与 SQLite 侧 _ensure_cd_tables 的自检同构（宁可启动失败，也不留半套 schema）。
+        """
+        for table in CD_REQUIRED_TABLES:
+            ddl = _MYSQL_TABLE_DDL.get(table)
+            if ddl is None:
+                continue  # 漏表由下面的自检统一报出（避免 KeyError 掩盖真因）
+            conn.execute(ddl)
+        conn.commit()
+        self._ensure_mysql_indexes(conn)
+        self._ensure_mysql_migrations(conn)
+        self._ensure_mysql_view(conn)
+
+        existing = {_first_col_value(row) for row in conn.execute(_CD_TABLE_LIST_SQL["mysql"]).fetchall()}
+        missing = [t for t in CD_REQUIRED_TABLES if t not in existing]
+        if missing:
+            raise RuntimeError(
+                "MySQL 自动建表 DDL 与 CD_REQUIRED_TABLES 清单不一致，缺少："
+                + "、".join(missing)
+                + "。新增/删除 CD 表时须同步 backend/database.py::_MYSQL_TABLE_DDL 与 database/init_mysql.sql"
+            )
+
+    def _ensure_mysql_indexes(self, conn):
+        """MySQL 索引（幂等）：MySQL 没有 CREATE INDEX IF NOT EXISTS，用 suppress 吞掉「已存在」。
+
+        只建 CD 自有表的索引（_MYSQL_INDEXES）：init_mysql.sql 里对 ci_* 表的索引调用是给运维
+        脚本用的历史遗留，运行期 CD 绝不触碰共享表。
+        """
+        for name, table, cols, unique in _MYSQL_INDEXES:
+            with suppress(Exception):
+                conn.execute(f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table}({cols})")
+        conn.commit()
+
+    def _ensure_mysql_view(self, conn):
+        """v_glue_deploy_logs：供 Devops-Glue 只读的部署记录契约视图（列由 test_schema_contract 锁定）。
+
+        MySQL 支持 CREATE OR REPLACE VIEW，老库列变化时也能刷新（与 SQLite 侧 DROP+CREATE 等价）；
+        只暴露审计字段，不含 output / stage_times 等大字段。
+        """
+        conn.execute(
+            "CREATE OR REPLACE VIEW v_glue_deploy_logs AS "
+            "SELECT id, project, tag, image, deploy_type, target, status, triggered_by, "
+            "deploy_note, created_at FROM cd_deploy_logs"
+        )
+        conn.commit()
 
     def _ensure_mysql_migrations(self, conn):
-        """MySQL 模式：绝不建表/建索引 —— 所有 CD 表由管理员手动执行
-        database/init_mysql.sql 建立，该手动导入就是「启用 CD」的部署闸门。
+        """MySQL 缺列迁移：只对**已存在**的表 ADD COLUMN，绝不建表 / 建索引（DDL 授权在调用方）。
 
-        这里只对**已存在**的表做缺失列幂等迁移（否则已有库新增列如
-        cd_approvals.scheduled_at 的迁移永远跑不到；此前迁移只在 SQLite 模式执行）。
-        表不存在时 ALTER 会报错，由 suppress 吞掉 —— 即「未启用 CD」时本方法零副作用。
+        auto 模式在建表之后调用（补旧库缺的列，否则新增列如 cd_approvals.scheduled_at 的迁移
+        永远跑不到）；表不存在时 ALTER 报错被 suppress 吞掉，即零副作用。
         重复加列报 MySQL 1060 duplicate column，同样 suppress 掉即可。
-        共享表（admin_users/roles 等）schema 由 Devops-Glue 统一管理，CD 不得改动。
+        清单与 SQLite 侧逐列对齐（_MYSQL_COLUMN_MIGRATIONS ↔ _ensure_cd_tables，由测试锁定）。
+        共享表（admin_users / roles 等）schema 归 Devops-Glue，CD 不得改动。
         注意：MySQL TEXT 列不支持字面 DEFAULT，统一用 VARCHAR。
         """
-        migrations = [
-            ("cd_deploy_logs", "approval_id", "INT DEFAULT 0"),
-            ("cd_deploy_logs", "runner", "VARCHAR(128) DEFAULT ''"),
-            ("cd_deploy_logs", "heartbeat_at", "VARCHAR(32) DEFAULT ''"),
-            ("cd_approvals", "deploy_id", "INT DEFAULT 0"),
-            ("cd_approvals", "approved_at", "VARCHAR(32) DEFAULT ''"),
-            ("cd_approvals", "scheduled_at", "VARCHAR(32) DEFAULT ''"),
-            ("cd_approvals", "updated_at", "VARCHAR(32) DEFAULT ''"),
-            ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
-            ("cd_registry_artifacts", "artifact_id", "INT DEFAULT 0"),
-            ("cd_registry_artifacts", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
-        ]
-        for tbl, col, col_def in migrations:
+        for tbl, col, col_def in _MYSQL_COLUMN_MIGRATIONS:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
         conn.commit()
 
-    # ── SQLite 自动建表 ──
+    # ── SQLite 自动建表（仅 auto 模式）──
 
     def _ensure_cd_tables(self, conn):
-        """SQLite 模式：自动创建 CD 表 + 索引"""
+        """SQLite 模式：自动创建 CD 表 + 索引 + 契约视图（仅在 enabled=1 且 provision='auto' 时调用）。
+
+        由 Database.conn() 的建表闸门统一调度：未启用 / manual 时本方法根本不会被调用（CD 零 DDL），
+        因此 manual 模式下 SQLite 老库缺列不会自愈 —— 这与 CI 手动建库模式（DB_AUTO_MIGRATE=false
+        时 CI 也只补种子、不做 DDL）语义一致。
+        """
         PK = "INTEGER PRIMARY KEY AUTOINCREMENT"
         NOW = "datetime('now','localtime')"
 

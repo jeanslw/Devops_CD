@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
 from backend.config import settings
-from backend.database import Database, DatabaseUnavailableError, cd_deploy_hint
+from backend.database import Database, DatabaseUnavailableError, cd_deploy_hint, cd_not_enabled_hint
 from backend.exceptions import AppException
 from backend.routers import (
     alerts,
@@ -45,18 +45,30 @@ from backend.services.registry_service import RegistryService, start_background_
 async def lifespan(app: FastAPI):
     """启动时：定时同步 + 告警检查 + 审批崩溃恢复"""
     db = Database()
-    # 部署闸门提示：CD_REQUIRED_TABLES 清单里的表必须全部存在（少一张 = 未部署 CD）。
-    # 刻意不阻断启动：/health、/api/info 与 /metrics 仍可用，便于探活与排障；
-    # 但登录与所有接口都会被拒（503 errors.cd_not_deployed），应用绝不代为建表（SQLite 除外，它随库自动建）。
+    # 启用/部署状态提示（三态，刻意不阻断启动）：/health、/api/info 与 /metrics 仍可用，便于探活排障。
+    #   1) 未启用集成服务 → 登录与所有接口被拒 503 errors.cd_not_enabled（去 CI 后台开开关）；
+    #   2) 已启用但表没建全 → 同样被拒 503 errors.cd_not_deployed（auto 重启自愈 / manual 需导入脚本）；
+    #   3) 正常 → 不打日志。
+    # 应用只在「已启用 + provision=auto」时才建表（见 database.Database.conn 的建表闸门），
+    # 因此这里的 cd_integration_state() 也顺带触发了首次自动建表。
     try:
-        missing = db.cd_missing_tables()
-        if missing:
-            logging.getLogger(__name__).error(
-                "CD 数据表未建全（缺失 %d 张：%s）：%s —— 当前登录与所有接口均被拒绝（503），应用不会自行建表",
-                len(missing),
-                "、".join(missing),
-                cd_deploy_hint(db.driver),
+        state = db.cd_integration_state()
+        if not state.enabled:
+            logging.getLogger(__name__).warning(
+                "Devops-CD 尚未启用（集成服务契约表 integrated_services 里没有 enabled=1 的 cd 行）："
+                "登录与所有接口均被拒绝（503 errors.cd_not_enabled）。%s",
+                cd_not_enabled_hint(),
             )
+        else:
+            missing = db.cd_missing_tables()
+            if missing:
+                logging.getLogger(__name__).error(
+                    "CD 数据表未建全（缺失 %d 张：%s；provision=%s）：%s —— 当前登录与所有接口均被拒绝（503）",
+                    len(missing),
+                    "、".join(missing),
+                    state.provision,
+                    cd_deploy_hint(db.driver, state.provision),
+                )
     except DatabaseUnavailableError as e:
         # 库当前不可用（连不上/建不了表）：请求返回 503 errors.db_unavailable —— 与「未部署」区分开，
         # 排查方向是连接/权限/磁盘，而不是重跑建表脚本。

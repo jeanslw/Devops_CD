@@ -9,12 +9,13 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.config import settings
-from backend.database import Database, cd_deploy_hint
+from backend.database import Database, cd_deploy_hint, cd_not_enabled_hint
 
 security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
-# 中性措辞：具体动作按驱动追加（cd_deploy_hint），避免对 SQLite 用户说出「导入 MySQL 脚本」这种错指令
+# 两种拒绝措辞必须分开：先说「没启用」（去 CI 后台开开关），再说「表没建全」（按 provision 补表）
+CD_NOT_ENABLED_MSG = "CD 服务未启用：请在 Devops-Glue 后台「API集成服务」中启用 Devops-CD"
 CD_NOT_DEPLOYED_MSG = "CD 服务未部署：CD 数据表未建全"
 _systems_col_ok = True  # 乐观假设 systems 列存在，查询失败后置 False
 
@@ -100,34 +101,51 @@ def get_db() -> Database:
 
 
 def cd_deploy_gate(db: Database) -> None:
-    """部署闸门：CD_REQUIRED_TABLES 清单没建全时禁止一切操作（清单就是「CD 启用了吗」的分水岭）。
+    """部署闸门：CD 必须「已启用」且「表建全」才放行，否则禁止一切操作。
 
-    MySQL 模式的 CD 表由管理员手动导入 database/init_mysql.sql 建立，应用绝不代为建表
-    （零 DDL）；SQLite 模式随库自动建全（见 Database._ensure_cd_tables 的清单自检）。
-    因此这里只做「报警 + 拒绝」，绝不修补 schema：
+    判据来自 Devops-Glue 的集成服务契约表（CI 是唯一写入方；语义见 database.py 顶部注释）：
 
-    - 表不齐全 → 抛 503 errors.cd_not_deployed，带上缺失表明细 + 按驱动给出正确动作
-      （SQLite 重启即自愈；MySQL 才需要导入建表脚本），让运维一次补齐；
-    - 半套 schema 一律不放行：登录后各功能只会缺表 500、甚至写坏数据，宁可在入口整体拒绝；
-    - 覆盖范围：登录（routers/auth.login，排在限流计数之前）+ authenticate + 所有带
-      verify_token / get_current_user 的接口 + 公开 Webhook 接收端点 + WebShell 的 WS 握手
-      —— 即「即使能登录，也禁止做任何操作」；无认证的探活接口（/health、/api/info、/metrics）
-      保持可用。
+    1) 未启用（契约表 / 契约行缺失，或 enabled<>1）→ 503 errors.cd_not_enabled，**用户可见提示只留
+       CD_NOT_ENABLED_MSG 这一句**（提示框不被长文案撑长）：动作细节（cd_not_enabled_hint）随
+       detail.hint 与服务端启动日志下发 —— CD 不提供自开通入口，也不会因为「表恰好存在」就放行；
+    2) 已启用但清单没建全 → 503 errors.cd_not_deployed，带上缺失表明细 + 按 provision 给出正确动作
+       （auto：CD 会自动建表，重启即自愈；manual：MySQL 导入 database/init_mysql.sql）；
+    3) 两者都满足才放行。
+
+    半套 schema 一律不放行：登录后各功能只会缺表 500、甚至写坏数据，宁可在入口整体拒绝。
+    覆盖范围：登录（routers/auth.login，排在限流计数之前）+ authenticate + 所有带 verify_token /
+    get_current_user 的接口 + 公开 Webhook 接收端点 + WebShell 的 WS 握手 —— 即「即使能登录，
+    也禁止做任何操作」；无认证的探活接口（/health、/api/info、/metrics）保持可用。
 
     该拒绝属于「部署状态」而非「凭据失败」，因此不计入与 Devops-Glue 共享的登录失败锁。
 
-    另一种 503 与之严格区分：数据库**当前不可用**（连不上/建不了表/被锁/只读）抛的是
+    另一种 503 与之严格区分：数据库**当前不可用**（连不上 / 建不了表 / 被锁 / 只读）抛的是
     backend.database.DatabaseUnavailableError → 503 errors.db_unavailable（排查连接、配置、
-    文件权限、磁盘空间），绝不混进 errors.cd_not_deployed 骗人去重跑建表脚本。
+    文件权限、磁盘空间），绝不混进上面两种骗人去点开关或重跑建表脚本。
+
+    顺序刻意「先读契约、再查清单」：未启用时不必去数表（少一次元数据查询），提示也不会跑偏。
     """
     from backend.exceptions import AppException
 
+    state = db.cd_integration_state()
+    if not state.enabled:
+        raise AppException(
+            # 用户可见文案只留这一句（登录页提示框读 error、toast 读 error_key→i18n，两处都只有它）；
+            # message 的定位就是「无前端翻译时的兜底展示」（见 exceptions.AppException），不该塞长提示。
+            CD_NOT_ENABLED_MSG,
+            status_code=503,
+            # 动作细节（cd_not_enabled_hint）改走 detail.hint：useError 只渲染「字符串型」detail，
+            # dict 不会被弹进提示框；curl / 脚本排查时仍能拿到完整指引（启动日志也已打印同一份）。
+            detail={"hint": cd_not_enabled_hint()},
+            error_key="errors.cd_not_enabled",
+            error_params={"service": CD_SYSTEM},
+        )
     missing = db.cd_missing_tables()
     if not missing:
         return
     preview = "、".join(missing[:6]) + ("…" if len(missing) > 6 else "")
     raise AppException(
-        f"{CD_NOT_DEPLOYED_MSG}（缺失 {len(missing)} 张：{preview}）。{cd_deploy_hint(db.driver)}",
+        f"{CD_NOT_DEPLOYED_MSG}（缺失 {len(missing)} 张：{preview}）。{cd_deploy_hint(db.driver, state.provision)}",
         status_code=503,
         error_key="errors.cd_not_deployed",
         error_params={"tables": "、".join(missing)},

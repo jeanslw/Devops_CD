@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.6.0 (2026-10-11) — Integrated-service switch: enablement & DDL delegated to the Devops-Glue contract table
+
+### Upgrade Notes
+- **CD's enablement now comes from Devops-Glue's integration-service contract table**: turn Devops-CD on first under "API Integration Services → Enable" in the Devops-Glue console, otherwise CD treats itself as *not enabled* and rejects login and every operation (503 `errors.cd_not_enabled`).
+- With `provision='auto'` (CI's `DB_AUTO_MIGRATE` on) CD **creates and upgrades its tables automatically** — no manual import needed; with `provision='manual'` (auto-migrate off) the behaviour matches v1.5.7: an administrator imports `database/init_mysql.sql` (idempotent; re-run it after upgrades).
+- **Disabling the integration service never deletes CD tables or data** (it only freezes admission; re-enabling keeps the historical data).
+
+### Added
+- **Contract-driven enablement (CI is the only writer)** — new `Database.cd_integration_state()` reads the single `integrated_services` row (`service_name='cd'`) for `enabled` + `provision` and uses it as the gate's first criterion. Missing table / row or `enabled<>1` ⇒ **zero DDL** + 503 `errors.cd_not_enabled` (pointing at the CI console); flipping the switch takes effect on the **very next request** — no restart, no config change.
+- **Automatic table creation under `provision='auto'` (identical in MySQL and SQLite)** — MySQL gains `_MYSQL_TABLE_DDL` / `_MYSQL_INDEXES` / `_MYSQL_COLUMN_MIGRATIONS` (`.dockerignore` excludes `database/`, so the ops script never reaches the image and the DDL must be embedded); together with SQLite's `_ensure_cd_tables` it creates every `CD_REQUIRED_TABLES` table (14 today) on the first connection, adds missing columns, indexes and the `v_glue_deploy_logs` contract view, then self-checks the inventory (a missing table fails fast instead of leaving half a schema).
+- **Frontend i18n** — new `errors.cd_not_enabled` (zh/en); `errors.cd_not_deployed` now distinguishes `auto` (restart to self-heal) from `manual` (import the script).
+
+### Changed
+- **The gate criterion is now "contract state × inventory completeness"** — `cd_deploy_gate()` reads the contract first (not enabled ⇒ 503 `errors.cd_not_enabled`), then the inventory (missing table ⇒ 503 `errors.cd_not_deployed`, with hints that follow `provision`: `cd_deploy_hint(driver, provision)` and the new `cd_not_enabled_hint()`); the startup banner now reports three states (not enabled / enabled but incomplete / healthy).
+- **Zero DDL in `manual` mode** — aligned with CI's manual schema mode (with `DB_AUTO_MIGRATE=false` CI seeds only and issues no DDL): CD neither creates tables nor adds columns under `manual`; schema upgrades belong to the DBA's DDL script.
+- **Not-enabled notice is one sentence and follows the UI language** — the user-visible text for 503 `errors.cd_not_enabled` is exactly "CD is not enabled: enable Devops-CD in the Devops-Glue console under 'API Integration Services'"; the **login error box now shares the toast's path** (`error_key` → frontend i18n, so English really shows English instead of the backend's Chinese fallback string; the registry "scan trigger" failure toast follows the same `error_key`-first rule); the action detail `cd_not_enabled_hint()` now travels via `detail.hint` and the startup log instead of being appended to `message`.
+- **Docs & tests** — the gate chapters of `ADMIN_MANUAL(_ZH)` / `ARCHITECTURE(_ZH)` / `FAQ(_ZH)` were rewritten; added `backend/tests/test_cd_schema_sources.py` (four-way parity of table / column / index sets across the inventory ↔ `init_mysql.sql` ↔ `_MYSQL_TABLE_DDL` ↔ the real SQLite DDL) and the shared `backend/tests/cd_contract.py` helper; rewrote `backend/tests/test_cd_deploy_gate.py` (three contract states × two drivers × zero-DDL assertions).
+
 ## v1.5.7 (2026-10-08) — Security hardening, observability & CI tooling
 
 ### Upgrade Notes

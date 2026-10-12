@@ -133,20 +133,24 @@ NOTIFY_TRUNCATE_CHARS=200
 | `sqlite` | Dev / single instance | Must point to same `.db` file; mount shared volume for containers |
 | `mysql` | Production (recommended) | Avoids SQLite write contention between CD and PHP API |
 
-### Who Creates the CD Tables (Deployment Gate)
+### Who Creates the CD Tables (Integrated-Service Switch = Deployment Gate)
 
-**Importing `database/init_mysql.sql` by hand *is* the "CD enabled" gate**: every CD table is created by that script, and the app (**especially in MySQL mode**) never creates tables on its own. The verdict is driven by the single inventory in code, `CD_REQUIRED_TABLES` (14 tables today; when tables are added or removed that list is the one source of truth and the gate, error messages and warnings follow automatically — no hard-coded counts) — **if even one table from the list is missing, CD counts as *not enabled***:
+Whether "CD is enabled" is decided by **Devops-Glue's integration-service contract table `integrated_services`** (CI is the only writer; see the "Integrated Services" section of the Devops-Glue admin manual): the row with `service_name='cd'` carries two switches — `enabled` and `provision` — and CD **reads that row directly** at the gate instead of guessing from "does the table exist".
 
-- startup logs the missing CD tables one by one (ERROR level) but deliberately does **not** block startup;
-- login is rejected (HTTP 503 `errors.cd_not_deployed`, the message lists the missing tables plus the driver-appropriate fix); that failure is **not counted** in the login-failure lock, so an administrator account is never locked out;
-- **requests carrying an existing session, the public webhook receiver and WebShell (WebSocket handshake) are rejected with 503 too** — "even if login were possible, no operation is allowed": letting a half-imported schema through only produces 500s everywhere and can corrupt data;
-- the unauthenticated liveness endpoints (`/health`, `/api/info`, `/metrics`) stay available for troubleshooting;
-- nothing is left behind as DDL in the shared database (zero DDL in MySQL mode), and missing tables are never created on the fly.
+| Contract row state | What CD does | When it is not satisfied |
+|--------------------|--------------|--------------------------|
+| contract table missing / row missing / `enabled<>1` | **zero DDL**: no table, no column, no index | login and every request carrying a session get 503 `errors.cd_not_enabled` (points you to the CI console) |
+| `enabled=1` + `provision='auto'` | **CD creates its tables automatically** (MySQL and SQLite alike): on first connect it creates every table in `CD_REQUIRED_TABLES` (14 today) + adds missing columns + indexes + the contract view | incomplete tables (creation failed, someone DROPped one, …) → 503 `errors.cd_not_deployed` (restart CD to self-heal) |
+| `enabled=1` + `provision='manual'` | **zero DDL**: only pre-created tables are accepted (MySQL: an administrator imports `database/init_mysql.sql`) | any table missing → 503 `errors.cd_not_deployed` (import the DDL script) |
 
-| Driver | How tables are created |
-|--------|------------------------|
-| `sqlite` | Dev / single instance: tables are **created automatically** with the DB file (no manual import); table creation ends with an **inventory self-check** that fails fast if the list and the DDL drift apart, so a half-created DB never runs |
-| `mysql` | **Must** be imported by an administrator via `database/init_mysql.sql` (whole list); incomplete ⇒ login and every operation blocked |
+Key points:
+
+- **Enabling happens only in the CI console** (Devops-Glue → "API Integration Services → Enable" → turn on Devops-CD): CD offers no self-service entry, seeds nothing, and **never lets you in just because the tables happen to exist**;
+- `provision` is written by CI **at the moment of enabling**, following its own migration mode: `DB_AUTO_MIGRATE` on → `auto` (CD may create tables), off → `manual` (the DBA owns the schema). CD only reads this value;
+- **Disabling only freezes admission**: the CD tables and their data stay exactly as they are — nothing is `DROP`ped or wiped; after re-enabling, historical data is still there (CI merely re-points the token reference on the contract row);
+- the gate covers: login (before the rate-limit counter), every request carrying a session, the public webhook receiver and WebShell (WebSocket handshake) — "even if login were possible, no operation is allowed". Such a 503 is a **deployment state**, not a credential failure, so it is **not counted** in the login-failure lock shared with Devops-Glue; the unauthenticated liveness endpoints (`/health`, `/api/info`, `/metrics`) stay available for troubleshooting.
+
+**`provision='manual'` (MySQL)**: an administrator imports the DDL script by hand — that script is also how the schema is upgraded, and it must create **every table of the `CD_REQUIRED_TABLES` inventory** (14 today; when tables are added or removed that list is the one source of truth and the gate, error messages and warnings follow automatically — no hard-coded counts):
 
 ```bash
 mysql -u root -p devops_glue < database/init_mysql.sql
@@ -175,7 +179,9 @@ The script also creates:
 
 - View `v_glue_deploy_logs`: read-only deployment-record contract view for Devops-Glue (audit fields only, excludes large columns such as `output`).
 
-**Gate behaviour in SQLite mode** (dev / single instance): the CD tables are created automatically with the DB file, so the gate is normally always open and development stays frictionless. If someone manually `DROP TABLE`s one at runtime (e.g. to reproduce an issue), the gate immediately answers 503 for login and every operation (it only reports — it never silently repairs), and **restarting the service re-creates the tables and heals it**; the error message also tells the truth per driver (only MySQL is pointed at the import script), so nobody is sent to the wrong fix.
+**Structural parity with `provision='auto'`**: in auto mode CD creates its MySQL tables from the DDL embedded in the code (`backend/database.py::_MYSQL_TABLE_DDL`, with the index and missing-column migration lists right next to it). Its **table set, per-table column set and index list** are locked item by item against `database/init_mysql.sql` by `backend/tests/test_cd_schema_sources.py` — both modes (auto-create vs. manual import) must yield the same schema, so one database never ends up with two structures.
+
+**Gate behaviour in SQLite mode** (dev / single instance): with `provision='auto'` the CD tables are created together with the DB file, so the gate is normally open and development stays frictionless. If someone manually `DROP TABLE`s one at runtime (e.g. to reproduce an issue), the gate immediately answers 503 for login and every operation (it only reports — it never silently repairs), and **restarting the service re-creates the tables and heals it**. If the CI side runs in `manual` mode (`DB_AUTO_MIGRATE=false`) while CD uses SQLite, CD also performs **zero DDL** and the hint tells you to have an operator create the tables or to switch CI back to auto-migrate and re-enable — the message always follows `provision` and never points you at the wrong fix.
 
 **The other 503: database unavailable (distinct from the above)** — when the SQLite file is read-only / the disk is full / the file is locked, when the DB file cannot be opened, or when MySQL hands out no connection, login and the endpoints return 503 `errors.db_unavailable` (`error_params` carries the driver and the underlying cause). That is an **environment** problem: check connectivity/configuration, the data directory's write permission and free disk space — do **not** re-run the DDL script (it cannot fix it and you would be looking in the wrong place). In SQLite mode make sure the data directory is writable and the disk is not full.
 

@@ -130,20 +130,24 @@ NOTIFY_TRUNCATE_CHARS=200
 | `sqlite` | 开发/单机测试 | 必须指向同一个 `.db` 文件，容器部署需挂载共享卷 |
 | `mysql` | 生产环境（推荐）| 避免 SQLite 并发写入问题，支持 CD 和 PHP API 同时读写 |
 
-### CD 表由谁创建（部署闸门）
+### CD 表由谁创建（集成服务开关 = 部署闸门）
 
-**手动导入 `database/init_mysql.sql` 就是「启用 CD」的闸门**：CD 表全部由该脚本建立，应用（尤其 MySQL 模式）**绝不代为建表**。判定只认代码里的**唯一清单 `CD_REQUIRED_TABLES`**（当前 14 张；以后加表/删表，这张清单就是唯一准绳，闸门、错误文案、告警都会自动跟随，不写死张数）—— **清单里少任何一张都当作「未启用 CD」**：
+「CD 启用了没有」由 **Devops-Glue 的集成服务契约表 `integrated_services`** 决定（CI 是唯一写入方；语义见 Devops-Glue 管理手册的「集成服务」章节）：表里 `service_name='cd'` 的那一行带两个开关 —— `enabled` 与 `provision`，CD 进闸门时**直读这一行**，不再用「表在不在」猜启用状态。
 
-- 启动日志逐张打印缺失的 CD 表（ERROR 级），但**刻意不阻断启动**；
-- 登录被拒（HTTP 503 `errors.cd_not_deployed`，错误信息列出缺哪些表，并按驱动给出补齐动作）；该失败**不计入**登录失败锁，管理员的账号不会被锁；
-- **已持有登录会话的请求、公开 Webhook 接收端点、WebShell（WebSocket 握手）也一律 503** —— 即「即使能登录，也禁止做任何操作」：半套 schema 放行只会让各功能到处 500、甚至写坏数据；
-- 无认证的探活接口（`/health`、`/api/info`、`/metrics`）保持可用，便于排障；
-- 共享库里不会留下任何 DDL 痕迹（MySQL 模式零 DDL），也不会顺手补建缺失的表。
+| 契约行状态 | CD 的行为 | 未满足时的表现 |
+|-----------|-----------|----------------|
+| 契约表缺失 / 契约行缺失 / `enabled<>1` | **零 DDL**：不建表、不补列、不补索引 | 登录与所有已持有会话的请求一律 503 `errors.cd_not_enabled`（提示去 CI 后台启用 CD） |
+| `enabled=1` + `provision='auto'` | **CD 自动建表**（MySQL 与 SQLite 同理）：首次连库建全 `CD_REQUIRED_TABLES`（当前 14 张）+ 补既有表缺失列 + 补索引 + 契约视图 | 表没建全（建表失败、运行期被 DROP 等）→ 503 `errors.cd_not_deployed`（提示重启 CD 即自愈） |
+| `enabled=1` + `provision='manual'` | **零 DDL**：只认运维预建的表（MySQL 由管理员导入 `database/init_mysql.sql`） | 缺任何一张 → 503 `errors.cd_not_deployed`（提示导入建表脚本） |
 
-| 驱动 | 建表方式 |
-|------|----------|
-| `sqlite` | 开发/单机模式：CD 表随库文件**自动建全**（无需手动导入）；建表末尾有**清单自检**，清单里加了表却漏改建表逻辑会当场报错，不会半套运行 |
-| `mysql` | **必须**由管理员手动导入 `database/init_mysql.sql`（清单建全）；未建全 → 禁止登录与任何操作 |
+要点：
+
+- **启用动作只在 CI 后台完成**（Devops-Glue →「API集成服务 → 启用」开启 Devops-CD）：CD 不提供自开通入口、不写种子，也**不会因为「表恰好存在」就放行**；
+- `provision` 由 CI 在**启用那一刻**按其迁移模式写入：`DB_AUTO_MIGRATE` 开启 → `auto`（授权 CD 建表），关闭 → `manual`（结构归 DBA）。CD 只读这个值，不做二次判断；
+- **关闭集成服务只冻结准入**：CD 表与数据原样保留，绝不 `DROP` / 清空；重新启用后历史数据继续可用（CI 只换掉契约行上的 token 引用）；
+- 闸门覆盖：登录（排在限流计数之前）+ 所有已持有会话的请求 + 公开 Webhook 接收端点 + WebShell（WebSocket 握手）—— 即「即使能登录，也禁止做任何操作」；这类 503 属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享的登录失败锁；无认证的探活接口（`/health`、`/api/info`、`/metrics`）保持可用，便于排障。
+
+**`provision='manual'`（MySQL）**：由管理员手动导入建表脚本 —— 该脚本也是「库结构升级」的手段，必须把**清单 `CD_REQUIRED_TABLES` 里的表建全**（当前 14 张；以后加表/删表，这张清单就是唯一准绳，闸门、错误文案、告警都会自动跟随，不写死张数）：
 
 ```bash
 mysql -u root -p devops_glue < database/init_mysql.sql
@@ -172,7 +176,9 @@ mysql -u root -p devops_glue < database/init_mysql.sql
 
 - 视图 `v_glue_deploy_logs`：供 Devops-Glue 只读的部署记录契约视图（仅审计字段，不含 `output` 等大字段）。
 
-**SQLite 模式下的闸门行为**（开发/单机）：CD 表随库自动创建，所以正常情况下闸门恒放行，开发零摩擦。若运行期有人手工 `DROP TABLE`（例如为了复现问题），闸门会**立刻**对登录与所有操作返回 503（只报警、**不静默补建**），**重启服务即自动建全自愈**；错误提示也会按驱动说实话（SQLite 提示重启自愈，只有 MySQL 才提示导入建表脚本），不会把运维指向错误的动作。
+**`provision='auto'` 时的结构一致性**：auto 模式下 CD 用代码内置的 MySQL 建表 DDL（`backend/database.py::_MYSQL_TABLE_DDL`，索引与缺列迁移清单同源）自动建表，它与 `database/init_mysql.sql` 的**表集合、逐表列集合、索引清单**由 `backend/tests/test_cd_schema_sources.py` 逐项锁定 —— 两种模式（auto 自动建 / manual 手动导入）得到的库结构必须一致，同一个库不存在「两套结构」。
+
+**SQLite 模式下的闸门行为**（开发/单机）：`provision='auto'` 时 CD 表随库自动创建，正常恒放行、开发零摩擦；若运行期有人手工 `DROP TABLE`（例如为了复现问题），闸门会**立刻**对登录与所有操作返回 503（只报警、**不静默补建**），**重启服务即自动建全自愈**。若 CI 侧为 `manual`（`DB_AUTO_MIGRATE=false`）而 CD 用 SQLite，CD 同样**零 DDL**，提示语会说明「由运维补建这些表，或在 Devops-Glue 侧改回自动迁移模式后重新启用」—— 任何情况下提示都按 `provision` 说实话（auto 说重启自愈，manual + MySQL 才说导入建表脚本），不会把运维指向错误的动作。
 
 **另一种 503：数据库不可用（与上面区分）**：SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接时，登录与各接口返回 503 `errors.db_unavailable`（`error_params` 带驱动与底层原因）。这类是**环境**问题 —— 排查连接配置、数据目录写权限、磁盘空间即可，**不要**去重跑建表脚本（那修不了，方向错了）。SQLite 模式请确认数据目录可写、磁盘未满。
 

@@ -22,7 +22,7 @@ import { setLang } from '@/locales'
 
 const router = useRouter()
 const auth = useAuth()
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const user = ref('')
 const password = ref('')
 const err = ref('')
@@ -44,7 +44,12 @@ async function doLogin() {
       auth.setAuthenticated()
       router.push('/')
     } else {
-      err.value = d.error || t('login.loginFailed')
+      // 与 useError 同一策略：后端给了 error_key 就按当前语言翻译（否则切 EN 时登录框仍是后端的中文兜底文案）；
+      // 无 key / 当前语言缺该 key 时回退后端文案，最后兜底本地通用失败文案。
+      const key = d && d.error_key
+      err.value = key && te(key)
+        ? t(key, (d && d.error_params) || {})
+        : (d && d.error ? d.error : t('login.loginFailed'))
     }
   } catch (e) {
     err.value = t('login.networkError')

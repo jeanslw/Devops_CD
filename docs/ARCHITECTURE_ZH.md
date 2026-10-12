@@ -96,26 +96,36 @@
 - **工厂模式**：`GitProviderFactory` 按 URL 自动匹配 Git 平台适配器
 - **双驱动数据库**：SQLite / MySQL / MariaDB 统一接口，一套代码三种模式，与 PHP API 共享同一数据库实例
 
-## CD 表清单（部署闸门）
+## CD 表清单（集成服务开关 × 部署闸门）
 
-CD 是否启用，只由代码里的唯一清单 `backend/database.py::CD_REQUIRED_TABLES` 决定（与清单张数无关）：清单里的表**全部存在**即视为已部署，少任何一张都当作未部署 —— 登录、所有已持有会话的请求、公开 Webhook 接收、WebShell 握手统一 503 `errors.cd_not_deployed`，应用只报警、**绝不代为建表**。这份清单就是「CD 有没有启用」的分水岭。
+「CD 是否启用」由 **Devops-Glue 的集成服务契约表 `integrated_services`** 决定（CI 是唯一写入方）：`service_name='cd'` 那一行的 `enabled` 与 `provision` 就是开关，CD 只读（`Database.cd_integration_state()`），不再用「表在不在」猜启用状态。
 
-**增删一张 CD 表 = 只改三处**（闸门判定、错误文案、启动告警、张数全部自动跟随，不写死数字）：
+| 契约行状态 | CD 行为 | 闸门 |
+|-----------|---------|------|
+| 表 / 行缺失，或 `enabled<>1` | 零 DDL | 503 `errors.cd_not_enabled`（去 CI 后台「集成服务」启用） |
+| `enabled=1` + `provision='auto'` | 首次连库自动建全清单 + 补缺失列 + 补索引 + 契约视图（MySQL / SQLite 同理） | 表没建全 → 503 `errors.cd_not_deployed`（重启 CD 自愈） |
+| `enabled=1` + `provision='manual'` | 零 DDL（结构归 DBA：MySQL 导入 `database/init_mysql.sql`） | 缺表 → 503 `errors.cd_not_deployed`（导入建表脚本） |
+
+关闭集成服务只冻结准入：CD 表与数据原样保留，绝不 `DROP`。闸门覆盖登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手。
+
+**增删一张 CD 表 = 只改四处**（闸门判定、错误文案、启动告警、张数全部自动跟随，不写死数字）：
 
 | # | 位置 | 说明 |
 |---|------|------|
 | 1 | `backend/database.py::CD_REQUIRED_TABLES` | 唯一清单；顺序即错误提示里的展示顺序 |
-| 2 | `database/init_mysql.sql` | MySQL 建表脚本（生产启用 CD 的唯一手段，幂等可重跑） |
-| 3 | `backend/database.py::_ensure_cd_tables` | SQLite 随库自动建表；结尾有**清单自检**，漏改即首次连库报错 |
+| 2 | `database/init_mysql.sql` | `manual` 模式的建表脚本（幂等，可重复执行） |
+| 3 | `backend/database.py::_MYSQL_TABLE_DDL`（连同 `_MYSQL_INDEXES` / `_MYSQL_COLUMN_MIGRATIONS`） | `auto` 模式的 MySQL 自动建表：`.dockerignore` 排除了 `database/`，运维脚本不进镜像，只能内置 |
+| 4 | `backend/database.py::_ensure_cd_tables` | `auto` 模式的 SQLite 随库建表；结尾有**清单自检**，漏改即首次连库报错 |
 
-清单漂移有三道防线：`backend/tests/test_cd_deploy_gate.py` 对 1↔2 双向校验、对 1↔3 做集合覆盖断言（张数取 `len(清单)`，不写死），运行时再由 `_ensure_cd_tables` 的清单自检兜底。
+清单漂移有四道防线：`backend/tests/test_cd_schema_sources.py` 逐表、逐列、逐索引锁定 1↔2↔3↔4（SQLite 侧直接反射真实建表结果），`backend/tests/test_cd_deploy_gate.py` 锁定运行时行为（三种契约状态 × 两个驱动），运行时再由 `_ensure_mysql_tables` / `_ensure_cd_tables` 的清单自检兜底。
 
-**两个驱动的区别**：
+**两种模式 × 两个驱动的区别**：
 
-- **MySQL**：CD 表只能由管理员导入 `database/init_mysql.sql` 建立，应用零 DDL（只对**已存在**的表做缺失列幂等迁移）；未建全 → 闸门 503，提示导入脚本。
-- **SQLite**：CD 表随库自动建全，开发零摩擦；运行期若被手工 `DROP TABLE`，闸门**立刻** 503（不静默补建），**重启服务即自动建全自愈**；提示按驱动给出正确动作（`cd_deploy_hint()` 读 `Database.driver`），不会指错方向。
+- **`auto`**：CD 首次连库自动建表（MySQL 用内置 `_MYSQL_TABLE_DDL`、SQLite 用 `_ensure_cd_tables`）并补齐既有表的缺失列；表没建全时闸门 503，提示「重启 CD 自愈」。
+- **`manual`**：CD 零 DDL（连 ALTER 都不发）；MySQL 由管理员导入 `database/init_mysql.sql`，SQLite 由运维补建（或请 CI 改回自动迁移模式后重新启用）。
+- **提示按 `provision` 说实话**：`cd_deploy_hint(driver, provision)` 与 `cd_not_enabled_hint()` 是唯一出口（见 `backend/database.py`），避免把运维指向错误的动作；其中未启用的**用户可见提示只有一句话**（`errors.cd_not_enabled` 的 i18n 文案 —— 登录页提示框与 toast 同源：`error_key` → i18n，都不拼长文案、都随语言切换），动作细节随响应体 `detail.hint` 与启动日志下发。
 
-- **数据库不可用 ≠ 未部署**：连不上、建不了表（库文件只读/磁盘满/被占用）、取不到连接 → `DatabaseUnavailableError` → 503 `errors.db_unavailable`（`driver` / `reason` 随 `error_params` 下发；排查连接、配置、权限、磁盘）；只有「清单里的表没建全」才是 `errors.cd_not_deployed`（去补齐建表）。同为 503，但 error_key 不同、提示的动作不同 —— 混用会把运维指向错误方向。
+- **数据库不可用 ≠ 未启用 / 未部署**：连不上、建不了表（库文件只读/磁盘满/被占用）、取不到连接 → `DatabaseUnavailableError` → 503 `errors.db_unavailable`（`driver` / `reason` 随 `error_params` 下发；排查连接、配置、权限、磁盘）；只有「没启用」才是 `errors.cd_not_enabled`（去点开关）、「清单没建全」才是 `errors.cd_not_deployed`（去补表）。同为 503，但 error_key 不同、提示的动作不同 —— 混用会把运维指向错误方向。
 
 ## 解决问题
 

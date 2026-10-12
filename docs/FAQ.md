@@ -42,17 +42,28 @@ Yes. Add multiple metrics under a single monitor item, each targeting a differen
 
 cd_service must share the same database as Devops-Glue API. Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) settings are correct.
 
+### Q: Login fails with "CD is not enabled: enable Devops-CD in the Devops-Glue console under 'API Integration Services'"?
+
+Whether CD is enabled is decided only by Devops-Glue's integration-service contract table `integrated_services` (CI is the only writer): if the contract table / row is missing or `enabled<>1`, CD counts as **not enabled**, performs zero DDL, and login, every request carrying a session, the public webhook receiver and the WebShell handshake all return 503 (`errors.cd_not_enabled`).
+
+**Fix**: turn Devops-CD on in the Devops-Glue console under "API Integration Services → Enable" — the action writes the contract row and stores the `provision` value derived from CI's migration mode, and CD picks it up **immediately** (no config change, no restart).
+
+> The message box shows **only that one sentence**: the login error box and the toast now share one path — both resolve `error_key=errors.cd_not_enabled` through the frontend i18n, so switching to EN really shows English instead of the backend's Chinese fallback; the full action guidance travels in the response's `detail.hint` and in the CD startup log instead of being appended to the message.
+
 ### Q: Login fails with "CD is not deployed: the CD tables are incomplete (missing: ...)"?
 
-The CD tables are created by importing `database/init_mysql.sql` by hand — that import *is* the "CD enabled" gate, and **every table in the code inventory `CD_REQUIRED_TABLES` must be present** (14 today; when tables are added or removed that list is the one source of truth, and one missing table means "not deployed"): login returns HTTP 503 (the message lists the missing tables plus the driver-appropriate fix), **requests carrying an existing session, the public webhook receiver and WebShell (WebSocket handshake) are rejected with 503 as well** ("even if login were possible, no operation is allowed"), and CD will **not** create or patch tables on its own (it must not touch the shared database uninvited). Run it once:
+This means CD **is enabled**, but the inventory `CD_REQUIRED_TABLES` (14 tables today; that list is the one source of truth, and one missing table means "not deployed") is incomplete. The fix depends on the `provision` value on the contract row:
+
+- `provision='auto'` (CI runs in auto-migrate mode): **CD creates its tables automatically** — restarting CD heals a missing table; that is exactly what the error message says;
+- `provision='manual'` (CI runs in manual schema mode): CD issues **zero DDL** (not even ALTER), so an administrator must import the DDL script to complete the inventory — it is idempotent, safe to re-run, and should be re-run after every upgrade to pick up new tables/columns:
 
 ```bash
 mysql -u root -p devops_glue < database/init_mysql.sql
 ```
 
-The script is idempotent (`CREATE TABLE IF NOT EXISTS` plus existence guards), so it is safe to re-run; re-run it after every upgrade to pick up new tables/columns. A **partially imported** database (or a legacy one that only holds `cd_sessions` left over from the old self-healing logic) is fixed the same way: just re-run the script — it creates whichever table is missing, and the table names in the error message are exactly the to-do list. Conversely, to shut CD down completely and return to a clean not-deployed state, drop all `cd_*` tables (e.g. `DROP TABLE cd_sessions;`, which also discards session/approval data).
+Also note: the gate covers login, requests carrying a session, the public webhook receiver and the WebShell handshake ("even if login were possible, no operation is allowed"). **Disabling the integration service only freezes admission — it never deletes data** (the CD tables and records stay as they are); to wipe everything you must `DROP` the `cd_*` tables yourself (which also discards session/approval data).
 
-> **SQLite mode** (dev / single instance): the CD tables are created automatically with the DB file, so nothing is normally missing; if you manually `DROP TABLE`d one, the gate immediately answers 503 (it reports, it does not repair) and **restarting the service re-creates them and heals it** — you never import the MySQL script there, and the error message says so.
+> **SQLite mode** (dev / single instance): with `provision='auto'` the CD tables are created together with the DB file, so nothing is normally missing; if you manually `DROP TABLE`d one, the gate immediately answers 503 (it reports, it does not repair) and **restarting the service re-creates them and heals it**. If CI runs in `manual` mode while CD uses SQLite, CD does not create tables either — switch CI back to auto-migrate and re-enable, or have an operator create them (the message says exactly that and never tells you to import the MySQL script).
 
 > **Don't confuse the other 503**: `errors.db_unavailable` (the SQLite file is read-only / the disk is full / the file is locked, the DB file cannot be opened, MySQL hands out no connection) is an **environment** problem — check connectivity/configuration, the data directory's write permission and free disk space, and **do not** re-run the DDL script, which cannot fix it.
 

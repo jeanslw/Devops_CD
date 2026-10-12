@@ -43,6 +43,8 @@ from backend.exceptions import AppException, ConflictError, ValidationError  # n
 from backend.services import approval_service as svc  # noqa: E402
 from backend.services.deploy_service import DeployService  # noqa: E402
 
+from cd_contract import enable_cd  # noqa: E402
+
 
 def make_user(username="alice", role="deployer", perms=None):
     return {"username": username, "role": role, "permissions": perms or []}
@@ -54,6 +56,8 @@ class ApprovalFlowTestCase(unittest.TestCase):
         self.db_path = os.path.join(self._tmp.name, "test_approval.db")
         # Database 启动校验要求与 Devops-Glue 共享库（ci_pipeline_artifacts 为标记表）
         self._create_marker(self.db_path)
+        # 启用 CD（= 运维在 CI 后台点集成服务开关）：auto 模式下首次连库自动建表，闸门随之放行
+        enable_cd(self.db_path)
         # 每个临时库都是"全新库"，强制重新建表（类变量在测试间共享）
         Database._tables_ensured = False
         self.db = Database(self.db_path)
@@ -550,6 +554,8 @@ class TestLegacyMigration(ApprovalFlowTestCase):
         marker.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
         marker.commit()
         marker.close()
+        # 旧库也要「已启用 CD」：否则闸门按未启用拒绝，迁移路径根本走不到
+        enable_cd(path)
 
     def _columns(self, path, table):
         raw = sqlite3.connect(path)

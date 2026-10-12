@@ -29,6 +29,8 @@ settings.db_driver = "sqlite"
 
 from backend.database import Database  # noqa: E402
 
+from cd_contract import enable_cd  # noqa: E402
+
 # CD→Glue 契约列（与 database.py _ensure_cd_tables 及 database/init_mysql.sql 保持一致）
 GLUE_DEPLOY_LOG_COLUMNS = [
     "id",
@@ -69,6 +71,8 @@ class GlueViewContractTestCase(unittest.TestCase):
         raw.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
         raw.commit()
         raw.close()
+        # 启用 CD：1.6.0 起未启用时闸门 503 且零 DDL，契约视图用例需要走真实建表路径
+        enable_cd(self.db_path)
 
         # 每个临时库都是「全新库」，强制重新建表（类变量在测试间共享）
         Database._tables_ensured = False

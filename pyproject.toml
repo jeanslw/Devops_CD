@@ -21,3 +21,9 @@ python_version = "3.10"
 # 第三方库无官方类型存根，忽略其 import 类型检查（与 dbutils 同理，避免 mypy 误报 import-untyped）
 module = ["dbutils.*", "pymysql", "pymysql.*", "requests", "requests.*", "paramiko", "paramiko.*", "yaml"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# backend/tests/ 不含 __init__.py（测试以目录为导入根，见 ruff per-file-ignores 里的 E402 说明），
+# mypy 解析不到其中的 cd_contract 辅助模块；测试代码也不是类型门禁重点，忽略该导入即可。
+module = ["cd_contract"]
+ignore_missing_imports = true

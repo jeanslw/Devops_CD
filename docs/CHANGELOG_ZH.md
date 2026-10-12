@@ -1,5 +1,23 @@
 # 更新日志
 
+## v1.6.0 (2026-10-11) — 集成服务开关：启用与建表交给 Devops-Glue 契约表
+
+### 升级注意
+- **CD 的启用状态改由 Devops-Glue 的集成服务契约表决定**：请先在 Devops-Glue 后台「API集成服务 → 启用」**开启 Devops-CD**，否则 CD 以「未启用」拒绝登录与所有操作（503 `errors.cd_not_enabled`）。
+- `provision='auto'`（CI 的 `DB_AUTO_MIGRATE` 开启）时 CD 会**自动建表 / 补列**，无需再手工导入脚本；`provision='manual'`（CI 关闭自动迁移）时行为与 v1.5.7 相同：由管理员导入 `database/init_mysql.sql`（幂等，升级后请重跑一次）。
+- **关闭集成服务不会删除 CD 表与数据**（只冻结准入，重新启用后历史数据继续可用）。
+
+### 新增功能
+- **集成服务契约驱动「启用」判定（CI 是唯一写入方）** — 新增 `Database.cd_integration_state()`：只读一行 `integrated_services`（`service_name='cd'`）拿到 `enabled` + `provision`，作为闸门第一道判据。契约表 / 行缺失或 `enabled<>1` → **零 DDL** + 503 `errors.cd_not_enabled`（提示去 CI 后台启用）；CI 后台一启用，运行中的 CD **下一个请求即生效**（无需重启、无需改配置）。
+- **`provision='auto'` 自动建表（MySQL 与 SQLite 行为一致）** — MySQL 侧新增 `_MYSQL_TABLE_DDL` / `_MYSQL_INDEXES` / `_MYSQL_COLUMN_MIGRATIONS`（`.dockerignore` 排除了 `database/`，运维脚本不进镜像，故 DDL 必须内置），与 SQLite 的 `_ensure_cd_tables` 一同在「已启用 + 首次连库」时建全 `CD_REQUIRED_TABLES`（14 张）+ 补既有表缺失列 + 补索引 + 契约视图 `v_glue_deploy_logs`，并做清单自检（漏表即报错，不留半套 schema）。
+- **前端 i18n** — 新增 `errors.cd_not_enabled`（中 / 英）；`errors.cd_not_deployed` 文案改为按 `provision` 区分（auto 重启自愈 / manual 导入脚本）。
+
+### 变更
+- **闸门判据改为「契约状态 × 清单完整性」** — `cd_deploy_gate()` 先读契约（未启用 → 503 `errors.cd_not_enabled`），再看清单（缺表 → 503 `errors.cd_not_deployed`，提示按 `provision` 说实话：`cd_deploy_hint(driver, provision)` 与新增的 `cd_not_enabled_hint()`）；启动日志同步改为三态（未启用 / 已启用但缺表 / 正常）。
+- **`manual` 模式零 DDL** — 与 CI 的手动建库模式对齐（`DB_AUTO_MIGRATE=false` 时 CI 也只补种子、不做 DDL）：CD 在 `manual` 下不建表、不补列，结构升级一律由 DBA 执行建表脚本。
+- **未启用提示只留一句话、且随语言切换** — 503 `errors.cd_not_enabled` 的用户可见文案固定为「CD 服务未启用：请在 Devops-Glue 后台『API集成服务』中启用 Devops-CD」；**登录页 error 框改为与 toast 同源**（`error_key` → 前端 i18n，切 EN 输出英文，不再直接渲染后端的中文兜底串；镜像仓库「扫描触发」失败提示同样改为先取 `error_key`）；动作细节 `cd_not_enabled_hint()` 改随响应体 `detail.hint` 与启动日志下发，不再拼进 `message`。
+- **文档与测试** — `ADMIN_MANUAL(_ZH)` / `ARCHITECTURE(_ZH)` / `FAQ(_ZH)` 的闸门章节同步改写；新增 `backend/tests/test_cd_schema_sources.py`（清单 ↔ `init_mysql.sql` ↔ `_MYSQL_TABLE_DDL` ↔ SQLite 实建表的**表 / 列 / 索引四方同构**）与共享辅助 `backend/tests/cd_contract.py`，并重写 `backend/tests/test_cd_deploy_gate.py`（三种契约状态 × 两个驱动 × 零 DDL 断言）。
+
 ## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
 
 ### 升级注意

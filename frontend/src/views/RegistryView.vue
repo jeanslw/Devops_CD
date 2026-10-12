@@ -114,7 +114,7 @@ import { useToast } from '@/composables/useToast'
 import { useError } from '@/composables/useError'
 
 const auth = useAuth()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { toast } = useToast()
 const { showError } = useError()
 
@@ -406,7 +406,9 @@ async function triggerScan(a) {
     const r = await fetch(`/api/registry/scan/trigger/${artifactRepoId.value}/${encodeURIComponent(a.tag)}`, { method: 'POST', headers: auth.A() })
     if (auth.handle401(r)) return
     const d = await r.json()
-    toast(d.ok ? t('registry.syncTriggered') : '❌ ' + (d.error || t('registry.syncTriggerFail')), d.ok)
+    // 与 useError 同策略：后端给了 error_key 就按当前语言翻译（否则英文界面会蹦出后端的中文兜底串）
+    const failMsg = d.error_key && te(d.error_key) ? t(d.error_key) : (d.error || t('registry.syncTriggerFail'))
+    toast(d.ok ? t('registry.syncTriggered') : '❌ ' + failMsg, d.ok)
   } catch (e) { toast(t('registry.syncTriggerFail') + ': ' + e.message, false) }
 }
 
