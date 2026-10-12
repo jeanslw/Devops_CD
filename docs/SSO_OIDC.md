@@ -1,6 +1,10 @@
 # CD ↔ Devops-Glue Single Sign-On (OIDC / BFF) Design
 
 > **Status**: design frozen (v1); implementation lives on branch `feature/oidc-bff` (L1).
+> **Counter-signature**: Glue's contract counter-signature (its `feature/cd-oidc-p0`: `d75bde7` / `68181a4`) is folded into
+> §2 / §8 / §9 / §11 / §12 — the permissions endpoint returns **404 for an unknown role** (kept strictly apart from "zero
+> permissions"; CD fails closed), `["*"]` means wildcard, `role` is passed through verbatim, the authorization-code TTL is
+> **60 s only**, and every P0 item has landed (**still to be merged into Glue's `release/2.9.0`**).
 > **Upstream**: Devops-Glue acts as the OAuth2 / OIDC Provider (see its own `docs/单点登录.md`).
 > **Related**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (deployment gate & CD table inventory),
 > [`ADMIN_MANUAL.md`](ADMIN_MANUAL.md) (`.env` and switch/rollback steps), [`FAQ.md`](FAQ.md) (login troubleshooting).
@@ -34,6 +38,8 @@ no new database or external cache.
 | `refresh_token` | **Not used** (deferred to P2) | CD holds no user-level Glue token (§5); also Glue's `issueAccessToken:152-167` does not check account status, so a refresh path must call `refreshAccount()` first |
 | SPA talking to the IdP directly | **No** | It would ship `client_secret` to the browser — the confidential-client model would break |
 | `systems` claim in the id_token | **P2** | The `systems` needed for admission already comes back from `GET /api/rbac/users/{u}`, so the claim only saves one call |
+| Permissions endpoint returning 404 (dangling role) | **fail-closed refusal**, never downgraded to "empty permissions" | 404 and "the role exists but has no permissions" are two different facts: merging them silently reduces the user to zero permissions **with no diagnosable signal** (Glue already narrowed this in `RbacController::rolePermissions:281-287`, §8.4) |
+| Permission list containing `"*"` | **treated as a wildcard grant** | Glue returns `["*"]` for `super_admin` (its permissions are granted in code and never land in `role_permissions`, so a table lookup would read it as zero permissions); CD must honour the wildcard instead of relying on the role name alone (§7.2) |
 | `userinfo` / access_token as the long-lived session | **No** | Glue access tokens are bounded by `ACCESS_TOKEN_TTL=3600`, far too short for a 24 h CD session ⇒ the CD-side `AUTH_TOKEN_TTL_HOURS` governs session life and Glue is only used for periodic revalidation |
 
 ## 3. Roles & Data Flow
@@ -61,11 +67,12 @@ Browser                    CD (BFF, same origin)                     Devops-Glue
   │                        │──────────────────────────────────────────>│ {username, role, systems, status}
   │                        │ (5) admission: status≠0 and systems contains cd (reuses _has_system / ALLOW_EMPTY_SYSTEMS)
   │                        │ (6) GET /api/rbac/roles/{role}/permissions (Bearer dg_)
-  │                        │──────────────────────────────────────────>│ {permissions:[…]}
+  │                        │──────────────────────────────────────────>│ {role, permissions:[…]}
+  │                        │     (404 dangling role ⇒ fail-closed, see §8.4)
   │                        │ (7) _create_session() → Set-Cookie: cd_token → 302 /
   │  302 → /                │
   │<───────────────────────│
-  │  any failure → 302 /login?error=<error_key>
+  │  any failure → 302 /login?error=<error_key> (404 dangling role ⇒ errors.identity_unavailable)
 ```
 
 > The returned `access_token` is **discarded immediately**: every subsequent Glue call from CD uses the `dg_` service token
@@ -109,6 +116,14 @@ There is **no** `role` claim and **no** `status`. Therefore:
 role→permissions API exists anywhere** — `TokenService::loadPermissions` is internal to the web login session. So
 `GET /api/rbac/roles/{name}/permissions` is a **P0 requirement**, not an optimisation: without it CD cannot obtain `perm_key`
 and `require_perm` is dead across the board.
+
+**The boundary has to be 404, not `[]`** (confirmed in Glue's counter-signature, §8.4): the endpoint returns **404**
+`user.role_not_found` for an unknown role (`RbacController:302-303`, matching the exact-match
+`AdminUserRepository::roleExists:127`) and keeps it strictly apart from "the role exists but has no permissions".
+CD treats 404 as **fail-closed** (refuse + negative cache per role name + throttled logging) and **never** reads
+"cannot be looked up" as "has no permissions" — the latter turns a typo or a deleted role into a **silent demotion**.
+Also `super_admin` comes back as `['*']` (`RbacController:305-307`) ⇒ CD must honour that wildcard (§7.2),
+and `role` must be passed through **verbatim** (Glue only `trim`s it; no case normalisation).
 
 ### 4.3 Why "disable kicks the session out" and "privilege changes take effect immediately" hold
 
@@ -197,7 +212,7 @@ The rationale matches Glue's client filter: a half-configured OIDC setup means r
 | File | Responsibility | Notes |
 |---|---|---|
 | `backend/oidc.py` | OIDC client: discovery / JWKS cache, `authorize` URL building, `token` exchange, id_token verification | RS256 verification hand-written with **`cryptography`, already a dependency** (no PyJWT); an unknown `kid` refreshes the JWKS exactly once; iss/aud/exp/iat-skew/nonce all verified |
-| `backend/services/glue_identity.py` | Glue client for identity + permissions, in-process TTL cache, lazy revalidation | Mirrors the `requests.Session` + Retry shape of `ci_client.py`; **never appends `?format=json`**; judges errors by HTTP status only; fail-closed after the soft-fail window |
+| `backend/services/glue_identity.py` | Glue client for identity + permissions, in-process TTL cache, lazy revalidation | Mirrors the `requests.Session` + Retry shape of `ci_client.py`; **never appends `?format=json`**; judges errors by HTTP status only; fail-closed after the soft-fail window; **a 404 from the role-permissions endpoint is not "no permissions"**: fail-closed + negative cache per role name (TTL = the revalidation window) + a throttled WARN carrying the role name; a `"*"` entry in `permissions` grants everything; `role` is passed through **verbatim** (never lower-cased) while only the username gets `strip().lower()` |
 | `backend/routers/oidc.py` | `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | Deployment gate first; state/nonce single-use with cookie cleanup; every failure → `302 /login?error=<error_key>` |
 | `backend/tests/test_oidc_flow.py` | Authorization-code flow and id_token regression | state replay/missing, **the token request must carry `redirect_uri` (mock assertion)**, one failure branch each for iss/aud/exp/nonce/signature, admission 403, cookie flags |
 | `backend/tests/test_glue_identity.py` | Revalidation semantics regression | 60 s window hit/miss, immediate demotion, disable kicks the session out (session row deleted), soft-fail window, fail-closed, recovery |
@@ -210,6 +225,7 @@ The rationale matches Glue's client filter: a half-configured OIDC setup means r
 | `backend/auth.py` | `:155-187` `verify_token` | add the `AUTH_MODE=oidc` branch: validate the `cd_sessions` row + lazy revalidation; the local branch stays untouched |
 | `backend/auth.py` | `:190-228` `get_current_user` | same branch; **response shape unchanged** (`{username, role, systems, permissions}`), permissions come from Glue (cached per role) |
 | `backend/auth.py` | `:78-95` | `_check_cd_access` / `_check_disabled` stay for local mode; the OIDC side reuses the same `_has_system` / `CD_SYSTEM` semantics (same `ALLOW_EMPTY_SYSTEMS` behaviour) |
+| `backend/auth.py` | `:244-253` `require_perm`, `:290-302` `enforce_deploy_perm` | add the **wildcard grant**: a permission list containing `"*"` passes. Glue returns `["*"]` for `super_admin`, and although `AppConfig::ROLE_SUPER_ADMIN='super_admin'` (`config/AppConfig.php:59`) currently matches CD's `SUPER_ADMIN_ROLE` (so the existing name check also fires), **the name must not be the only guard** — `SUPER_ADMIN_ROLE` is operator-editable and breaks the moment the role is renamed. Local-mode permissions never contain `*`, so this is inert there |
 | `backend/auth.py` | `:331-369` `authenticate` | **unchanged** (local only) |
 | `backend/routers/auth.py` | between `:37-43` | insert the mode guard after `cd_deploy_gate` and **before** the login-failure lock lookup: `oidc` → 403 `errors.local_login_disabled` (so the shared `cache` table is never touched) |
 | `backend/routers/terminal.py` | `:58-95` `_ws_verify` | **must be branched too** (WebShell is a separate auth path; otherwise in OIDC mode the WS handshake would read `admin_users`) |
@@ -220,7 +236,7 @@ The rationale matches Glue's client filter: a half-configured OIDC setup means r
 | `.env.example` | after `:65` (`CI_API_TOKEN`) | add `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` plus the "empty = disabled" note |
 | `docker-compose.yml` | `:45-62` startup script, `:79-90` env | (1) `AUTH_MODE=oidc` with missing OIDC keys → **abort startup** (bilingual, same shape as the `SECRET_KEY` check); (2) pass through `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` |
 | `frontend/src/views/LoginView.vue` | `:1-14` template, `:30-57` | in OIDC mode render "Sign in with Devops-Glue" (`<a href="/api/auth/oidc/start">`) and collapse the local form; on mount read `route.query.error` and render it via the **existing `:47-52` `te(key)/t(key)` strategy**, then clear the query |
-| `frontend/src/locales/zh.json` / `en.json` | — | **only 4 new keys**: `login.ssoBtn` / `login.ssoHint` / `login.localDisabled` / `errors.local_login_disabled`. `errors.no_cd_access` (`zh.json:934`) and `errors.user_disabled` (`:938`) **already exist and are reused** |
+| `frontend/src/locales/zh.json` / `en.json` | — | **5 new keys in total**: `login.ssoBtn` / `login.ssoHint` / `login.localDisabled` / `errors.local_login_disabled` / `errors.identity_unavailable` (the fail-closed message for a role 404 or any other identity-sync failure). `errors.no_cd_access` (`zh.json:934`) and `errors.user_disabled` (`:938`) **already exist and are reused**; `errors.identity_unavailable` is **deliberately not** one of them — the account itself is fine, the problem is on the admin/configuration side, and conflating the two sends troubleshooting in the wrong direction |
 | `backend/tests/test_auth_login.py` | after `:95` | add one case: "in OIDC mode `/api/login` → 403 and neither the lock nor the counter is consulted" |
 | `docs/` | see §13 | this document + `ADMIN_MANUAL(_ZH)` / `ARCHITECTURE(_ZH)` / `FAQ(_ZH)` / `USER_MANUAL(_ZH)` / `CHANGELOG(_ZH)` |
 
@@ -258,8 +274,8 @@ The rationale matches Glue's client filter: a half-configured OIDC setup means r
 | `iat` / `exp` | `exp = now + OIDC_ID_TOKEN_TTL` (default 3600) | verified (tolerating `OIDC_ID_TOKEN_MAX_SKEW`) |
 | `nonce` | echoed from the authorization request | **must be verified** |
 | `preferred_username` / `name` | = username | username source (`preferred_username` first) |
-| `email` / `email_verified` | optional | unused by CD |
-| `groups` | `= [role]` | unused in v1 (role comes from the rbac endpoint) |
+| `email` / `email_verified` | optional; **may be a placeholder** `username@devops-glue.local` with `email_verified=false` (`resolveEmailInfo:289-299`) | unused by CD — **never an identity** |
+| `groups` | `= [role]` | unused in v1 (role comes from the rbac endpoint); `role` is **not** in the id_token at all — only in `/oauth/userinfo`, which needs an **OAuth** Bearer token (not `dg_`) and which cannot call `/api/*` ⇒ CD never calls userinfo in v1 |
 
 ### 8.3 `GET /api/rbac/users/{username}`
 
@@ -270,25 +286,47 @@ Success 200 (bare object, no wrapper):
           {"username":"zhangsan","role":"dev","systems":"cd","status":1}
           · systems: comma-separated string (may be ""); status: 1=enabled / 0=disabled (int)
 Failure:  404 {"code":404,"message":"<translated text>"}; other errors use the same shape
+          ⚠️ Hard rule 1: `role` is passed through **verbatim** (Glue matches roles.name exactly and only trims; §4.2) — never lower-case it
+          ⚠️ Hard rule 2: 404 (`user.not_found`) means the identity is gone ⇒ handled exactly like a role 404:
+                         refuse at login, delete the session + 401 during revalidation, and **never cache a success**
 ```
 
 ### 8.4 `GET /api/rbac/roles/{role}/permissions` (**new on the Glue side, P0**)
 
 ```text
 Request:  GET /api/rbac/roles/dev/permissions  Authorization: Bearer dg_
-Success 200 (bare object): {"permissions":["cd.deploy","cd.deploy.approve","cd.registry.read"]}
-Unknown role → 200 {"permissions":[]} (deny-by-default, no error logging)
-Internal error → 500 {"code":500,"message":"…"}
+Success 200 (bare object): {"role":"dev","permissions":["cd.deploy","cd.deploy.approve","cd.registry.read"]}
 ```
+
+| Case | HTTP | Body | CD handling |
+|---|---|---|---|
+| Normal | 200 | `{"role":"dev","permissions":[…real perm_key…]}` | authorise by `permissions` |
+| Role exists, zero permissions | 200 | `{"role":"x","permissions":[]}` | deny-by-default — **this is a real fact**, so granting nothing is the correct outcome |
+| `super_admin` | 200 | `{"role":"super_admin","permissions":["*"]}` | **wildcard grant** (§7.2) — that role's permissions are granted in code, never stored in `role_permissions` |
+| **Unknown role** | **404** | `{"code":404,"message":"角色不存在"}` (key = `user.role_not_found`; the `message` is translated and **must not be parsed**) | **fail-closed**: refuse + negative cache per role name + throttled WARN (carrying the role name); **never** downgraded to empty permissions |
+| Empty `role` / not an API token / internal error | 400 / 403 / 500 | `{"code":…,"message":…}` | fail-closed (same policy as the soft-fail window, §6) |
+
+**Why CD accepts 404 instead of "200 + `[]`"**: these are two different facts. If a mistyped or deleted role also
+returned `[]`, CD would read "cannot be looked up" as "has no permissions" — a **silent demotion** (the user is logged in,
+the UI looks normal, every action returns 403) with **no diagnosable signal at all**. Therefore:
+
+- on 404 CD treats the identity as unusable: at login → `302 /login?error=errors.identity_unavailable`;
+  during revalidation of an existing session → delete the session row + 401 (the front end returns to the login page,
+  still showing `errors.identity_unavailable`);
+- **negative cache + throttling**: within an `OIDC_REVALIDATE_SECONDS` window the same role name is looked up once and
+  logs a single WARN, so a demotion does not flood the logs; once the role row is restored it recovers within one window;
+- optional aid: use `GET /api/rbac/roles` (returns `name` / `description` only) when an operator wants to check the catalogue.
 
 Suggested implementation: reuse `TokenService::loadPermissions($role)`; **no new scope required**
 (`ApiScopeResolver:45-47` matches the whole `/api/rbac/*` prefix to `rbac.user.write`, so sub-paths are covered automatically).
+Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` only `trim`s and `roleExists:127` matches
+`roles.name` exactly) — **do not** lower-case it (only the username needs that, §8.3).
 
 ### 8.5 `/.well-known/openid-configuration` and `/.well-known/jwks.json`
 
 | Field | CD usage |
 |---|---|
-| `issuer` | compared with the configured `OIDC_ISSUER` (**rejected on mismatch**, never silently trusted) |
+| `issuer` | compared with the configured `OIDC_ISSUER` (**rejected on mismatch**, never silently trusted); on a mismatch the log prints **both** the discovery issuer and the expected value (the most time-consuming trap of all, see §12 F) |
 | `authorization_endpoint` / `token_endpoint` | used to build requests (**discovery is the only source**; no hard-coded paths) |
 | `jwks_uri` | key retrieval; supports `kid` rotation (unknown `kid` triggers one refresh) |
 | `id_token_signing_alg_values_supported` | must contain `RS256` |
@@ -304,7 +342,12 @@ Suggested implementation: reuse `TokenService::loadPermissions($role)`; **no new
 | `/api/rbac/users/{username}` | GET | `dg_` service token | `rbac.user.write` |
 | `/api/rbac/roles/{role}/permissions` | GET | `dg_` service token | `rbac.user.write` |
 
-### 8.7 Seven pitfalls (shared by both sides)
+> Glue **never calls back into CD** (the flow in §3.1 is one-directional: CD → Glue only), so there is no "Glue egress
+> allow-list" to maintain. Operations only has to permit the **five inbound CD → Glue paths** above; note that
+> `/oauth/authorize` is public for **both GET and POST** (neither the form nor the submit performs a session pre-check),
+> and that it fails with **401 + HTML** (§8.7 item 9).
+
+### 8.7 Ten pitfalls (shared by both sides)
 
 | # | Pitfall | Symptom |
 |---|---|---|
@@ -314,25 +357,36 @@ Suggested implementation: reuse `TokenService::loadPermissions($role)`; **no new
 | 4 | omitting or mismatching `redirect_uri` | `invalid_grant` (looks like a code problem) |
 | 5 | deriving `iss` / `jwks_uri` from an internal URL | verification fails (easily mistaken for a key problem) |
 | 6 | not lower-casing the username | the rbac endpoint returns 404 |
-| 7 | treating `expires_in` as the real access-token TTL | drifts from the actual `ACCESS_TOKEN_TTL` and misleads session-lifetime reasoning |
+| 7 | treating `expires_in` as the real access-token TTL | it is only a "token lifetime" figure and has nothing to do with the CD session (`AUTH_TOKEN_TTL_HOURS`). Glue now references the `ACCESS_TOKEN_TTL` constant (`OAuthService:27` / `68181a4`, so it no longer drifts), but **CD still does not read the field in v1** |
+| 8 | lower-casing `role` | Glue's `roleExists:127` matches `roles.name` exactly and `rolePermissions:297` only `trim`s ⇒ normalising it yields a 404 (**only the username needs `strip().lower()`**) |
+| 9 | parsing the error body of `/oauth/authorize` | it fails with **401 + HTML** (`authorizeSubmit:110`), not JSON ⇒ CD only parses JSON and status codes on `/oauth/token` |
+| 10 | ignoring the authorization-code TTL (**only 60 s**, `OAuthService::CODE_TTL:19`) | a user who lingers on Glue's authorization page gets `invalid_grant`; CD should **silently restart `/api/auth/oidc/start`** (a single redirect) instead of showing an error page |
 
 ## 9. Glue-side Prerequisites
 
 | # | Item | State | Impact |
 |---|---|---|---|
-| **P0-0** | Decide `systemType` per OAuth client (add `'system' => env('CD_OIDC_SYSTEM','cd')` to `oauth_clients['cd']`; `OAuthController:97` then uses `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`) | ⛔ **blocking** | Without it **every** CD account fails to log in. And this is the **default path, not an edge case**: CD has no account-creation entry point at all (`routers/users.py` is read-only, `ci_client.rbac_users/rbac_roles` are read-only, none of the 21 frontend views manages users, and `ADMIN_MANUAL_ZH.md:464/476` states plainly that CD does not manage accounts), while both Glue creation paths produce `systems='cd'` (`AdminController::userCreate` defaults to `SYSTEM_CD`, `RbacController::userCreate:99` hard-codes it). Clients that do not register a `system` key fall back to CI, so Jenkins/Harbor/GitLab/Grafana keep their exact behaviour |
-| **P0-1** | Register the `cd` client (`secret` + `redirect_uri` matching CD's `CD_OIDC_REDIRECT_URI` **character for character**) | ⛔ blocking | otherwise `invalid_client` / `invalid_grant` |
-| **P0-2** | Store and verify the `cd` client secret the same way as the others (sha256) | ⛔ blocking | otherwise the secret check fails |
-| **P0-4** | Add `GET /api/rbac/roles/{role}/permissions` (§8.4) | ⛔ blocking | otherwise CD cannot obtain `perm_key` and every `require_perm` is dead |
-| **P0-5** | **Set `OIDC_ISSUER=<public URL>` explicitly** (in the **Devops-Glue repository**, `config/app.env:164` is currently empty, i.e. derived at runtime from the request host) | ⛔ blocking (new finding) | The derived value may be an internal address ⇒ (1) CD's `iss` check fails; (2) discovery's `jwks_uri` points inside the network ⇒ keys cannot be fetched (presents as "signature verification failed", very easy to misdiagnose as a key problem) |
+| **P0-0** | Decide `systemType` per OAuth client (add `'system' => env('CD_OIDC_SYSTEM','cd')` to `oauth_clients['cd']`; `OAuthController:97` then uses `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`) | ✅ **Implemented** (Glue `feature/cd-oidc-p0` `d75bde7`; **still to be merged into `release/2.9.0`** — confirm the target environment runs that build before switching) | Without it **every** CD account fails to log in. And this is the **default path, not an edge case**: CD has no account-creation entry point at all (`routers/users.py` is read-only, `ci_client.rbac_users/rbac_roles` are read-only, none of the 21 frontend views manages users, and `ADMIN_MANUAL_ZH.md:464/476` states plainly that CD does not manage accounts), while both Glue creation paths produce `systems='cd'` (`AdminController::userCreate` defaults to `SYSTEM_CD`, `RbacController::userCreate:99` hard-codes it). Clients that do not register a `system` key fall back to CI, so Jenkins/Harbor/GitLab/Grafana keep their exact behaviour |
+| **P0-1** | Register the `cd` client (`secret` + `redirect_uri` matching CD's `CD_OIDC_REDIRECT_URI` **character for character**) | ✅ Implemented (as above) | otherwise `invalid_client` / `invalid_grant` |
+| **P0-2** | Store and verify the `cd` client secret the same way as the others (sha256) | ✅ Implemented (as above) | otherwise the secret check fails |
+| **P0-4** | Add `GET /api/rbac/roles/{role}/permissions` (§8.4) | ✅ Implemented (as above; shape matches §8.4, including the 404 / `['*']` semantics) | otherwise CD cannot obtain `perm_key` and every `require_perm` is dead |
+| **P0-5** | **Set `OIDC_ISSUER=<public URL>` explicitly** (in the **Devops-Glue repository**, `config/app.env:164` is currently empty, i.e. derived at runtime from the request host) | ✅ Landed (`68181a4`: comments in `config/app.env:164` / `config/app.env.example:190` plus the bilingual SSO manuals; **deliberately does not read `X-Forwarded-*`** — forgeable headers would poison discovery, consistent with `ClientIp` trusting XFF only behind a trusted proxy) | The derived value may be an internal address ⇒ (1) CD's `iss` check fails; (2) discovery's `jwks_uri` points inside the network ⇒ keys cannot be fetched (presents as "signature verification failed", very easy to misdiagnose as a key problem) |
+
+> **Joint-debugging step 0 (mandatory)**: `curl -s <issuer>/.well-known/openid-configuration | jq .issuer,.jwks_uri` —
+> **both must be public addresses**; otherwise the symptom is "signature verification failed", which is very easily
+> misdiagnosed as a key problem (§12 F).
 
 **P2 (v1 does not depend on these)**:
 
-- **`systems` claim in the id_token**: all **three** places must change together or the claim is **silently dropped** (no error) —
-  `OAuthController::buildIdTokenClaims:316-328` (assembly), the **claim allow-list** in `OidcService::signIdToken:219-229` (the critical one),
-  and `OidcService::CLAIMS_SUPPORTED:30-33` (discovery advertisement).
+- **`systems` claim in the id_token**: all **four** places must change together or the claim is **silently dropped** (no error) —
+  ① `OAuthController::buildIdTokenClaims:316-328` (assembly), ② the **pass-through allow-list** `OidcService::OPTIONAL_CLAIMS:46`
+  (the critical one; `signIdToken:232-238` is its only consumer), ③ `OidcService::CLAIMS_SUPPORTED:30-33` (discovery advertisement),
+  and ④ **the independent return array in `OAuthController::userinfo:221-230`**.
+  Glue already turned the allow-list into the structured `OPTIONAL_CLAIMS` constant and added a **tripwire test** (`68181a4`):
+  it currently asserts that `systems` is dropped, so it must go red when P2 lands — forcing the four-place change. That is the
+  single most valuable guard-rail in this counter-signature round.
 - **`refresh_token`**: `issueAccessToken:152-167` does not check account status ⇒ a refresh path must call `refreshAccount()` first
-  (`status=0` → `invalid_grant`); the `expires_in => 3600` literal should reference the `ACCESS_TOKEN_TTL` constant.
+  (`status=0` → `invalid_grant`); the `expires_in` literal now references `ACCESS_TOKEN_TTL` (`OAuthService:27` promoted to `public`, `68181a4`).
 - **Inventory/repair of existing `'cd'` accounts**: `AdminUserRepository::updateUser($username, ?$passwordHash, ?$role, ?$email)` has
   **no `systems` parameter**, so already-created `'cd'`-only accounts have no API repair path (SQL or re-create only).
 
@@ -347,6 +401,7 @@ Suggested implementation: reuse `TokenService::loadPermissions($role)`; **no new
 | No privilege escalation at login | three admission criteria: `systems` contains `cd` (reusing `ALLOW_EMPTY_SYSTEMS` semantics) + `status≠0` + deny-by-default role permissions |
 | Disable/demote latency | ≤ `OIDC_REVALIDATE_SECONDS` (§4.3), independent of the session TTL |
 | Upstream outage | fail-closed after the soft-fail window; **startup aborts** on incomplete configuration (§6.3) |
+| Permission-sync failure | a role 404 or any permissions-endpoint error ⇒ fail-closed (§8.4); degrading to "grant with empty permissions" is **not allowed** — a silent demotion is far more dangerous than a refused login |
 | Deployment state cannot be bypassed | `/api/auth/oidc/*` runs `cd_deploy_gate` exactly like `/api/login` |
 | Information surface | `/api/info` exposes `auth_mode` only; issuer/secret/redirect_uri are never exposed |
 
@@ -356,16 +411,18 @@ Suggested implementation: reuse `TokenService::loadPermissions($role)`; **no new
 |---|---|---|---|
 | 1 | Switch / rollback | `local`: `/api/login` works, `/api/auth/oidc/*` → 404; `oidc`: `/api/login` → 403 and **neither the lock nor the counter is consulted** | `test_auth_login.py` |
 | 2 | Fail-closed config | `oidc` with any of secret/redirect_uri/issuer missing → startup aborts (compose layer) and `oidc_ready()` is False | `test_oidc_flow.py` + compose-script assertion |
-| 3 | Authorization-code flow | `state` mismatch/replay/missing `code` → 400; **the token request body must contain `redirect_uri` (mock assertion)**; wrong secret → 502; `invalid_grant` → 400 | `test_oidc_flow.py` |
+| 3 | Authorization-code flow | `state` mismatch/replay/missing `code` → 400; **the token request body must contain `redirect_uri` (mock assertion)**; wrong secret → 502; `invalid_grant` (including the 60 s code timeout) → **silently restart `start`** (one redirect), never an error page | `test_oidc_flow.py` |
 | 4 | id_token verification | one rejection case each for signature/`iss`/`aud`/`exp`/`nonce`; unknown `kid` → passes after one JWKS refresh | `test_oidc_flow.py` |
 | 5 | Admission | `systems` without `cd` → 403 `errors.no_cd_access`; `status=0` → 403 `errors.user_disabled`; success → 302 `/` with a `cd_token` cookie (HttpOnly/Lax, Secure follows `COOKIE_SECURE`) | `test_oidc_flow.py` |
 | 6 | Cache / demotion | cache hit within 60 s (zero Glue calls); after a `role` change `/api/me` reflects the new role once the window elapses; `status=0` → next request 401 **with the session row deleted** | `test_glue_identity.py` + `test_session_auth.py` |
 | 7 | Glue unreachable | inside the soft-fail window last-known-good is served; past the window fail-closed; normal revalidation resumes after recovery | `test_glue_identity.py` |
 | 8 | WS | in OIDC mode the WebShell handshake goes through `_lookup_session` + Glue revalidation; a disabled account is refused | appended to `test_cd_deploy_gate.py` |
 | 9 | Regression | the whole existing suite is unchanged in `local` mode (including the 215-case baseline) — proof that the two tracks do not harm each other | all existing tests |
-| 10 | Joint acceptance | Glue-side cases + CD-side A/B/C/D (§12) | manual |
+| 10 | Joint acceptance | Glue-side cases + CD-side A–G (§12) | manual |
+| 11 | Role 404 (fail-closed) | a permissions-endpoint 404 ⇒ login/revalidation is **refused** (403 / 401) and **never** granted with empty permissions; within the window the same role name is looked up once and logs a single throttled WARN (carrying the role name); recovery takes ≤ one window after the role returns | `test_glue_identity.py` |
+| 12 | `*` wildcard | a `["*"]` response (`super_admin`) ⇒ `require_perm` / `enforce_deploy_perm` pass; still passes after `SUPER_ADMIN_ROLE` is configured to a different name | appended to `test_session_auth.py` / `test_cd_deploy_gate.py` |
 
-## 12. Acceptance Cases (A–E)
+## 12. Acceptance Cases (A–G)
 
 | # | Scenario | Steps | Expected |
 |---|---|---|---|
@@ -374,13 +431,15 @@ Suggested implementation: reuse `TokenService::loadPermissions($role)`; **no new
 | **C** | No access & disable | (1) log in with `systems='ci,monitor'`; (2) log in with `status=0`; (3) after a successful login disable the account in Glue, wait > 60 s, then use CD | (1) → `/login?error=errors.no_cd_access`; (2) → `errors.user_disabled`; (3) next request → 401, back to the login page, and the `cd_sessions` row is gone |
 | **D** | Demotion takes effect | after login change the role in Glue / remove `cd.deploy.approve`, wait > 60 s | `/api/me` shows the new role and permissions; the corresponding buttons disappear and `require_perm` rejects the call (403) |
 | **E** | Rollback | set `AUTH_MODE=local` again + restart | password login works immediately; CD tables and data are intact (**zero DDL**, no script to import); `static/` assets need no rebuild |
+| **F** | Issuer consistency (joint-debugging step 0) | before switching, `curl -s <issuer>/.well-known/openid-configuration`; then deliberately point `OIDC_ISSUER` at an internal/wrong address | `.issuer` and `.jwks_uri` are **both public addresses**; with a wrong value the login fails and the log prints **both** the discovery issuer and the expected value (immediate diagnosis instead of a key-problem red herring); switching back restores service |
+| **G** | Dangling role, fail-closed | `DELETE` a role row in Glue by hand (simulating a dangling role), then wait > 60 s and use CD | Affected users: login refused / an already-logged-in user gets 401 on the next request and lands on the login page (`errors.identity_unavailable`); a **throttled** WARN carrying the role name appears; there must be **no** "logged in but with empty permissions" silent demotion; recovery within ≤ 60 s after the role row is restored |
 
 ## 13. Rollout Phases & Operations
 
 | Phase | Content | Risk |
 |---|---|---|
 | **L1a** (this change) | config keys + `oidc.py` + `glue_identity.py` + `routers/oidc.py` + tests; `AUTH_MODE=local` by default | **zero behaviour change**, safe to merge into `release/1.6.0` |
-| **L1b** | staging validation: fill the three root `.env` values → switch `app.env` to `oidc` → run A–E, watch the 60 s revalidation and the soft-fail window | staging only, switch back any time |
+| **L1b** | staging validation: run **joint-debugging step 0** first (discovery `issuer` / `jwks_uri` both public) → fill the three root `.env` values → switch `app.env` to `oidc` → run A–G, watch the 60 s revalidation and the soft-fail window | staging only, switch back any time |
 | **L1c** | production cutover: `docker compose up -d --build` + clear `cd_sessions` + watch for 30 minutes | rollback switch available (§6.4), no schema change |
 | **L2** | cleanup and enhancements (§14) | separate version |
 
