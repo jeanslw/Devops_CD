@@ -7,6 +7,7 @@
 | FAQ | [FAQ.md](FAQ.md) | [FAQ_ZH.md](FAQ_ZH.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) | [CHANGELOG_ZH.md](CHANGELOG_ZH.md) |
 | Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) | [ARCHITECTURE_ZH.md](ARCHITECTURE_ZH.md) |
+| SSO / OIDC Integration | [SSO_OIDC.md](SSO_OIDC.md) | [SSO_OIDC_ZH.md](SSO_OIDC_ZH.md) |
 
 ## Versioning / 版本管理
 
