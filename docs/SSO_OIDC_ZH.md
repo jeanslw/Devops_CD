@@ -1,9 +1,13 @@
 # CD 接入 Devops-Glue 单点登录（OIDC / BFF）设计文档
 
 > **状态**：设计已冻结（v1）；实现见 `feature/oidc-bff` 分支（L1）。
-> **回签**：Glue 侧契约回签（其 `feature/cd-oidc-p0`：`d75bde7` / `68181a4`）已并入 §2 / §8 / §9 / §11 / §12 ——
-> 权限端点 **404 = 角色不存在**（与「零权限」严格区分，CD 侧 fail-closed）、`["*"]` 通配、`role` 原样透传、
-> 授权码 TTL 仅 60s、P0 全部落地（**待合入 Glue `release/2.9.0`**）。
+> **回签（第 3 轮）**：Glue 侧回签已并入 §2 / §8 / §9 / §11 / §12 —— 权限端点 **404 = 角色不存在**（与「零权限」严格区分，
+> CD 侧 fail-closed）、`["*"]` 通配、`role` 原样透传、授权码 TTL 仅 60s、P0 全部落地。
+> **分支事实**：P0 位于 Glue 分支 `feature/cd-oidc-p0`（`d75bde7` → `68181a4`，其后 4 个纯文档提交，本地 HEAD `97981e7`），
+> 该分支**仅本地、不在任何远端**（此前的一次远端推送已按流程撤下），且**尚未合入 `release/2.9.0`**（远端仍 `a08eb74`）。
+> **CD 切档的门禁是「目标环境实际部署的 Glue 版本」，不是某个 ref。** 下文所有 Glue `file:line` 已按 `97981e7` 重新核验
+> （纯文档提交不移动代码；本轮修正 **4 处过期锚点、合计 10 处引用**）。上游设计文档：`docs/CD接入Glue-OIDC设计文档.md` **v1.0.2**；
+> **跨方沟通一律用场景名，不用字母**（§12）。
 > **上游**：Devops-Glue 作为 OAuth2 / OIDC Provider（Glue 侧文档 `docs/单点登录.md`）。
 > **相关**：本仓库 [`ARCHITECTURE_ZH.md`](ARCHITECTURE_ZH.md)（部署闸门与 CD 表清单）、
 > [`ADMIN_MANUAL_ZH.md`](ADMIN_MANUAL_ZH.md)（`.env` 与切换/回退步骤）、[`FAQ_ZH.md`](FAQ_ZH.md)（登录失败排查）。
@@ -33,7 +37,7 @@
 | 授权模式 | **BFF**（服务端机密客户端 + Authorization Code） | CD 与 SPA 同源（`main.py:195/275` 托管 `static/`），会话走 HttpOnly `cd_token` cookie |
 | PKCE | **不做** | 机密客户端，`code` 兑换在服务端完成，BFF 下 PKCE 无额外收益 |
 | `end_session` | **不做** | Glue `OAuthController::authorizeSubmit`（`:66-127`）只签发 `code`，**不创建任何会话/cookie** —— 无物可登出。CD 登出仍是「删 `cd_sessions` 行 + 删 cookie」 |
-| `refresh_token` | **不做**（转 P2） | CD 不持有用户级 Glue token（见 §5）；且 Glue `issueAccessToken:152-167` 未校验账号状态，刷新分支必须先 `refreshAccount()` 再签发 |
+| `refresh_token` | **不做**（转 P2） | CD 不持有用户级 Glue token（见 §5）；且 Glue `issueAccessToken:177-192` 未校验账号状态，刷新分支必须先 `refreshAccount()` 再签发 |
 | SPA 直连 IdP | **不做** | 需把 `client_secret` 下发到浏览器，机密客户端语义不成立 |
 | id_token 的 `systems` claim | **P2** | 准入所需的 `systems` 已由 `GET /api/rbac/users/{u}` 一次返回，claim 只是省一次调用 |
 | 权限端点返回 404（角色悬空） | **fail-closed 拒绝**，不降级为「空权限」 | 404 与「角色存在但零权限」是两个不同事实：合并即把用户静默收敛成零权限、且无任何可诊断信号（Glue 侧 `RbacController::rolePermissions:281-287` 已按此收窄，§8.4） |
@@ -98,7 +102,8 @@ Glue 不可达 → 软失败窗口（OIDC_STALE_GRACE_SECONDS，默认 600）内
 
 Glue 签发的 id_token claims 是：`iss` / `sub`（**= username**）/ `aud`（= `cd`）/ `iat` / `exp` / `nonce`（有则回显）/
 `name` / `preferred_username`（= username）/ `email` / `email_verified` / `groups`（**= `[role]`**，角色为空则 `[]`）
-—— 见 `OAuthController::buildIdTokenClaims:316-328` 与 `OidcService::signIdToken:206-232`。
+—— 见 `OAuthController::buildIdTokenClaims:326-338` 与 `OidcService::signIdToken:219-241`（未列入 Glue 白名单的 claim
+会被静默丢弃；见 §8.2 / §9 P2）。
 
 **没有** `role` claim，**也没有** `status`。因此：
 
@@ -353,7 +358,7 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 | # | 项 | 状态 | 影响 |
 |---|---|---|---|
-| **P0-0** | 按 OAuth 客户端决定 `systemType`（`oauth_clients['cd']` 增加 `'system' => env('CD_OIDC_SYSTEM','cd')`；`OAuthController:97` 用 `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`） | ✅ **已实现**（Glue `feature/cd-oidc-p0` `d75bde7`；**待合入 `release/2.9.0`**，切档前须确认目标环境已部署该版本） | 不修则**所有** CD 账号登录必失败。且这是**默认路径而非边缘场景**：CD 侧无任何建号入口（`routers/users.py` 只读、`ci_client.rbac_users/rbac_roles` 只读、前端 21 个视图无用户管理、`ADMIN_MANUAL_ZH.md:464/476` 明确「CD 不提供账号管理」），而 Glue 两个建号入口都落 `systems='cd'`（`AdminController::userCreate` 默认 `SYSTEM_CD`、`RbacController::userCreate:99` 硬编码）。未注册 `system` 键的既有客户端默认落 CI ⇒ Jenkins/Harbor/GitLab/Grafana **零行为变化** |
+| **P0-0** | 按 OAuth 客户端决定 `systemType`（`oauth_clients['cd']` 增加 `'system' => env('CD_OIDC_SYSTEM','cd')`；`OAuthController:98` 用 `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`） | ✅ **已实现**（Glue `feature/cd-oidc-p0` `d75bde7`；**仅本地分支、不在任何远端**；**待合入 `release/2.9.0`**，切档前须确认目标环境已部署该版本） | 不修则**所有** CD 账号登录必失败。且这是**默认路径而非边缘场景**：CD 侧无任何建号入口（`routers/users.py` 只读、`ci_client.rbac_users/rbac_roles` 只读、前端 21 个视图无用户管理、`ADMIN_MANUAL_ZH.md:464/476` 明确「CD 不提供账号管理」），而 Glue 两个建号入口都落 `systems='cd'`（`AdminController::userCreate` 默认 `SYSTEM_CD`、`RbacController::userCreate:99` 硬编码）。未注册 `system` 键的既有客户端默认落 CI ⇒ Jenkins/Harbor/GitLab/Grafana **零行为变化** |
 | **P0-1** | 注册 `cd` 客户端（`secret` + `redirect_uri` 与 CD 侧 `CD_OIDC_REDIRECT_URI` **逐字符一致**） | ✅ 已实现（同上） | 否则 `invalid_client` / `invalid_grant` |
 | **P0-2** | `cd` 客户端密钥按既有方式存储与校验（sha256） | ✅ 已实现（同上） | 密钥校验不过 |
 | **P0-4** | 新增 `GET /api/rbac/roles/{role}/permissions`（§8.4） | ✅ 已实现（同上；形状与 §8.4 一致，含 404 / `['*']` 语义） | CD 拿不到 `perm_key`，`require_perm` 全线失能 |
@@ -364,12 +369,15 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 **P2（v1 不依赖）**：
 
-- **id_token `systems` claim**：必须**同时**改 **4 处**，否则**静默丢弃**（不报错）——① `OAuthController::buildIdTokenClaims:316-328`（组装）、
+- **id_token `systems` claim**：必须**同时**改 **4 处**，否则**静默丢弃**（不报错）——① `OAuthController::buildIdTokenClaims:326-338`（组装）、
   ② `OidcService::OPTIONAL_CLAIMS:46` 的**透传白名单**（关键，`signIdToken:232-238` 是唯一消费点）、
   ③ `OidcService::CLAIMS_SUPPORTED:30-33`（discovery 声明）、④ **`OAuthController::userinfo:221-230` 的独立返回数组**。
-  Glue 已于 `68181a4` 把白名单结构化为 `OPTIONAL_CLAIMS` 并加 **tripwire 测试**（当前断言 `systems` 被丢弃，
-  P2 落地时该测试必须变红，强制四处同改）——这是本次回签最有价值的一条护栏。
-- **`refresh_token`**：`issueAccessToken:152-167` 未校验账号状态 ⇒ 刷新分支必须先 `refreshAccount()`（`status=0` → `invalid_grant`）；`expires_in` 字面量已改引 `ACCESS_TOKEN_TTL`（`OAuthService:27` 提升为 `public`，`68181a4`）。
+  Glue 已于 `68181a4` 把白名单结构化为 `OPTIONAL_CLAIMS`（`OidcService:46`，其注释即列出这 4 处）并加 **tripwire 测试**：
+  `tests/Unit/OidcServiceTest.php:188`（`testClaimOutsideWhitelistIsSilentlyDropped`）当前断言 `systems` 被丢弃，
+  P2 落地时该测试必须变红，强制四处同改——这是本次回签最有价值的一条护栏。
+- **`refresh_token`**：`issueAccessToken:177-192` 未校验账号状态 ⇒ 刷新分支必须先 `refreshAccount()`（`status=0` → `invalid_grant`）。
+- ~~`expires_in => 3600` 字面量~~ —— **已由 P0 收口，不再是 P2 项**（Glue 侧要求）：`OAuthController:181` 已引用
+  `OAuthService::ACCESS_TOKEN_TTL`（`:27` 提升为 `public`，`68181a4`），该值不会再漂移。CD v1 **仍不读**该字段（§8.7 第 7 条）。
 - **存量 `'cd'` 账号盘点/修复**：`AdminUserRepository::updateUser($username, ?$passwordHash, ?$role, ?$email)` **没有 `systems` 参数** ⇒ 已建成的 `'cd'`-only 账号没有 API 修复路径（只能 SQL 或重建）。
 
 ## 10. 安全不变量
@@ -404,7 +412,15 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 | 11 | 角色 404（fail-closed） | 权限端点 404 ⇒ 登录/复核**拒绝**（403 / 401），**绝不**按空权限放行；同角色名在窗口内只查一次、只打一条限流 WARN（含角色名）；角色恢复后 ≤ 一个窗口自动恢复 | `test_glue_identity.py` |
 | 12 | `*` 通配 | 返回 `["*"]`（`super_admin`）⇒ `require_perm` / `enforce_deploy_perm` 全放行；把 `SUPER_ADMIN_ROLE` 配成别的名字后仍放行 | `test_session_auth.py` / `test_cd_deploy_gate.py` 追加 |
 
+> **Glue 侧已就位的护栏**（L1b 期间可直接作为取证，不依赖 CD 实现）：`tests/Unit/CdOidcLoginWiringTest.php`
+> （源码级接线守卫 + 真 SQL 行为断言，覆盖 P0 四项）与 `tests/Unit/OidcServiceTest.php:188`
+> （P2 tripwire，另含两条白名单交叉断言）。
+
 ## 12. 验收用例（A–G）
+
+> **用例字母对照（防口径分叉）**：Glue 设计文档（`CD接入Glue-OIDC设计文档.md` v1.0.2）把「issuer 口径 / 联调第 0 项」
+> 编号为 **E** —— 即本文的 **F**；其 **F + G** 合起来对应本文的 **G**（其 F = Glue 侧响应形状，G = CD 侧端到端行为）。
+> **跨方沟通一律用场景名指代，不用字母。**
 
 | # | 场景 | 步骤 | 期望 |
 |---|---|---|---|

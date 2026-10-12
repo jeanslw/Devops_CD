@@ -1,10 +1,16 @@
 # CD ↔ Devops-Glue Single Sign-On (OIDC / BFF) Design
 
 > **Status**: design frozen (v1); implementation lives on branch `feature/oidc-bff` (L1).
-> **Counter-signature**: Glue's contract counter-signature (its `feature/cd-oidc-p0`: `d75bde7` / `68181a4`) is folded into
-> §2 / §8 / §9 / §11 / §12 — the permissions endpoint returns **404 for an unknown role** (kept strictly apart from "zero
-> permissions"; CD fails closed), `["*"]` means wildcard, `role` is passed through verbatim, the authorization-code TTL is
-> **60 s only**, and every P0 item has landed (**still to be merged into Glue's `release/2.9.0`**).
+> **Counter-signature (round 3)**: Glue's reply is folded into §2 / §8 / §9 / §11 / §12 — the permissions endpoint returns
+> **404 for an unknown role** (kept strictly apart from "zero permissions"; CD fails closed), `["*"]` means wildcard, `role` is
+> passed through verbatim, the authorization-code TTL is **60 s only**, and every P0 item has landed.
+> **Branch fact**: P0 lives on Glue's branch `feature/cd-oidc-p0` (`d75bde7` → `68181a4`, then 4 doc-only commits, local HEAD
+> `97981e7`). That branch is **local-only — it exists on no remote** (the earlier remote push was withdrawn) and is **not yet
+> merged into `release/2.9.0`** (remote still `a08eb74`). **The gate for CD's staging switch is the *deployed* Glue version,
+> not a ref.** Every Glue `file:line` cited below was re-verified against `97981e7` (doc-only commits move no code;
+> **4 distinct stale anchors, 10 citations in total, were fixed in this revision**).
+> Upstream design doc: `docs/CD接入Glue-OIDC设计文档.md` **v1.0.2**. **Cross-team, refer to acceptance cases by scenario
+> name, not by letter** (§12).
 > **Upstream**: Devops-Glue acts as the OAuth2 / OIDC Provider (see its own `docs/单点登录.md`).
 > **Related**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (deployment gate & CD table inventory),
 > [`ADMIN_MANUAL.md`](ADMIN_MANUAL.md) (`.env` and switch/rollback steps), [`FAQ.md`](FAQ.md) (login troubleshooting).
@@ -35,7 +41,7 @@ no new database or external cache.
 | Flow | **BFF** (server-side confidential client + Authorization Code) | CD serves the SPA from the same origin (`main.py:195/275`); the session stays in the HttpOnly `cd_token` cookie |
 | PKCE | **Not used** | Confidential client: the `code` is exchanged server-side, so PKCE adds nothing under BFF |
 | `end_session` | **Not used** | Glue's `OAuthController::authorizeSubmit` (`:66-127`) only issues a `code`, it **creates no session/cookie** — there is nothing to log out of. CD logout stays "delete the `cd_sessions` row + drop the cookie" |
-| `refresh_token` | **Not used** (deferred to P2) | CD holds no user-level Glue token (§5); also Glue's `issueAccessToken:152-167` does not check account status, so a refresh path must call `refreshAccount()` first |
+| `refresh_token` | **Not used** (deferred to P2) | CD holds no user-level Glue token (§5); also Glue's `issueAccessToken:177-192` does not check account status, so a refresh path must call `refreshAccount()` first |
 | SPA talking to the IdP directly | **No** | It would ship `client_secret` to the browser — the confidential-client model would break |
 | `systems` claim in the id_token | **P2** | The `systems` needed for admission already comes back from `GET /api/rbac/users/{u}`, so the claim only saves one call |
 | Permissions endpoint returning 404 (dangling role) | **fail-closed refusal**, never downgraded to "empty permissions" | 404 and "the role exists but has no permissions" are two different facts: merging them silently reduces the user to zero permissions **with no diagnosable signal** (Glue already narrowed this in `RbacController::rolePermissions:281-287`, §8.4) |
@@ -102,7 +108,8 @@ with several replicas each one simply revalidates on its own, which is semantica
 
 Glue's id_token claims are `iss` / `sub` (**= username**) / `aud` (= `cd`) / `iat` / `exp` / `nonce` (echoed when given) /
 `name` / `preferred_username` (= username) / `email` / `email_verified` / `groups` (**= `[role]`**, `[]` when the role is empty)
-— see `OAuthController::buildIdTokenClaims:316-328` and `OidcService::signIdToken:206-232`.
+— see `OAuthController::buildIdTokenClaims:326-338` and `OidcService::signIdToken:219-241` (claims that are not in Glue's
+allow-list are dropped silently; §8.2 / §9 P2).
 
 There is **no** `role` claim and **no** `status`. Therefore:
 
@@ -366,7 +373,7 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 
 | # | Item | State | Impact |
 |---|---|---|---|
-| **P0-0** | Decide `systemType` per OAuth client (add `'system' => env('CD_OIDC_SYSTEM','cd')` to `oauth_clients['cd']`; `OAuthController:97` then uses `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`) | ✅ **Implemented** (Glue `feature/cd-oidc-p0` `d75bde7`; **still to be merged into `release/2.9.0`** — confirm the target environment runs that build before switching) | Without it **every** CD account fails to log in. And this is the **default path, not an edge case**: CD has no account-creation entry point at all (`routers/users.py` is read-only, `ci_client.rbac_users/rbac_roles` are read-only, none of the 21 frontend views manages users, and `ADMIN_MANUAL_ZH.md:464/476` states plainly that CD does not manage accounts), while both Glue creation paths produce `systems='cd'` (`AdminController::userCreate` defaults to `SYSTEM_CD`, `RbacController::userCreate:99` hard-codes it). Clients that do not register a `system` key fall back to CI, so Jenkins/Harbor/GitLab/Grafana keep their exact behaviour |
+| **P0-0** | Decide `systemType` per OAuth client (add `'system' => env('CD_OIDC_SYSTEM','cd')` to `oauth_clients['cd']`; `OAuthController:98` then uses `clientSystem($clientId) ?: AppConfig::SYSTEM_CI`) | ✅ **Implemented** (Glue `feature/cd-oidc-p0` `d75bde7`; **local branch only — on no remote**; **still to be merged into `release/2.9.0`** — confirm the target environment runs that build before switching) | Without it **every** CD account fails to log in. And this is the **default path, not an edge case**: CD has no account-creation entry point at all (`routers/users.py` is read-only, `ci_client.rbac_users/rbac_roles` are read-only, none of the 21 frontend views manages users, and `ADMIN_MANUAL_ZH.md:464/476` states plainly that CD does not manage accounts), while both Glue creation paths produce `systems='cd'` (`AdminController::userCreate` defaults to `SYSTEM_CD`, `RbacController::userCreate:99` hard-codes it). Clients that do not register a `system` key fall back to CI, so Jenkins/Harbor/GitLab/Grafana keep their exact behaviour |
 | **P0-1** | Register the `cd` client (`secret` + `redirect_uri` matching CD's `CD_OIDC_REDIRECT_URI` **character for character**) | ✅ Implemented (as above) | otherwise `invalid_client` / `invalid_grant` |
 | **P0-2** | Store and verify the `cd` client secret the same way as the others (sha256) | ✅ Implemented (as above) | otherwise the secret check fails |
 | **P0-4** | Add `GET /api/rbac/roles/{role}/permissions` (§8.4) | ✅ Implemented (as above; shape matches §8.4, including the 404 / `['*']` semantics) | otherwise CD cannot obtain `perm_key` and every `require_perm` is dead |
@@ -379,14 +386,18 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 **P2 (v1 does not depend on these)**:
 
 - **`systems` claim in the id_token**: all **four** places must change together or the claim is **silently dropped** (no error) —
-  ① `OAuthController::buildIdTokenClaims:316-328` (assembly), ② the **pass-through allow-list** `OidcService::OPTIONAL_CLAIMS:46`
+  ① `OAuthController::buildIdTokenClaims:326-338` (assembly), ② the **pass-through allow-list** `OidcService::OPTIONAL_CLAIMS:46`
   (the critical one; `signIdToken:232-238` is its only consumer), ③ `OidcService::CLAIMS_SUPPORTED:30-33` (discovery advertisement),
   and ④ **the independent return array in `OAuthController::userinfo:221-230`**.
-  Glue already turned the allow-list into the structured `OPTIONAL_CLAIMS` constant and added a **tripwire test** (`68181a4`):
-  it currently asserts that `systems` is dropped, so it must go red when P2 lands — forcing the four-place change. That is the
-  single most valuable guard-rail in this counter-signature round.
-- **`refresh_token`**: `issueAccessToken:152-167` does not check account status ⇒ a refresh path must call `refreshAccount()` first
-  (`status=0` → `invalid_grant`); the `expires_in` literal now references `ACCESS_TOKEN_TTL` (`OAuthService:27` promoted to `public`, `68181a4`).
+  Glue already turned the allow-list into the structured `OPTIONAL_CLAIMS` constant (`OidcService:46`, its doc-comment lists the
+  4 places) and added a **tripwire test** (`68181a4`): `tests/Unit/OidcServiceTest.php:188`
+  (`testClaimOutsideWhitelistIsSilentlyDropped`) currently asserts that `systems` is dropped, so it must go red when P2 lands —
+  forcing the four-place change. That is the single most valuable guard-rail in this counter-signature round.
+- **`refresh_token`**: `issueAccessToken:177-192` does not check account status ⇒ a refresh path must call `refreshAccount()` first
+  (`status=0` → `invalid_grant`).
+- ~~`expires_in => 3600` literal~~ — **closed by P0, no longer a P2 item** (Glue's ask): `OAuthController:181` now references
+  `OAuthService::ACCESS_TOKEN_TTL` (`:27` promoted to `public`, `68181a4`), so the value cannot drift. CD v1 still does **not**
+  read the field (§8.7 #7).
 - **Inventory/repair of existing `'cd'` accounts**: `AdminUserRepository::updateUser($username, ?$passwordHash, ?$role, ?$email)` has
   **no `systems` parameter**, so already-created `'cd'`-only accounts have no API repair path (SQL or re-create only).
 
@@ -422,7 +433,16 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 | 11 | Role 404 (fail-closed) | a permissions-endpoint 404 ⇒ login/revalidation is **refused** (403 / 401) and **never** granted with empty permissions; within the window the same role name is looked up once and logs a single throttled WARN (carrying the role name); recovery takes ≤ one window after the role returns | `test_glue_identity.py` |
 | 12 | `*` wildcard | a `["*"]` response (`super_admin`) ⇒ `require_perm` / `enforce_deploy_perm` pass; still passes after `SUPER_ADMIN_ROLE` is configured to a different name | appended to `test_session_auth.py` / `test_cd_deploy_gate.py` |
 
+> **Glue-side guard-rails already in place** (usable as evidence during L1b, no CD dependency): `tests/Unit/CdOidcLoginWiringTest.php`
+> (source-level wiring guard + real-SQL behaviour assertions covering the four P0 items) and
+> `tests/Unit/OidcServiceTest.php:188` (the P2 tripwire plus the two allow-list cross-assertions).
+
 ## 12. Acceptance Cases (A–G)
+
+> **Case-letter mapping (anti-divergence)**: Glue's design doc (`CD接入Glue-OIDC设计文档.md` v1.0.2) labels the issuer /
+> joint-debugging-step-0 case **E** — that is this doc's **F**; and its **F + G** together correspond to this doc's **G**
+> (its F = the Glue-side response shape, its G = the CD-side end-to-end behaviour). **Refer to cases by scenario name across
+> teams, never by letter.**
 
 | # | Scenario | Steps | Expected |
 |---|---|---|---|
