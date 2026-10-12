@@ -144,7 +144,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 - **启用动作只在 CI 后台完成**（Devops-Glue →「API集成服务 → 启用」开启 Devops-CD）：CD 不提供自开通入口、不写种子，也**不会因为「表恰好存在」就放行**；
 - `provision` 由 CI 在**启用那一刻**按其迁移模式写入：`DB_AUTO_MIGRATE` 开启 → `auto`（授权 CD 建表），关闭 → `manual`（结构归 DBA）。CD 只读这个值，不做二次判断；
-- **关闭集成服务只冻结准入**：CD 表与数据原样保留，绝不 `DROP` / 清空；重新启用后历史数据继续可用（CI 只换掉契约行上的 token 引用）；
+- **关闭集成服务只冻结准入**：CD 表与数据原样保留，不 `DROP` / 清空；重新启用后历史数据继续可用（CI 只换掉契约行上的 token 引用）；
 - 闸门覆盖：登录（排在限流计数之前）+ 所有已持有会话的请求 + 公开 Webhook 接收端点 + WebShell（WebSocket 握手）—— 即「即使能登录，也禁止做任何操作」；这类 503 属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享的登录失败锁；无认证的探活接口（`/health`、`/api/info`、`/metrics`）保持可用，便于排障。
 
 **`provision='manual'`（MySQL）**：由管理员手动导入建表脚本 —— 该脚本也是「库结构升级」的手段，必须把**清单 `CD_REQUIRED_TABLES` 里的表建全**（当前 14 张；以后加表/删表，这张清单就是唯一准绳，闸门、错误文案、告警都会自动跟随，不写死张数）：
@@ -330,7 +330,7 @@ npm run build    # 输出到 ../static/
 
 | 版本范围 | 状态 | 说明 |
 |----------|:--:|------|
-| 1.8 ~ 1.18 | ⚠️ 理论可用 | 未测试，早期 JSONPath 字段可能不一致 |
+| 1.8 ~ 1.18 |  理论可用 | 未测试，早期 JSONPath 字段可能不一致 |
 | 1.19 ~ 1.31 | ✅ 推荐 | 所有功能验证通过 |
 | 1.32+ | 🔮 预期兼容 | 基础命令不变 |
 
@@ -526,7 +526,7 @@ curl -s -S -X POST "http://cd-host:8081/api/webhooks/receive/42kYUmGU0yZHMiXdusS
   -d "{\"project\":\"$JOB_NAME\",\"tag\":\"$TAG\",\"image\":\"$IMAGE:$TAG\",\"built_at\":\"$(date +'%Y%m%d%H%M%S')\"}"
 ```
 
-> **⚠️ 重要**：`-d` 必须用双引号包裹 JSON 字符串，否则 shell 变量不会被展开。单引号会导致 `$JOB_NAME`、`$TAG`、`$(date)` 被当作字面量。建议使用 `jq` 构造 JSON 避免引号陷阱。
+> ** 重要**：`-d` 必须用双引号包裹 JSON 字符串，否则 shell 变量不会被展开。单引号会导致 `$JOB_NAME`、`$TAG`、`$(date)` 被当作字面量。建议使用 `jq` 构造 JSON 避免引号陷阱。
 
 ### 请求 payload 建议字段（无严格校验，未识别字段原样存储）
 
@@ -560,7 +560,7 @@ curl -s -S -X POST "http://cd-host:8081/api/webhooks/receive/42kYUmGU0yZHMiXdusS
 | **启用/禁用** | 被禁用的 Webhook 直接返回 404，便于临时下线不删配置 |
 | **事件大小** | 无显式限制，建议保持 < 1MB；大日志走构建日志 API 查询 |
 | **自动转发失败降级** | Bot 转发失败**不影响事件入库**，可在页面手动重试 |
-| **Bot 模板占位符不匹配** | 自动回退默认拼接格式，再兜底输出原始 JSON，绝不崩溃 |
+| **Bot 模板占位符不匹配** | 自动回退默认拼接格式，再兜底输出原始 JSON，不崩溃 |
 | **关联 Bot 权限** | 创建/编辑 Webhook 需 `cd.notification-manage` 权限；接收端点无鉴权（靠 token） |
 | **SSRF 防护** | 通知机器人 Webhook URL 校验：域名精确或后缀匹配，防止子域名绕过（如 `eviloapi.dingtalk.com`） |
 

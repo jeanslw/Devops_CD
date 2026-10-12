@@ -1,10 +1,10 @@
-"""部署执行器 — 把持久化的部署参数反序列化并重新执行。
+"""部署执行器 - 把持久化的部署参数反序列化并重新执行.
 
-审批批准后的执行、回滚重放都走这里，统一复用 DeployService.execute 和
-K8s 专用流程 _deploy_k8s_core，避免维护两套执行逻辑。
+审批批准后的执行,回滚重放都走这里,统一复用 DeployService.execute 和
+K8s 专用流程 _deploy_k8s_core,避免维护两套执行逻辑.
 
-参数快照约定：params dict 必须含 "deploy_type" 路由判别；
-以 "k8s/" 开头走 K8s 流程，否则走 SSH/Compose 流程。
+参数快照约定:params dict 必须含 'deploy_type' 路由判别;
+以 'k8s/' 开头走 K8s 流程,否则走 SSH/Compose 流程.
 """
 
 import json
@@ -21,7 +21,7 @@ from backend.services.k8s_deploy_service import (
 
 logger = logging.getLogger(__name__)
 
-# DeployService.execute 接受的参数（与 DeployRequest 字段一一对应）
+# DeployService.execute 接受的参数(与 DeployRequest 字段一一对应)
 _SSH_FIELDS = (
     "project",
     "tag",
@@ -55,12 +55,12 @@ _K8S_FIELDS = (
 
 
 def build_params(deploy_type: str, fields: dict) -> str:
-    """序列化部署参数快照（含 deploy_type 路由判别），供审批单/回滚存 params_json。"""
+    """序列化部署参数快照(含 deploy_type 路由判别),供审批单/回滚存 params_json."""
     return json.dumps({"deploy_type": deploy_type, **fields}, ensure_ascii=False)
 
 
 def ssh_params(req) -> dict:
-    """从 SSH/Compose 部署请求构建参数快照 dict（与 DeployService.execute 内部快照同构）。"""
+    """从 SSH/Compose 部署请求构建参数快照 dict(与 DeployService.execute 内部快照同构)."""
     return {
         "deploy_type": req.deploy_type,
         "project": req.project,
@@ -81,7 +81,7 @@ def ssh_params(req) -> dict:
 
 
 def k8s_params(req) -> dict:
-    """从 K8s 部署请求构建参数快照 dict（deploy_type 为 k8s/{cd_type} 路由判别）。"""
+    """从 K8s 部署请求构建参数快照 dict(deploy_type 为 k8s/{cd_type} 路由判别)."""
     return {
         "deploy_type": f"k8s/{req.cd_type}",
         "project": req.project,
@@ -98,7 +98,7 @@ def k8s_params(req) -> dict:
 
 
 def _is_busy(exc: BaseException) -> bool:
-    """判断异常是否为并发锁冲突（同项目已有进行中部署），命中则交由轮询器重投。"""
+    """判断异常是否为并发锁冲突(同项目已有进行中部署),命中则交由轮询器重投."""
     err_key = getattr(exc, "error_key", "") or ""
     return err_key == "errors.deploy_busy" or "已有部署进行中" in str(exc)
 
@@ -106,11 +106,11 @@ def _is_busy(exc: BaseException) -> bool:
 def execute_from_params(
     db, params: dict, user: dict, callback=None, rollback: bool = False, approval_id: int = 0
 ) -> dict:
-    """按持久化参数执行部署，返回 {"status": "ok"|"failed"|"busy"|"cancelled", "deploy_id": int}。
+    """按持久化参数执行部署,返回 {'status': 'ok'|'failed'|'busy'|'cancelled', 'deploy_id': int}.
 
-    params 必须含 deploy_type 路由判别。user 为执行身份（含 username/role/permissions）。
-    rollback=True 时 K8S 走原生回滚（kubectl rollout undo / helm rollback）。
-    approval_id 非 0 时把审批单 id 关联到新建的部署记录（经审批单执行的路径）。
+    params 必须含 deploy_type 路由判别.user 为执行身份(含 username/role/permissions).
+    rollback=True 时 K8S 走原生回滚(kubectl rollout undo / helm rollback).
+    approval_id 非 0 时把审批单 id 关联到新建的部署记录(经审批单执行的路径).
     """
     deploy_type = params.get("deploy_type", "") or ""
     try:

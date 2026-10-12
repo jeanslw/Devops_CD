@@ -121,8 +121,8 @@ const { showError } = useError()
 const repos = ref([])
 const loading = ref(true)
 const lastSyncText = ref('加载中…')
-// Harbor 连接不可达标记：同步被中止时上方显示「连接不可达」（红色），
-// 并让 loadRepos() 的刷新不会用「上次同步：…」把它盖掉
+// Harbor 连接不可达标记:同步被中止时上方显示"连接不可达"(红色),
+// 并让 loadRepos() 的刷新不会用"上次同步:..."把它盖掉
 const syncUnreachable = ref(false)
 const syncInterval = ref(0)
 let _syncing = false
@@ -229,7 +229,7 @@ async function syncAll() {
       lastSyncText.value = d.last_sync ? t('registry.lastSync', { time: formatTime(d.last_sync) }) : t('registry.syncComplete', { total: 0, repos: 0 })
       toast(t('registry.syncComplete', { total: d.total, repos: d.repos }), true)
     } else if (d.error_key === 'errors.harbor_unavailable') {
-      // Harbor 连接不可达：不能显示「同步完成」，明确提示连接不可达
+      // Harbor 连接不可达:不能显示"同步完成",明确提示连接不可达
       syncUnreachable.value = true
       lastSyncText.value = t('registry.syncUnreachable')
       showError(d)
@@ -322,7 +322,7 @@ async function syncCurrentRepo() {
       toast('✅ ' + t('registry.syncComplete', { total: 0, repos: 0 }).split('：')[0] + t('common.success'), true)
       if (artifactRepoId.value) loadArtifacts(artifactPage.value)
     } else {
-      // Harbor 连接不可达时同步被中止：标记状态，返回列表页仍显示「连接不可达」
+      // Harbor 连接不可达时同步被中止:标记状态,返回列表页仍显示"连接不可达"
       syncUnreachable.value = d.error_key === 'errors.harbor_unavailable'
       showError(d)
     }
@@ -406,7 +406,7 @@ async function triggerScan(a) {
     const r = await fetch(`/api/registry/scan/trigger/${artifactRepoId.value}/${encodeURIComponent(a.tag)}`, { method: 'POST', headers: auth.A() })
     if (auth.handle401(r)) return
     const d = await r.json()
-    // 与 useError 同策略：后端给了 error_key 就按当前语言翻译（否则英文界面会蹦出后端的中文兜底串）
+    // 与 useError 同策略:后端给了 error_key 就按当前语言翻译(否则英文界面会蹦出后端的中文兜底串)
     const failMsg = d.error_key && te(d.error_key) ? t(d.error_key) : (d.error || t('registry.syncTriggerFail'))
     toast(d.ok ? t('registry.syncTriggered') : '❌ ' + failMsg, d.ok)
   } catch (e) { toast(t('registry.syncTriggerFail') + ': ' + e.message, false) }

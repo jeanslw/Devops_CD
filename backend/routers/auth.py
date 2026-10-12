@@ -27,17 +27,27 @@ router = APIRouter(tags=["auth"])
 
 @router.post("/api/login")
 def login(req: LoginRequest, request: Request, response: Response, db: Database = Depends(get_db)):
-    # 登录失败限流：与 CI（Devops-Glue）共享 cache 表计数，5 次失败锁 15 分钟。
-    # 必须在验密之前检查，任何失败（含停用/无 CD 权限）都计数，成功才清零——
-    # 唯一例外是「CD 未部署」（见下），它是部署状态而非凭据失败，不计入。
+    # 登录失败限流:与 CI(Devops-Glue)共享 cache 表计数,5 次失败锁 15 分钟.
+    # 必须在验密之前检查,任何失败(含停用/无 CD 权限)都计数,成功才清零--
+    # 唯一例外是"CD 未部署"(见下),它是部署状态而非凭据失败,不计入.
     ip = client_ip(request)
-    # 部署闸门：清单（CD_REQUIRED_TABLES）没建全时禁止登录，且绝不代为建表，提示按驱动给出补齐动作。
-    # 必须排在限流计数之前：未启用的部署不该在共享 cache 表里累积失败次数，
-    # 更不该把管理员的账号锁掉（那把锁属于 Devops-Glue，CD 无权污染）。
+    # 部署闸门:清单(CD_REQUIRED_TABLES)没建全时禁止登录,且不代为建表,提示按驱动给出补齐动作.
+    # 必须排在限流计数之前:未启用的部署不该在共享 cache 表里累积失败次数,
+    # 更不该把管理员的账号锁掉(那把锁属于 Devops-Glue,CD 无权污染).
     cd_deploy_gate(db)
+    # ── 模式守卫:OIDC 模式下本地密码登录关闭 ──
+    # 必须排在登录失败限流之前:这条拒绝属于"模式",不该在 Devops-Glue 共享的 cache 表里
+    # 记一笔失败次数(更不该把管理员账号锁掉).回退到 local 即立即恢复(代码保留),
+    # 见 docs/SSO_OIDC_ZH.md §6.3 / §7.1.
+    if settings.auth_mode == "oidc":
+        raise AppException(
+            "本地密码登录已停用，请使用 Devops-Glue 单点登录",
+            status_code=403,
+            error_key="errors.local_login_disabled",
+        )
     username = (req.user or "").strip().lower()
-    # 空用户名直接按凭据错误拒绝：不查锁、不计数，避免所有空用户名失败共享
-    # md5(ip+":") 一个桶，也不泄露"该用户名不存在"之外的任何信息。
+    # 空用户名直接按凭据错误拒绝:不查锁,不计数,避免所有空用户名失败共享
+    # md5(ip+":") 一个桶,也不泄露"该用户名不存在"之外的任何信息.
     if not username:
         raise AppException("账号或密码错误", status_code=401, error_key="errors.invalid_credentials")
     if is_login_locked(db, ip, username):
@@ -47,7 +57,7 @@ def login(req: LoginRequest, request: Request, response: Response, db: Database 
             error_key="errors.login_locked",
         )
 
-    # 延迟导入 authenticate，避免路由模块加载期产生循环依赖风险
+    # 延迟导入 authenticate,避免路由模块加载期产生循环依赖风险
     from backend.auth import authenticate
 
     try:
@@ -58,8 +68,8 @@ def login(req: LoginRequest, request: Request, response: Response, db: Database 
         raise
     if token:
         clear_login_failure(db, ip, username)
-        # HttpOnly cookie：JS 不可读，XSS 无法窃取；同源请求自动携带，前端无需手动带 Authorization 头。
-        # Secure 由 settings.cookie_secure 控制（nginx 以 HTTPS 对外时应开启）。
+        # HttpOnly cookie:JS 不可读,XSS 无法窃取;同源请求自动携带,前端无需手动带 Authorization 头.
+        # Secure 由 settings.cookie_secure 控制(nginx 以 HTTPS 对外时应开启).
         response.set_cookie(
             "cd_token",
             token,
@@ -87,8 +97,8 @@ def logout(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Database = Depends(get_db),
 ):
-    """吊销当前会话：删除服务端会话行，token 立即失效，并清除 HttpOnly cookie。
-    幂等：未登录 / 已过期 / 无效 token 也返回成功（前端本地状态照常清理）。"""
+    """吊销当前会话:删除服务端会话行,token 立即失效,并清除 HttpOnly cookie.
+    幂等:未登录 / 已过期 / 无效 token 也返回成功(前端本地状态照常清理)."""
     token = _extract_token(request, credentials)
     if token:
         revoke_session(db, token)

@@ -237,7 +237,7 @@ onMounted(async () => {
   if (selectedProject.value) {
     await changeProject(selectedProject.value)
   }
-  // 从审批中心跳转：?approval=<id> 直接展开流程面板
+  // 从审批中心跳转:?approval=<id> 直接展开流程面板
   if (route.query.approval) {
     panelApprovalId.value = Number(route.query.approval) || 0
   } else {
@@ -245,7 +245,7 @@ onMounted(async () => {
   }
 })
 
-// 同页跳转（组件已挂载时 query 变化）
+// 同页跳转(组件已挂载时 query 变化)
 watch(() => route.query.approval, (v) => {
   if (v) panelApprovalId.value = Number(v) || 0
 })

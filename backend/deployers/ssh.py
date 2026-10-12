@@ -1,4 +1,4 @@
-"""SSH 单机部署器 — 纯透传，不硬编码任何工具命令"""
+"""SSH 单机部署器 - 纯透传,不硬编码任何工具命令"""
 
 import logging
 import shlex
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class SSHDeployer(Deployer):
-    """SSH 部署：用户输入什么命令就原样执行，不做任何前置检查或工具假设"""
+    """SSH 部署:用户输入什么命令就原样执行,不做任何前置检查或工具假设"""
 
     def name(self) -> str:
         return "ssh"
@@ -39,7 +39,7 @@ class SSHDeployer(Deployer):
                 output, exit_code = self._ssh_exec_stream(ssh, cmd, callback)
                 self._log(callback, S("deploy_log.ssh_exec_done"))
 
-            # 命令 exit code 是 SSH/Ansible 模式下唯一的成败信号，必须以此判定
+            # 命令 exit code 是 SSH/Ansible 模式下唯一的成败信号,必须以此判定
             status = "ok" if exit_code == 0 else "failed"
             return DeployResult(image=image, status=status, output=output)
         except Exception as e:
@@ -70,11 +70,11 @@ class SSHDeployer(Deployer):
         ).strip()
 
     def _ssh_exec_stream(self, ssh, cmd: str, callback) -> tuple[str, int]:
-        """实时流式执行命令（委托给共享实现），返回 (output, exit_code)"""
+        """实时流式执行命令(委托给共享实现),返回 (output, exit_code)"""
         return ssh_exec_stream(ssh, cmd, lambda msg: self._log(callback, msg))
 
     def stop(self, target: DeployTarget, project: str, **kwargs) -> dict:
-        """停止服务：执行用户自定义的停止命令（替换模板变量后执行）"""
+        """停止服务:执行用户自定义的停止命令(替换模板变量后执行)"""
         commands = kwargs.get("commands", "")
         tag = kwargs.get("tag", "")
         if not commands:

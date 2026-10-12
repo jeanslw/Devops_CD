@@ -303,7 +303,7 @@ function openApprove(a) {
 async function doApprove() {
   const a = approveTarget.value
   if (!a) return
-  // 定时发布时间由申请人在提交部署时指定；批准只放行（无 body）
+  // 定时发布时间由申请人在提交部署时指定;批准只放行(无 body)
   const r = await fetch(`/api/approvals/${a.id}/approve`, { method: 'POST', headers: auth.A() })
   if (auth.handle401(r)) return
   const d = await r.json()
@@ -343,7 +343,7 @@ async function doCancel(a) {
   load()
 }
 
-// 已批准单：跳到对应部署页（K8s/Docker/SSH）并自动展开流程面板，由申请人本人执行
+// 已批准单:跳到对应部署页(K8s/Docker/SSH)并自动展开流程面板,由申请人本人执行
 function goExecute(a) {
   const url = approvalUrl(a)
   if (url) router.push(url)
@@ -373,7 +373,7 @@ async function loadUsers() {
   } catch (e) {}
 }
 
-// 审批角色显示名：直接读 CI(Glue) 的 description，与 CI 侧保持一致（空则回退 name）
+// 审批角色显示名:直接读 CI(Glue) 的 description,与 CI 侧保持一致(空则回退 name)
 function roleLabel(r) {
   return r.description || r.name
 }

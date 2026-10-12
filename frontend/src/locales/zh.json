@@ -86,14 +86,17 @@
     "footer": "Copyright © 2026 jeanslw"
   },
   "login": {
-    "title": "🔐 CD 部署系统",
+    "title": "登 录",
     "subtitle": "管理员账号",
     "username": "账号",
     "password": "密码",
     "loginBtn": "登 录",
     "enterCredentials": "请输入账号密码",
     "loginFailed": "登录失败",
-    "networkError": "网络错误"
+    "networkError": "网络错误",
+    "ssoBtn": "登 录",
+    "ssoHint": "统一登录（oidc），认证后自动返回本系统。",
+    "localDisabled": "本地密码登录已停用（AUTH_MODE=oidc），请使用上方 Devops-Glue 登录"
   },
   "topbar": {
     "logout": "退出",
@@ -931,11 +934,17 @@
     "cd_not_deployed": "CD 服务未部署：CD 数据表未建全（缺失：{tables}）。请管理员补齐后再试 —— auto 模式重启 CD 服务会自动建表；manual 模式（MySQL）需导入 database/init_mysql.sql",
     "db_unavailable": "数据库当前不可用（{driver} 驱动）：{reason}。请检查数据库连接与配置；SQLite 模式还需确认数据目录可写、磁盘未满",
     "invalid_url": "无效的 URL 地址",
+    "identity_unavailable": "身份校验失败：该账号在 Devops-Glue 中的角色不存在或已被删除，请联系管理员核对角色配置",
+    "oidc_not_configured": "单点登录尚未配置完成：服务端缺少必需配置项 {items}。请管理员补齐后重试（OIDC_ISSUER 见 config/app.env 或根 .env，CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI 见根 .env）",
+    "local_login_disabled": "本地密码登录已停用，请使用 Devops-Glue 单点登录",
     "no_cd_access": "该账号无 CD 访问权限，请联系管理员",
     "unsupported_cd_type": "不支持的 CD 类型",
     "unsupported_deploy_type": "不支持的部署类型",
     "upload_blocked_path": "不允许上传到系统目录: {path}",
     "user_disabled": "该账号已被停用，请联系管理员",
+    "sso_denied": "统一登录未完成（在 Devops-Glue 授权页取消了登录，或 Glue 会话已失效），请重新登录",
+    "sso_state_invalid": "登录请求已失效（重复回调或授权码超时），请重新发起登录",
+    "sso_unavailable": "统一登录服务暂时不可用（无法连接 Devops-Glue，或登录凭据校验未通过），请稍后重试；持续出现请联系管理员",
     "wrong_deploy_api": "请使用 K8S 专用接口 /api/deploy-k8s"
   }
 }

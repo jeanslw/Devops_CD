@@ -1,4 +1,4 @@
-"""CI 构建管理路由 — 代理 CI API，CD 前端统一入口（对照 CI OpenAPI 实现）"""
+"""CI 构建管理路由 - 代理 CI API,CD 前端统一入口(对照 CI OpenAPI 实现)"""
 
 import logging
 import traceback
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/ci", tags=["ci-build"])
 
 
 def _client():
-    """获取 CI 客户端，未配置时返回明确错误"""
+    """获取 CI 客户端,未配置时返回明确错误"""
     try:
         return get_ci_client()
     except CiClientError as e:
@@ -38,10 +38,10 @@ def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
 # ── 构建历史 ──
 @router.get("/projects/{project:path}/builds")
 def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
-    """获取项目构建历史 → CI GET /api/build/{path}/pipelines。
+    """获取项目构建历史 → CI GET /api/build/{path}/pipelines.
 
-    custom_push 项目也统一走该接口：Glue CustomPushBuildProvider::getPipelines
-    直读 ci_custom_builds（含 log_url），CD 不再直读该表。
+    custom_push 项目也统一走该接口:Glue CustomPushBuildProvider::getPipelines
+    直读 ci_custom_builds(含 log_url),CD 不再直读该表.
     """
     try:
         return _client().get_builds(project)
@@ -57,8 +57,8 @@ def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"
 # ── 触发构建 ──
 @router.post("/projects/{project:path}/build")
 def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(require_perm("ci.trigger"))):
-    """触发一次构建 → CI POST /api/build/{path}/trigger。
-    ref 仅 GitLab CI 模式必填；Jenkins 模式可省略。"""
+    """触发一次构建 → CI POST /api/build/{path}/trigger.
+    ref 仅 GitLab CI 模式必填;Jenkins 模式可省略."""
     try:
         ref = req.ref or ""
         variables = req.variables or None
@@ -70,7 +70,7 @@ def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(
 # ── 构建日志 ──
 @router.get("/projects/{project:path}/builds/{id}/log")
 def get_build_log(project: str, id: str, _user: str = Depends(require_perm("cd.build-manage"))):
-    """获取构建日志 → CI GET /api/build/{path}/logs/{id}（id=job id）"""
+    """获取构建日志 → CI GET /api/build/{path}/logs/{id}(id=job id)"""
     try:
         log = _client().get_build_log(project, id)
         return PlainTextResponse(log)
@@ -78,10 +78,10 @@ def get_build_log(project: str, id: str, _user: str = Depends(require_perm("cd.b
         raise ServiceUnavailableError(f"CI 日志获取失败: {e}", error_key="errors.ci_log_failed") from e
 
 
-# ── 流水线日志（Gitea 专属：run id → 全部 job 日志拼接）──
+# ── 流水线日志(Gitea 专属:run id → 全部 job 日志拼接)──
 @router.get("/projects/{project:path}/builds/{id}/pipeline-log")
 def get_pipeline_log(project: str, id: str, _user: str = Depends(require_perm("cd.build-manage"))):
-    """获取流水线日志 → CI GET /api/build/{path}/pipelines/{id}/logs（id=run id）"""
+    """获取流水线日志 → CI GET /api/build/{path}/pipelines/{id}/logs(id=run id)"""
     try:
         log = _client().get_pipeline_log(project, id)
         return PlainTextResponse(log)
@@ -103,7 +103,7 @@ def get_variables(project: str, _user: str = Depends(require_perm("cd.build-mana
 # ── 分支列表 ──
 @router.get("/projects/{project:path}/branches")
 def get_branches(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
-    """获取项目分支列表 → CI GET /api/build/{path}/branches（返回纯字符串数组）"""
+    """获取项目分支列表 → CI GET /api/build/{path}/branches(返回纯字符串数组)"""
     try:
         return _client().get_branches(project)
     except CiClientError as e:
@@ -111,7 +111,7 @@ def get_branches(project: str, _user: str = Depends(require_perm("cd.build-manag
         raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable") from e
 
 
-# ── 重试 Pipeline（仅 GitLab CI）──
+# ── 重试 Pipeline(仅 GitLab CI)──
 @router.post("/projects/{project:path}/builds/{id}/retry")
 def retry_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci.trigger"))):
     """重试 Pipeline → CI POST /api/build/{path}/pipelines/{id}/retry"""
@@ -121,7 +121,7 @@ def retry_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci
         raise ServiceUnavailableError(f"CI 重试失败: {e}", error_key="errors.ci_retry_failed") from e
 
 
-# ── 取消 Pipeline（仅 GitLab CI）──
+# ── 取消 Pipeline(仅 GitLab CI)──
 @router.post("/projects/{project:path}/builds/{id}/cancel")
 def cancel_pipeline(project: str, id: str, _user: dict = Depends(require_perm("ci.trigger"))):
     """取消 Pipeline → CI POST /api/build/{path}/pipelines/{id}/cancel"""

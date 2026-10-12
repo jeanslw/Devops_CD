@@ -1,4 +1,4 @@
-"""Harbor API 客户端 — v1/v2 自动探测 + artifacts/scan/delete 操作"""
+"""Harbor API 客户端 - v1/v2 自动探测 + artifacts/scan/delete 操作"""
 
 import logging
 import urllib.parse
@@ -17,21 +17,21 @@ class HarborUnavailableError(Exception):
 
 
 class HarborClient:
-    """Harbor API 客户端，自动探测 v1/v2 版本"""
+    """Harbor API 客户端,自动探测 v1/v2 版本"""
 
     def __init__(self):
         raw = settings.harbor_registry.strip().rstrip("/")
         self._user = settings.harbor_user
         self._password = settings.harbor_password
-        self._verify = settings.harbor_verify_ssl  # HTTPS 证书校验开关（自签名 Harbor 可关）
+        self._verify = settings.harbor_verify_ssl  # HTTPS 证书校验开关(自签名 Harbor 可关)
         self._version = None  # "v1" | "v2"
         self._base = None
 
         if raw.startswith("http://") or raw.startswith("https://"):
-            # 用户已指定 scheme，直接探测
+            # 用户已指定 scheme,直接探测
             candidates = [raw]
         else:
-            # 未指定 scheme，先 https 后 http
+            # 未指定 scheme,先 https 后 http
             candidates = [f"https://{raw}", f"http://{raw}"]
 
         for base_url in candidates:
@@ -47,7 +47,7 @@ class HarborClient:
         logger.info(f"Harbor API 版本: {self._version} ({self._base})")
 
     def _probe_version(self, base: str) -> str | None:
-        """探测 Harbor API 版本，返回 "v1" | "v2" | None"""
+        """探测 Harbor API 版本,返回 'v1' | 'v2' | None"""
         try:
             r = requests.get(f"{base}/api/v2.0/ping", auth=(self._user, self._password), timeout=8, verify=self._verify)
             if r.ok:
@@ -90,7 +90,7 @@ class HarborClient:
         return self._base or ""
 
     def _get_raw(self, path: str) -> requests.Response:
-        """返回原始响应对象（用于需要读取 headers 的分页场景）"""
+        """返回原始响应对象(用于需要读取 headers 的分页场景)"""
         try:
             r = requests.get(f"{self._base}{path}", auth=(self._user, self._password), timeout=20, verify=self._verify)
         except requests.ConnectionError as e:
@@ -140,14 +140,14 @@ class HarborClient:
     # ── 仓库(tags)列表 ──
 
     def list_artifacts(self, repo_full: str) -> list[dict]:
-        """获取仓库下所有 artifacts/tags（统一返回格式）"""
+        """获取仓库下所有 artifacts/tags(统一返回格式)"""
         if self._version == "v2":
             return self._list_artifacts_v2(repo_full)
         else:
             return self._list_artifacts_v1(repo_full)
 
     def _list_artifacts_v2(self, repo_full: str) -> list[dict]:
-        """v2: /api/v2.0/projects/{project}/repositories/{repo}/artifacts（分页采集全部 tags）"""
+        """v2: /api/v2.0/projects/{project}/repositories/{repo}/artifacts(分页采集全部 tags)"""
         project, repo = self._split_repo(repo_full)
         enc_proj = urllib.parse.quote(project, safe="")
         enc_repo = urllib.parse.quote(repo, safe="")
@@ -172,7 +172,7 @@ class HarborClient:
 
         result = []
         for art in all_items:
-            # Harbor 不同版本的 scan_overview key 不同，动态取第一个
+            # Harbor 不同版本的 scan_overview key 不同,动态取第一个
             scan_overview = art.get("scan_overview") or {}
             scan: dict = {}
             if scan_overview:
@@ -181,7 +181,7 @@ class HarborClient:
                     if "vulnerability.report" in key or "scanner.adapter" in key:
                         scan = scan_overview[key] or {}
                         break
-                # fallback：取第一个 dict 值
+                # fallback:取第一个 dict 值
                 if not scan:
                     scan = next((v for v in scan_overview.values() if isinstance(v, dict)), {})
             summary = scan.get("summary") or {}
@@ -209,7 +209,7 @@ class HarborClient:
         return result
 
     def _list_artifacts_v1(self, repo_full: str) -> list[dict]:
-        """v1: /api/repositories/{repo_name}/tags（分页采集全部 tags）"""
+        """v1: /api/repositories/{repo_name}/tags(分页采集全部 tags)"""
         encoded = urllib.parse.quote(repo_full, safe="")
         base_path = f"/api/repositories/{encoded}/tags"
 
@@ -261,14 +261,14 @@ class HarborClient:
         return result
 
     def delete_artifact(self, repo_full: str, tag: str, digest: str = "") -> bool:
-        """删除 artifact/tag，返回是否成功"""
+        """删除 artifact/tag,返回是否成功"""
         if self._version == "v2":
             return self._delete_artifact_v2(repo_full, tag, digest)
         else:
             return self._delete_artifact_v1(repo_full, tag)
 
     def _delete_artifact_v2(self, repo_full: str, tag: str, digest: str) -> bool:
-        """v2 按 digest 删除（带 fallback 按 tag:tag_name）"""
+        """v2 按 digest 删除(带 fallback 按 tag:tag_name)"""
         project, repo = self._split_repo(repo_full)
         enc_proj = urllib.parse.quote(project, safe="")
         enc_repo = urllib.parse.quote(repo, safe="")
@@ -298,19 +298,19 @@ class HarborClient:
             return False
 
     def get_scan_report(self, repo_full: str, tag: str) -> dict | None:
-        """获取扫描报告（v1/v2 统一）"""
+        """获取扫描报告(v1/v2 统一)"""
         if self._version == "v2":
             return self._get_scan_v2(repo_full, tag)
         else:
             return self._get_scan_v1(repo_full, tag)
 
     def _get_scan_v2(self, repo_full: str, tag: str) -> dict | None:
-        """v2: 按 tag 查找 artifact，返回 scan_overview 或 additions/vulnerabilities"""
+        """v2: 按 tag 查找 artifact,返回 scan_overview 或 additions/vulnerabilities"""
         project, repo = self._split_repo(repo_full)
         enc_proj = urllib.parse.quote(project, safe="")
         enc_repo = urllib.parse.quote(repo, safe="")
         try:
-            # 直接获取指定 artifact（带 scan_overview）
+            # 直接获取指定 artifact(带 scan_overview)
             artifacts = self._get(
                 f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}/artifacts?"
                 f"q=tags%3D{urllib.parse.quote(tag, safe='')}&page_size=1&with_scan_overview=true"
@@ -320,7 +320,7 @@ class HarborClient:
                 return None
             art = items[0]
 
-            # 1) 优先取 scan_overview（包含 summary 和 severity）
+            # 1) 优先取 scan_overview(包含 summary 和 severity)
             scan_overview = art.get("scan_overview") or {}
             scan: dict = {}
             if scan_overview:
@@ -333,7 +333,7 @@ class HarborClient:
 
             summary = scan.get("summary") or {}
             digest = art.get("digest", "")
-            # 构造 Harbor Web UI 链接（v2 格式）
+            # 构造 Harbor Web UI 链接(v2 格式)
             harbor_url = (
                 f"{self._base}/harbor/projects/{urllib.parse.quote(project, safe='')}"
                 f"/repositories/{urllib.parse.quote(repo, safe='')}"
@@ -358,7 +358,7 @@ class HarborClient:
                     f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}"
                     f"/artifacts/{encoded_tag}/additions/vulnerabilities"
                 )
-                # Harbor v2 把漏洞数据包在 MIME type key 里，需要解出来（参考 PHP 实现）
+                # Harbor v2 把漏洞数据包在 MIME type key 里,需要解出来(参考 PHP 实现)
                 if isinstance(raw, dict):
                     for key, value in raw.items():
                         if "vulnerability" in key and isinstance(value, dict):

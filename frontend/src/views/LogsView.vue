@@ -97,7 +97,7 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// 后端日志/说明里的 STATUS:{json} 结构化消息按当前界面语言翻译，其余文本原样保留
+// 后端日志/说明里的 STATUS:{json} 结构化消息按当前界面语言翻译,其余文本原样保留
 function translateStatusToken(token) {
   if (!token.startsWith('STATUS:')) return token
   try {
@@ -108,13 +108,13 @@ function translateStatusToken(token) {
   }
 }
 
-// output 为多行日志，逐行翻译
+// output 为多行日志,逐行翻译
 function renderOutput(s) {
   return String(s || '').split('\n').map(translateStatusToken).join('\n')
 }
 
-// 说明为单行混合串（STATUS 摘要 + 普通文本）。STATUS 的 JSON 内部可能含空格，
-// 故用正则整体匹配扁平对象后翻译，其余文本原样保留
+// 说明为单行混合串(STATUS 摘要 + 普通文本).STATUS 的 JSON 内部可能含空格,
+// 故用正则整体匹配扁平对象后翻译,其余文本原样保留
 function renderNote(s) {
   return String(s || '').replace(/STATUS:(\{[^{}]*\})/g, (whole, json) => {
     try {
@@ -126,10 +126,10 @@ function renderNote(s) {
   })
 }
 
-// 审批徽章按审批单状态渲染（list_logs 挂载的 approval 带 status）；
-// 无 status（旧接口/兼容场景）时回退 approver 判断。
-// failed 也归入"已批准"：部署失败的单据审批已通过（批准事实由 approver/approved_at 承载），
-// 部署成败由状态列展示，徽章只表达审批是否发生。
+// 审批徽章按审批单状态渲染(list_logs 挂载的 approval 带 status);
+// 无 status(旧接口/兼容场景)时回退 approver 判断.
+// failed 也归入"已批准":部署失败的单据审批已通过(批准事实由 approver/approved_at 承载),
+// 部署成败由状态列展示,徽章只表达审批是否发生.
 function approvalState(l) {
   const a = l.approval || {}
   const st = a.status || ''
@@ -154,7 +154,7 @@ function approvalBadgeClass(l) {
   return 'approval-badge--pending'
 }
 
-// 审批徽章 tooltip：已批准显示审批人+批准时间；已撤销/已驳回/申请中给出对应提示
+// 审批徽章 tooltip:已批准显示审批人+批准时间;已撤销/已驳回/申请中给出对应提示
 function approvalTip(l) {
   const st = approvalState(l)
   if (st === 'cancelled') return t('logs.approvalTipCancelled', { id: l.approval_id })
@@ -170,7 +170,7 @@ function approvalTip(l) {
   })
 }
 
-// 部署状态翻译成界面语言；未知状态原样展示
+// 部署状态翻译成界面语言;未知状态原样展示
 function statusText(status) {
   const key = ({
     ok: 'logs.statusOk',
@@ -254,7 +254,7 @@ onMounted(() => loadData())
 </script>
 
 <style scoped>
-/* 固定内容列：不换行，保证时间/项目/TAG 等一行完整显示 */
+/* 固定内容列:不换行,保证时间/项目/TAG 等一行完整显示 */
 .col-time,
 .col-project,
 .col-tag,
@@ -265,7 +265,7 @@ onMounted(() => loadData())
   white-space: nowrap;
 }
 
-/* ID 列：编号 + 审批徽章强制同一行不换行 */
+/* ID 列:编号 + 审批徽章强制同一行不换行 */
 .log-id-cell {
   display: flex;
   align-items: center;
@@ -273,7 +273,7 @@ onMounted(() => loadData())
   white-space: nowrap;
 }
 
-/* 审批徽章：flex 子项，inline-block 保证不被挤压换行 */
+/* 审批徽章:flex 子项,inline-block 保证不被挤压换行 */
 .approval-badge {
   display: inline-block;
   flex: none;
@@ -289,7 +289,7 @@ onMounted(() => loadData())
   white-space: nowrap;
 }
 
-/* 已终止/中断/撤销/驳回 等中性/异常灰态（全局未定义 badge-gray） */
+/* 已终止/中断/撤销/驳回 等中性/异常灰态(全局未定义 badge-gray) */
 .badge-gray { background: rgba(107,112,132,0.12); color: var(--text-dim); }
 
 /* 待审批徽章用琥珀色与已批准蓝色区分 */
@@ -299,14 +299,14 @@ onMounted(() => loadData())
   border-color: rgba(251,191,36,0.35);
 }
 
-/* 已撤销/已驳回徽章用灰态与待审批琥珀色、已批准蓝色区分 */
+/* 已撤销/已驳回徽章用灰态与待审批琥珀色,已批准蓝色区分 */
 .approval-badge--cancelled {
   color: var(--text-dim);
   background: rgba(107,112,132,0.12);
   border-color: rgba(107,112,132,0.3);
 }
 
-/* 说明列移到最后并收窄：长回滚说明两行截断，展开行可看完整 output，hover 可见全文 */
+/* 说明列移到最后并收窄:长回滚说明两行截断,展开行可看完整 output,hover 可见全文 */
 .note-preview {
   max-width: 200px;
   white-space: pre-wrap;

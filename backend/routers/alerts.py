@@ -21,7 +21,7 @@ class AlertRuleRequest(BaseModel):
     template: str = ""
     enabled: bool = True
     cooldown_minutes: int = 10
-    duration_minutes: int = 0  # 持续超标 N 分钟后报警，0=立即
+    duration_minutes: int = 0  # 持续超标 N 分钟后报警,0=立即
 
 
 @router.get("")
@@ -112,7 +112,7 @@ def list_resource_types(
     db: Database = Depends(get_db),
     username: str = Depends(verify_token),
 ):
-    """返回可用的资源类型列表（给前端下拉用），自定义项按 采集器 → 指标 层级"""
+    """返回可用的资源类型列表(给前端下拉用),自定义项按 采集器 → 指标 层级"""
     with db.conn() as conn:
         custom_rows = conn.execute("SELECT id, name FROM cd_custom_monitors WHERE enabled=1 ORDER BY name").fetchall()
         custom_metrics = {}  # monitor_id → [{metric}]
@@ -141,7 +141,7 @@ def list_resource_types(
                 for m in metrics
             ],
         }
-        # 没有子指标时，value 自身就是可选资源（兼容旧逻辑）
+        # 没有子指标时,value 自身就是可选资源(兼容旧逻辑)
         custom.append(group)
 
     return {

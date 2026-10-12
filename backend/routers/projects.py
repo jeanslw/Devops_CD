@@ -1,4 +1,4 @@
-"""CI 项目路由 — 项目列表 + Pipeline 状态 + Tag 分页（需登录）"""
+"""CI 项目路由 - 项目列表 + Pipeline 状态 + Tag 分页(需登录)"""
 
 from fastapi import APIRouter, Depends
 
@@ -23,7 +23,7 @@ def project_tags(
     page_size: int = 50,
     _user: str = Depends(verify_token),
 ):
-    """获取项目的 pipeline tag 列表（分页）→ CI GET /api/build/{path}/tags"""
+    """获取项目的 pipeline tag 列表(分页)→ CI GET /api/build/{path}/tags"""
     try:
         return get_ci_client().get_tags(project, page, page_size)
     except CiClientError as e:
@@ -32,7 +32,7 @@ def project_tags(
 
 @router.get("/projects/{project:path}/pipeline")
 def pipeline_status(project: str, _user: str = Depends(verify_token)):
-    """获取项目最新 pipeline 状态（调 PHP API）"""
+    """获取项目最新 pipeline 状态(调 PHP API)"""
     result = CiService().get_pipeline_status(project)
     if result is None:
         raise NotFoundError(

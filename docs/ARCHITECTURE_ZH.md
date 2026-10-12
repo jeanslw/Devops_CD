@@ -106,7 +106,7 @@
 | `enabled=1` + `provision='auto'` | 首次连库自动建全清单 + 补缺失列 + 补索引 + 契约视图（MySQL / SQLite 同理） | 表没建全 → 503 `errors.cd_not_deployed`（重启 CD 自愈） |
 | `enabled=1` + `provision='manual'` | 零 DDL（结构归 DBA：MySQL 导入 `database/init_mysql.sql`） | 缺表 → 503 `errors.cd_not_deployed`（导入建表脚本） |
 
-关闭集成服务只冻结准入：CD 表与数据原样保留，绝不 `DROP`。闸门覆盖登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手。
+关闭集成服务只冻结准入：CD 表与数据原样保留，不 `DROP`。闸门覆盖登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手。
 
 **增删一张 CD 表 = 只改四处**（闸门判定、错误文案、启动告警、张数全部自动跟随，不写死数字）：
 

@@ -1,4 +1,4 @@
-"""统一 API 响应格式 — 所有路由返回一致的结构"""
+"""统一 API 响应格式 - 所有路由返回一致的结构"""
 
 from typing import Any
 
@@ -27,5 +27,5 @@ def items(items: list, total: int, page: int = 1, page_size: int = 20) -> dict:
 
 
 def error(message: str, code: int = 400) -> dict:
-    """统一错误响应（预留，当前项目统一使用 AppException 异常体系）"""
+    """统一错误响应(预留,当前项目统一使用 AppException 异常体系)"""
     return {"success": False, "error": message, "code": code}

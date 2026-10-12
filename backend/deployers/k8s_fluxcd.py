@@ -1,4 +1,4 @@
-"""K8S Flux CD 部署模式 — patch HelmRelease/Kustomization + trigger reconcile + verify pods"""
+"""K8S Flux CD 部署模式 - patch HelmRelease/Kustomization + trigger reconcile + verify pods"""
 
 import json
 import logging
@@ -35,7 +35,7 @@ def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
 
 
 def _discover_flux_resource(ssh, project_fallback, image_name):
-    """发现 Flux CD 资源名（HelmRelease / Kustomization），不盲猜等于项目名"""
+    """发现 Flux CD 资源名(HelmRelease / Kustomization),不盲猜等于项目名"""
     ns_q = shlex.quote(settings.flux_namespace)
     # 先尝试精确匹配
     for kind in ("helmrelease", "kustomization"):
@@ -46,7 +46,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
         if r:
             return project_fallback, kind
 
-    # 搜索 flux-system 下所有资源，按镜像名匹配
+    # 搜索 flux-system 下所有资源,按镜像名匹配
     for kind in ("helmrelease", "kustomization"):
         r = _ssh_cmd(
             ssh,
@@ -62,7 +62,7 @@ def _discover_flux_resource(ssh, project_fallback, image_name):
             if (image_name and image_name in spec) or project_fallback in spec:
                 return name, kind
 
-    # 没找到，fallback 到项目短名
+    # 没找到,fallback 到项目短名
     return project_fallback, ""
 
 
@@ -75,7 +75,7 @@ class FluxCDDeployer(K8sSubDeployer):
     def stop(
         self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
     ) -> dict:
-        """停止：flux suspend <resource>"""
+        """停止:flux suspend <resource>"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
@@ -102,7 +102,7 @@ class FluxCDDeployer(K8sSubDeployer):
         img_name, _ = split_image_ref(image)
 
         def _check_flux_error(ssh, resource_name, resource_kind):
-            """检查 Flux 资源 (HelmRelease/Kustomization) 是否报错。返回错误描述或 None"""
+            """检查 Flux 资源 (HelmRelease/Kustomization) 是否报错.返回错误描述或 None"""
             if resource_kind not in ("helmrelease", "kustomization"):
                 return None
             jsonpath = (
@@ -130,7 +130,7 @@ class FluxCDDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.flux_connecting"))
             ssh = ssh_connect(target, settings.ssh_timeout)
 
-            # ── 发现 Flux 资源名，不盲猜等于项目名 ──
+            # ── 发现 Flux 资源名,不盲猜等于项目名 ──
             flux_name, flux_kind = _discover_flux_resource(ssh, project.split("/")[-1], img_name)
             if not flux_kind:
                 _log(callback, S("deploy_log.flux_resource_not_found", image=img_name))
@@ -156,7 +156,7 @@ class FluxCDDeployer(K8sSubDeployer):
 
             # 2. Patch flux 资源
             _log(callback, S("deploy_log.flux_start"))
-            # 如果指定了 path 且资源是 Kustomization，先更新 spec.path
+            # 如果指定了 path 且资源是 Kustomization,先更新 spec.path
             if req.path and flux_kind == "kustomization":
                 _log(callback, S("deploy_log.flux_path_update", path=req.path))
                 path_patch_data = json.dumps({"spec": {"path": req.path}})
@@ -177,7 +177,7 @@ class FluxCDDeployer(K8sSubDeployer):
                         "output": f"Flux path patch failed:\n{path_err or path_out or f'exit code {path_ec}'}",
                     }
 
-            # 安全构造 patch JSON，防止 tag 注入；Kustomization 的数组必须保留已有 override
+            # 安全构造 patch JSON,防止 tag 注入;Kustomization 的数组必须保留已有 override
             _log(callback, S("deploy_log.flux_update"))
             if flux_kind == "helmrelease":
                 patch_data = json.dumps({"spec": {"values": {"image": {"tag": tag}}}})
@@ -235,7 +235,7 @@ class FluxCDDeployer(K8sSubDeployer):
             else:
                 _log(callback, S("deploy_log.flux_reconcile_ok"))
 
-            # 4. 等待 Flux 开始滚动更新（轮询检测新 Pod + 检查 Flux 资源报错，最长 90s）
+            # 4. 等待 Flux 开始滚动更新(轮询检测新 Pod + 检查 Flux 资源报错,最长 90s)
             _log(callback, S("deploy_log.flux_wait"))
             flux_reacted = False
             for i in range(9):  # 9 × 10s = 90s
@@ -276,9 +276,9 @@ class FluxCDDeployer(K8sSubDeployer):
                     }
                 _log(callback, S("deploy_log.flux_no_reaction"))
 
-            # 5. 用 deployment 名进行 rollout status（从集群提取，不盲猜）
+            # 5. 用 deployment 名进行 rollout status(从集群提取,不盲猜)
             rollout_result = ""
-            # flux_name 可能来自项目名（请求参数），正则元字符与 shell 元字符都要转义
+            # flux_name 可能来自项目名(请求参数),正则元字符与 shell 元字符都要转义
             pat1 = shlex.quote(f"^{re.escape(flux_name)}-")
             pat2 = shlex.quote(re.escape(flux_name))
             deploy_name = _ssh_cmd(
@@ -301,7 +301,7 @@ class FluxCDDeployer(K8sSubDeployer):
             else:
                 _log(callback, S("deploy_log.deploy_no_deploy"))
 
-            # 6. 部署后状态（rollout status 已做主裁判，这里仅展示 Pod 列表）
+            # 6. 部署后状态(rollout status 已做主裁判,这里仅展示 Pod 列表)
             _log(callback, S("deploy_log.flux_verify"))
             after = _kubectl_pods(ssh, flux_name)
             ssh.close()
@@ -334,7 +334,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 )
                 return {"success": False, "output": result[: settings.log_truncate_chars]}
             else:
-                # 没找到 Deployment 时，不能把“patch 成功”当成“部署成功”；必须要求 Flux 真正完成
+                # 没找到 Deployment 时,不能把"patch 成功"当成"部署成功";必须要求 Flux 真正完成
                 status_text = f"当前 Pod: {running_count} 个 Running"
                 _log(callback, S("deploy_log.flux_fail_error"))
                 result = (

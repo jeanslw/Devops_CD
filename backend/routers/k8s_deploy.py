@@ -1,4 +1,4 @@
-"""K8S 部署路由 — kubectl SSH / Argo CD / Flux CD / Helm"""
+"""K8S 部署路由 - kubectl SSH / Argo CD / Flux CD / Helm"""
 
 import ipaddress
 import logging
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api", tags=["k8s_deploy"])
 logger = logging.getLogger(__name__)
 
 
-# ── 预检：部署前校验 YAML 名称与 K8S 存量 ──
+# ── 预检:部署前校验 YAML 名称与 K8S 存量 ──
 
 
 class K8sDeployCheckRequest(BaseModel):
@@ -42,14 +42,14 @@ class K8sDeployCheckRequest(BaseModel):
 
 
 def _validate_url(url: str) -> None:
-    """验证 URL 安全性，防止 SSRF 攻击。"""
+    """验证 URL 安全性,防止 SSRF 攻击."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValidationError(f"Invalid URL scheme: {parsed.scheme}", error_key="errors.invalid_url")
     hostname = parsed.hostname or ""
     try:
         ip = ipaddress.ip_address(hostname)
-        # 仅禁止回环地址和链路本地地址，其他私网地址放行
+        # 仅禁止回环地址和链路本地地址,其他私网地址放行
         if ip.is_loopback or ip.is_link_local:
             raise ValidationError("Loopback and link-local addresses are not allowed", error_key="errors.invalid_url")
     except ValueError:
@@ -57,7 +57,7 @@ def _validate_url(url: str) -> None:
 
 
 def _read_yaml(path: str, ssh=None) -> str:
-    """读取 YAML 内容：HTTP URL 直接拉，文件路径走 SSH cat"""
+    """读取 YAML 内容:HTTP URL 直接拉,文件路径走 SSH cat"""
     if path.startswith("http://") or path.startswith("https://"):
         try:
             _validate_url(path)
@@ -116,7 +116,7 @@ def deploy_k8s_check(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
-    """部署前预检：YAML 名称 vs 项目名 + K8S 存量"""
+    """部署前预检:YAML 名称 vs 项目名 + K8S 存量"""
     enforce_deploy_perm(_user, "k8s", req.cd_type)
     filter_name = req.project.split("/")[-1]
     result = {
@@ -131,9 +131,9 @@ def deploy_k8s_check(
 
     if not req.path or req.cd_type == "helm":
         if req.cd_type != "fluxcd":
-            return result  # Helm chart 目录/无 YAML，不需要预检
+            return result  # Helm chart 目录/无 YAML,不需要预检
 
-        # FluxCD: SSH 发现 Flux 资源名，用于名称对比
+        # FluxCD: SSH 发现 Flux 资源名,用于名称对比
         from backend.deployers.k8s_fluxcd import _discover_flux_resource
 
         try:
@@ -148,7 +148,7 @@ def deploy_k8s_check(
             return result
 
         if not flux_kind:
-            return result  # 没有 Flux 资源，跳过预检
+            return result  # 没有 Flux 资源,跳过预检
 
         deploy_name = flux_name
         result["yaml_deploy_name"] = deploy_name
@@ -156,7 +156,7 @@ def deploy_k8s_check(
         if deploy_name == filter_name:
             return result  # 完全匹配
 
-        # 查 K8S 存量（用 flux 资源名查 deployment）
+        # 查 K8S 存量(用 flux 资源名查 deployment)
         try:
             host, port, user, pwd, ssh_key = _resolve_cluster(db, req)
             ssh = ssh_connect(
@@ -168,7 +168,7 @@ def deploy_k8s_check(
         except AppException:
             pass
 
-        # 构造警告（复用现有逻辑）
+        # 构造警告(复用现有逻辑)
         name_low = filter_name.lower()
         yaml_low = deploy_name.lower()
         if name_low in yaml_low or yaml_low in name_low:
@@ -201,7 +201,7 @@ def deploy_k8s_check(
         return result
 
     # ── 解析 Deployment name ──
-    # 模板变量 {IMAGE}:{TAG} 会被 yaml 当成 flow mapping，先替换为占位符避免解析失败
+    # 模板变量 {IMAGE}:{TAG} 会被 yaml 当成 flow mapping,先替换为占位符避免解析失败
     safe_yaml = yaml_content.replace("{IMAGE}:{TAG}", "dummy:dummy")
     safe_yaml = safe_yaml.replace("{IMAGE_NAME}", "dummy")
     safe_yaml = safe_yaml.replace("{IMAGE}", "dummy")
@@ -264,12 +264,12 @@ def deploy_k8s(
     user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
     enforce_deploy_perm(user, "k8s", req.cd_type)
-    # tag 白名单：非法 tag 直接拒绝，不创建审批单、不执行远端命令
+    # tag 白名单:非法 tag 直接拒绝,不创建审批单,不执行远端命令
     try:
         validate_tag(req.tag)
     except InvalidTag as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
-    # 审批闸门：需审批则创建审批单并返回 pending，不执行
+    # 审批闸门:需审批则创建审批单并返回 pending,不执行
     gate = gate_deploy(
         db,
         project=req.project,
@@ -307,14 +307,14 @@ async def deploy_k8s_stream(
     db: Database = Depends(get_db),
     user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
-    """K8S 实时部署（SSE 流式推送）"""
+    """K8S 实时部署(SSE 流式推送)"""
     enforce_deploy_perm(user, "k8s", req.cd_type)
-    # tag 白名单：非法 tag 直接拒绝，不创建审批单、不执行远端命令
+    # tag 白名单:非法 tag 直接拒绝,不创建审批单,不执行远端命令
     try:
         validate_tag(req.tag)
     except InvalidTag as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
-    # 审批闸门：需审批则以 PENDING 事件结束流，前端引导去审批
+    # 审批闸门:需审批则以 PENDING 事件结束流,前端引导去审批
     gate = gate_deploy(
         db,
         project=req.project,
@@ -384,7 +384,7 @@ async def deploy_k8s_stream(
             )
 
             deploy_result = {"success": True, "data": result}
-            # 立即通知 SSE 流部署完成，避免通知操作阻塞 UI
+            # 立即通知 SSE 流部署完成,避免通知操作阻塞 UI
             log_queue.put(None)
 
             if not result.get("cancelled"):
@@ -415,7 +415,7 @@ async def deploy_k8s_stream(
                 if msg is None:
                     break
                 msg_id += 1
-                # 多行消息需要每行都加 data: 前缀，否则 SSE 只解析第一行
+                # 多行消息需要每行都加 data: 前缀,否则 SSE 只解析第一行
                 safe_msg = msg.replace("\n", "\ndata: ")
                 yield f"id: {msg_id}\nretry: 3000\ndata: {safe_msg}\n\n"
             except queue.Empty:
@@ -423,8 +423,8 @@ async def deploy_k8s_stream(
                 await asyncio.sleep(1)
 
         if deploy_result.get("success"):
-            # 部署流程已正常返回（result.success 表示实际部署结果）
-            # 实时日志已通过 STATUS: 事件流式发出，END 只携带成功标志
+            # 部署流程已正常返回(result.success 表示实际部署结果)
+            # 实时日志已通过 STATUS: 事件流式发出,END 只携带成功标志
             result = deploy_result["data"]
             yield f"retry: 3000\ndata: END:{str(result.get('success', False)).lower()}\n\n"
         else:

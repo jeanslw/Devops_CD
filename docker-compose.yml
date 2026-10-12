@@ -1,21 +1,21 @@
-# CD Service — 和 PHP Devops-Glue 搭配使用
-# 数据库推荐 MySQL / MariaDB，和 PHP 端共用 devops_glue 库
+# CD Service - 和 PHP Devops-Glue 搭配使用
+# 数据库推荐 MySQL / MariaDB,和 PHP 端共用 devops_glue 库
 #
-# 配置分两层：
-#   · 部署层 —— 根目录 .env（数据库 / SECRET_KEY / Harbor / CI 凭据 / TZ），下面 env_file 注入容器；
-#   · 业务层 —— config/app.env（超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等），随镜像发布；
-#   优先级：进程环境变量 > 根 .env > config/app.env > 代码默认值 ——
-#   临时覆盖业务参数：写进根 .env 或本文件的 environment 即可，无需重建镜像。
+# 配置分两层:
+#   · 部署层 -- 根目录 .env(数据库 / SECRET_KEY / Harbor / CI 凭据 / TZ),下面 env_file 注入容器;
+#   · 业务层 -- config/app.env(超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等),随镜像发布;
+#   优先级:进程环境变量 > 根 .env > config/app.env > 代码默认值 --
+#   临时覆盖业务参数:写进根 .env 或本文件的 environment 即可,无需重建镜像.
 #
-# 联合部署（Devops_Glue 仓库 docker-compose.yml 里注释掉的 devops-cd 段）时，CD 不挂业务数据卷，
-# 业务参数同样来自镜像内 config/app.env，根 .env 由 Glue 的 env_file 注入。
-# 本文件独立部署时，仅挂载 SSH known_hosts 持久化卷（配合 read_only 容器加固）。
+# 联合部署(Devops_Glue 仓库 docker-compose.yml 里注释掉的 devops-cd 段)时,CD 不挂业务数据卷,
+# 业务参数同样来自镜像内 config/app.env,根 .env 由 Glue 的 env_file 注入.
+# 本文件独立部署时,仅挂载 SSH known_hosts 持久化卷(配合 read_only 容器加固).
 
 services:
-  # 启动前环境变量预检（一次性容器，复用 devops-cd 镜像不增加额外构建）：
-  # 1) MySQL 模式缺少连接必填项时输出中英双语指引并中止，避免 uvicorn 启动后抛英文连接堆栈；
-  # 2) SECRET_KEY 未设置或是公开示例值时对**所有 driver** 中止 —— compose 无条件 read_only，
-  #    运行期自动生成 .cd_secret_key 必然写入失败，示例值也会在 crypto.py 启动期被清空后落入同一崩溃。
+  # 启动前环境变量预检(一次性容器,复用 devops-cd 镜像不增加额外构建):
+  # 1) MySQL 模式缺少连接必填项时输出中英双语指引并中止,避免 uvicorn 启动后抛英文连接堆栈;
+  # 2) SECRET_KEY 未设置或是公开示例值时对**所有 driver** 中止 -- compose 无条件 read_only,
+  #    运行期自动生成 .cd_secret_key 必然写入失败,示例值也会在 crypto.py 启动期被清空后落入同一崩溃.
   env-check:
     build:
       context: .
@@ -31,6 +31,12 @@ services:
       DB_USER: ${DB_USER:-}
       DB_PASS: ${DB_PASS:-}
       SECRET_KEY: ${SECRET_KEY:-}
+      # SSO / OIDC 预检输入:AUTH_MODE 与 OIDC_ISSUER 默认来自镜像内 config/app.env(下方读文件),
+      # 这里透传是为了让根 .env / compose environment 能临时覆盖,优先级与运行时一致.
+      AUTH_MODE: ${AUTH_MODE:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      CD_OIDC_SECRET: ${CD_OIDC_SECRET:-}
+      CD_OIDC_REDIRECT_URI: ${CD_OIDC_REDIRECT_URI:-}
     command:
       - |
         import os, sys
@@ -45,9 +51,9 @@ services:
                 print('------------------------------------------------------------------------')
                 print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
                 sys.exit(1)
-        # SECRET_KEY 检查对所有 driver 生效：容器无条件 read_only，未设置时运行期
-        # 自动生成 .cd_secret_key 必然写入失败；公开示例值会在 crypto.py 启动期被
-        # 清空后落入同一条失败路径，因此同样中止。
+        # SECRET_KEY 检查对所有 driver 生效:容器无条件 read_only,未设置时运行期
+        # 自动生成 .cd_secret_key 必然写入失败;公开示例值会在 crypto.py 启动期被
+        # 清空后落入同一条失败路径,因此同样中止.
         key = os.getenv('SECRET_KEY', '').strip()
         if not key:
             print('[启动中止] 容器文件系统只读（read_only），必须在 .env 配置 SECRET_KEY（所有数据库模式均必填）：')
@@ -63,6 +69,33 @@ services:
             print('------------------------------------------------------------------------')
             print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
             sys.exit(1)
+        # AUTH_MODE=oidc(默认登录方式)必填预检:缺任一项登录必然失败,与 SECRET_KEY 检查同构,
+        # 启动前中止并给出可操作清单(应用侧启动日志会打同一份清单).
+        def setting(name, default=''):
+            v = os.getenv(name)
+            if v and v.strip():
+                return v.strip()
+            # 回退读镜像内 config/app.env(优先级与 backend/config.py 一致:进程环境 > 根 .env > app.env)
+            for path in ('config/app.env', '/app/config/app.env'):
+                try:
+                    with open(path, encoding='utf-8') as fh:
+                        for line in fh:
+                            line = line.split('#', 1)[0].strip()
+                            if line.startswith(name + '='):
+                                return line.split('=', 1)[1].strip()
+                except OSError:
+                    continue
+            return default
+        if setting('AUTH_MODE', 'oidc').lower() == 'oidc':
+            need = [n for n in ('OIDC_ISSUER', 'CD_OIDC_SECRET', 'CD_OIDC_REDIRECT_URI') if not setting(n)]
+            if need:
+                print('[启动中止] AUTH_MODE=oidc（默认登录方式）必须配置：' + '、'.join(need))
+                print('[ABORT] AUTH_MODE=oidc (default login mode) requires: ' + ', '.join(need))
+                print('         OIDC_ISSUER 写 Glue 对外地址（须与 discovery 的 issuer 一致）；其余两项在根 .env。')
+                print('         OIDC_ISSUER is Glue\'s public base URL (must match discovery issuer); the other two live in the root .env.')
+                print('------------------------------------------------------------------------')
+                print('请补全后重新执行 / Fill them in, then run again: docker compose up -d --build')
+                sys.exit(1)
         print('[预检通过 / PASS] 启动配置检查完成 / Startup configuration check passed')
 
   devops-cd:
@@ -81,32 +114,36 @@ services:
       HOST: 0.0.0.0
       PORT: 8081
       # ── 时区 ──
-      # 定时发布/审批单时间基于服务器本地时间；不设置时容器内默认 UTC，
-      # 与用户时区不一致会导致定时发布在错误时间执行。按用户所在时区设置（如 Asia/Shanghai）。
+      # 定时发布/审批单时间基于服务器本地时间;不设置时容器内默认 UTC,
+      # 与用户时区不一致会导致定时发布在错误时间执行.按用户所在时区设置(如 Asia/Shanghai).
       TZ: ${TZ:-Asia/Shanghai}
-      # ── CI API 集成（和 PHP Devops-Glue 搭配时启用）──
+      # ── CI API 集成(和 PHP Devops-Glue 搭配时启用)──
       #CI_API_URL: http://devops-glue
-      #CI_API_TOKEN: dg_xxx   # API token（dg_ 前缀，服务账号 / 第三方）推荐
+      #CI_API_TOKEN: dg_xxx   # API token(dg_ 前缀,服务账号 / 第三方)推荐
+      # ── SSO / OIDC(AUTH_MODE=oidc 为默认;必填项缺失时 env-check 会中止启动)──
+      # 密钥只在根 .env 里维护,这里显式透传以表明契约(联合部署时 Glue 侧 compose 段同样需要).
+      CD_OIDC_SECRET: ${CD_OIDC_SECRET:-}
+      CD_OIDC_REDIRECT_URI: ${CD_OIDC_REDIRECT_URI:-}
     ports:
-      # 默认只绑定回环地址（配合 nginx 反向代理，不直接暴露公网）。
-      # 无 nginx 直连暴露场景可设 CD_BIND_IP=0.0.0.0 恢复公开监听。
+      # 默认只绑定回环地址(配合 nginx 反向代理,不直接暴露公网).
+      # 无 nginx 直连暴露场景可设 CD_BIND_IP=0.0.0.0 恢复公开监听.
       - "${CD_BIND_IP:-127.0.0.1}:8081:8081"
     restart: unless-stopped
     # ── 容器加固 ──
-    # 应用以非 root（appuser）运行，无需任何 Linux capability；禁止 setuid 提权。
+    # 应用以非 root(appuser)运行,无需任何 Linux capability;禁止 setuid 提权.
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # 根文件系统只读：运行时写入仅限 /tmp（临时 ssh key / yaml）与 SSH known_hosts 卷。
+    # 根文件系统只读:运行时写入仅限 /tmp(临时 ssh key / yaml)与 SSH known_hosts 卷.
     read_only: true
     tmpfs:
       - /tmp
     volumes:
       - cd_known_hosts:/home/appuser/.cd_service
     healthcheck:
-      # 走 /api/info：既要求进程存活，也断言数据库连接（db_connected=true），
-      # 避免 DB 挂了但进程还活着时健康检查误报绿灯。
+      # 走 /api/info:既要求进程存活,也断言数据库连接(db_connected=true),
+      # 避免 DB 挂了但进程还活着时健康检查误报绿灯.
       test: ["CMD", "python", "-c", "import sys, json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8081/api/info', timeout=3)); sys.exit(0 if d.get('status')=='running' and d.get('db_connected') else 1)"]
       interval: 30s
       timeout: 5s
@@ -114,10 +151,10 @@ services:
       start_period: 20s
 
     # ── 资源治理 ──
-    # Python 常驻进程 + paramiko 并发部署，内存/CPU 峰值未实测：设上限防止单容器 OOM
-    # 拖垮宿主机，同时给保留值避免被邻居抢占。按实际负载用 CD_MEM_LIMIT / CD_CPU_LIMIT 覆盖。
-    # ⚠️ 必须挂在 deploy.resources 下：顶层服务级 resources: 不是合法 compose 键，
-    #    实测 docker compose v5.5.0 会静默丢弃（渲染结果里没有 limits，限制完全不生效）。
+    # Python 常驻进程 + paramiko 并发部署,内存/CPU 峰值未实测:设上限防止单容器 OOM
+    # 拖垮宿主机,同时给保留值避免被邻居抢占.按实际负载用 CD_MEM_LIMIT / CD_CPU_LIMIT 覆盖.
+    #  必须挂在 deploy.resources 下:顶层服务级 resources: 不是合法 compose 键,
+    #    实测 docker compose v5.5.0 会静默丢弃(渲染结果里没有 limits,限制完全不生效).
     deploy:
       resources:
         limits:
@@ -127,15 +164,15 @@ services:
           cpus: ${CD_CPU_RESERVE:-0.25}
           memory: ${CD_MEM_RESERVE:-256m}
 
-    # MySQL / MariaDB 模式（推荐）：和 PHP 端共用 devops_glue 库
+    # MySQL / MariaDB 模式(推荐):和 PHP 端共用 devops_glue 库
     # 需要在 .env 中配置 DB_DRIVER=mysql 及连接信息
-    # ── SQLite 模式（可选，取消下面注释）──
+    # ── SQLite 模式(可选,取消下面注释)──
     # environment:
     #   DB_DRIVER: sqlite
     #   DB_PATH: /data/data.db
     # volumes:
     #   - ../Devops-Glue/config/data:/data:rw
 
-# SSH known_hosts 持久化卷（read_only 加固下唯一需要的运行时写入位置）
+# SSH known_hosts 持久化卷(read_only 加固下唯一需要的运行时写入位置)
 volumes:
   cd_known_hosts:

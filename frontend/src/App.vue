@@ -63,9 +63,17 @@ function onContentClick() {
   }
 }
 
-// 启动时加载用户信息
-onMounted(() => {
-  if (auth.state.authenticated) auth.fetchMe()
+// 启动时加载用户信息:
+// - 已有本地标志(local 模式登录后):直接刷新用户信息;
+// - 没有本地标志:向服务端自举一次(OIDC 整页回跳后 sessionStorage 为空,见 useAuth.bootstrap).
+//   自举成功时若守卫已把深链踢到 /401,则回到首页,避免用户看到错误页.
+onMounted(async () => {
+  if (auth.state.authenticated) {
+    auth.fetchMe()
+  } else {
+    await auth.bootstrap()
+    if (auth.state.authenticated && router.currentRoute.value.path === '/401') router.replace('/')
+  }
   window.addEventListener('resize', updateSidebarByWidth)
 })
 

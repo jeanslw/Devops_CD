@@ -1,4 +1,4 @@
-"""标签路由 — 从 cd_servers.tags 聚合（逗号分隔）去重后作为标签库"""
+"""标签路由 - 从 cd_servers.tags 聚合(逗号分隔)去重后作为标签库"""
 
 from fastapi import APIRouter, Depends
 
@@ -13,7 +13,7 @@ def list_tags(
     db: Database = Depends(get_db),
     username: str = Depends(verify_token),
 ):
-    """扫描所有服务器的 tags 字段，拆分为唯一标签列表"""
+    """扫描所有服务器的 tags 字段,拆分为唯一标签列表"""
     with db.conn() as conn:
         tag_set = set()
         rows = conn.execute("SELECT tags FROM cd_servers WHERE tags IS NOT NULL AND tags != ''").fetchall()

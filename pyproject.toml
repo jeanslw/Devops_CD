@@ -3,11 +3,11 @@ target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint]
-# 仅保留 CodeQL 级别的高优先级错误：语法错误 / 未定义名 / 明显缺陷。
-# 这样能避免 CI 因为风格或一时的非阻断规范而失败，同时仍能挡住真实 bug。
+# 仅保留 CodeQL 级别的高优先级错误:语法错误 / 未定义名 / 明显缺陷.
+# 这样能避免 CI 因为风格或一时的非阻断规范而失败,同时仍能挡住真实 bug.
 select = ["E9", "F63", "F7", "F82","F401"]
-# RUF001/002/003：中文注释与 docstring 中的全角标点（，；（）等）会被误报为
-# "ambiguous-unicode-character"，本项目注释以中文为主，有意保留全角标点，统一忽略。
+# RUF001/002/003:中文注释与 docstring 中的全角标点(,;()等)会被误报为
+# "ambiguous-unicode-character",本项目注释以中文为主,有意保留全角标点,统一忽略.
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -18,12 +18,12 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 python_version = "3.10"
 
 [[tool.mypy.overrides]]
-# 第三方库无官方类型存根，忽略其 import 类型检查（与 dbutils 同理，避免 mypy 误报 import-untyped）
+# 第三方库无官方类型存根,忽略其 import 类型检查(与 dbutils 同理,避免 mypy 误报 import-untyped)
 module = ["dbutils.*", "pymysql", "pymysql.*", "requests", "requests.*", "paramiko", "paramiko.*", "yaml"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# backend/tests/ 不含 __init__.py（测试以目录为导入根，见 ruff per-file-ignores 里的 E402 说明），
-# mypy 解析不到其中的 cd_contract 辅助模块；测试代码也不是类型门禁重点，忽略该导入即可。
+# backend/tests/ 不含 __init__.py(测试以目录为导入根,见 ruff per-file-ignores 里的 E402 说明),
+# mypy 解析不到其中的 cd_contract 辅助模块;测试代码也不是类型门禁重点,忽略该导入即可.
 module = ["cd_contract"]
 ignore_missing_imports = true

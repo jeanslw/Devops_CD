@@ -21,7 +21,7 @@
     <!-- 错误提示 -->
     <div v-if="error" class="error-banner">{{ error }}</div>
 
-    <!-- 构建历史列表（带分页）-->
+    <!-- 构建历史列表(带分页)-->
     <div v-if="selectedProject">
       <div v-if="buildsLoading" class="loading-text">{{ $t('common.loading') }}</div>
       <template v-else>
@@ -42,7 +42,7 @@
               <td><span class="badge" :class="statusClass(b.status)">{{ b.status }}</span></td>
               <td class="time-cell">{{ formatTime(b.updated_at) }}</td>
               <td class="action-cell">
-                <!-- custom_push：log_url 非必报，有则点链接，空则显示「日志无」 -->
+                <!-- custom_push:log_url 非必报,有则点链接,空则显示"日志无" -->
                 <template v-if="buildProvider === 'custom_push'">
                   <a v-if="b.log_url" :href="b.log_url" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-blue">{{ $t('ciBuild.viewLog') }}</a>
                   <span v-else class="no-log">{{ $t('ciBuild.logEmpty') }}</span>
@@ -78,7 +78,7 @@
     <div v-if="showTrigger" class="modal-overlay" @click.self="showTrigger = false">
       <div class="modal">
         <h4>{{ $t('ciBuild.triggerTitle') }}</h4>
-        <!-- 顶部"分支"选择器：仅 GitLab CI 显示（Jenkins 的 ref 不生效，分支由参数中的 git 类型参数指定） -->
+        <!-- 顶部"分支"选择器:仅 GitLab CI 显示(Jenkins 的 ref 不生效,分支由参数中的 git 类型参数指定) -->
         <div v-if="selectedProjectProvider !== 'jenkins'" class="form-group">
           <label>{{ $t('ciBuild.branch') }} <span class="required">*</span></label>
           <select v-model="triggerRef" class="field">
@@ -97,7 +97,7 @@
                 <span v-if="p.type" class="param-type-tag">{{ p.type }}</span>
                 <span v-if="p.description" class="param-desc" :title="p.description">{{ p.description }}</span>
               </span>
-              <!-- select → 下拉框（有 choices） -->
+              <!-- select → 下拉框(有 choices) -->
               <select v-if="p.type === 'select' && p.choices?.length" v-model="p.value" class="field" style="flex:2">
                 <option value="">{{ $t('ciBuild.pleaseSelect') }}</option>
                 <option v-for="c in p.choices" :key="c" :value="c">{{ c }}</option>
@@ -189,13 +189,13 @@ const triggerRef = ref('')
 const triggerVars = reactive([])
 const triggering = ref(false)
 const branches = ref([])
-const loadingParams = ref(true)  // 初始为 true，避免弹窗首帧闪现"未定义参数"
-// 当前项目的 CI 提供商（jenkins / gitlab_ci / custom_push）
+const loadingParams = ref(true)  // 初始为 true,避免弹窗首帧闪现"未定义参数"
+// 当前项目的 CI 提供商(jenkins / gitlab_ci / custom_push)
 const selectedProjectProvider = computed(() => {
   const p = projects.value.find(p => p.job_name === selectedProject.value)
   return p?.ci_provider || ''
 })
-// custom_push 项目完全以用户上报为准，CD 端只读、不触发
+// custom_push 项目完全以用户上报为准,CD 端只读,不触发
 const isCustomPush = computed(() => selectedProjectProvider.value === 'custom_push')
 
 // 构建日志
@@ -212,7 +212,7 @@ async function loadProjects() {
     if (auth.handle401(r)) return
     if (!r.ok) {
       const body = await r.text()
-      // 503 表示未配置 CI，给出友好提示
+      // 503 表示未配置 CI,给出友好提示
       if (r.status === 503) {
         error.value = body
       } else {
@@ -230,7 +230,7 @@ async function loadProjects() {
   }
 }
 
-// ── 刷新（项目列表 + 当前项目的构建历史）──
+// ── 刷新(项目列表 + 当前项目的构建历史)──
 async function refreshAll() {
   await loadProjects()
   if (selectedProject.value) await onProjectChange()
@@ -267,7 +267,7 @@ watch(showTrigger, async (val) => {
     triggerVars.splice(0, triggerVars.length)
     branches.value = []
 
-    // 并行加载分支和参数（先标 loading，避免瞬时闪现"未定义参数"）
+    // 并行加载分支和参数(先标 loading,避免瞬时闪现"未定义参数")
     loadingParams.value = true
     const proj = encodeURIComponent(selectedProject.value)
     const [branchR, paramR] = await Promise.allSettled([
@@ -281,12 +281,12 @@ watch(showTrigger, async (val) => {
       // CI 返回 ["main", "master", ...]
     }
 
-    // 参数（预设 CI 定义的变量，含 type/choices/defaultValue/description）
+    // 参数(预设 CI 定义的变量,含 type/choices/defaultValue/description)
     if (paramR.status === 'fulfilled' && paramR.value.ok) {
       try {
         const data = await paramR.value.json()
         const vars = data.variables || data
-        // boolean 类型默认值处理：校验不允许空，默认 false
+        // boolean 类型默认值处理:校验不允许空,默认 false
         const initVal = (v, type) => type === 'boolean' ? (v.defaultValue ?? 'false') : (v.defaultValue ?? '')
         if (Array.isArray(vars)) {
           vars.forEach(v => {
@@ -325,9 +325,9 @@ watch(showTrigger, async (val) => {
 
 // ── 执行触发 ──
 async function doTrigger() {
-  // custom_push 项目不触发：以用户上报为准
+  // custom_push 项目不触发:以用户上报为准
   if (isCustomPush.value) return
-  // GitLab CI 必须有 ref；Jenkins 不需要（分支由参数中的 git 参数指定）
+  // GitLab CI 必须有 ref;Jenkins 不需要(分支由参数中的 git 参数指定)
   if (selectedProjectProvider.value === 'gitlab_ci' && !triggerRef.value) {
     toast(t('ciBuild.needBranch'), 'warn')
     return
@@ -341,7 +341,7 @@ async function doTrigger() {
 
   triggering.value = true
   try {
-    // Jenkins 模式下不发送 ref（CI 那边不生效），只发 variables
+    // Jenkins 模式下不发送 ref(CI 那边不生效),只发 variables
     const body = {}
     if (selectedProjectProvider.value !== 'jenkins') {
       body.ref = triggerRef.value
@@ -380,7 +380,7 @@ async function viewLog(b) {
 
 async function loadLog() {
   try {
-    // Gitea Actions：run id 与 job id 是两个独立序列，日志需走 run id → 全部 job 日志端点
+    // Gitea Actions:run id 与 job id 是两个独立序列,日志需走 run id → 全部 job 日志端点
     const endpoint = buildProvider.value === 'gitea_ci' ? 'pipeline-log' : 'log'
     const r = await fetch(`/api/ci/projects/${encodeURIComponent(selectedProject.value)}/builds/${encodeURIComponent(logBuildId.value)}/${endpoint}`, {
       headers: auth.A()
@@ -394,7 +394,7 @@ async function loadLog() {
 
 function refreshLog() { loadLog() }
 
-// ── 重试 / 取消 Pipeline（仅 GitLab CI）──
+// ── 重试 / 取消 Pipeline(仅 GitLab CI)──
 async function retryBuild(b) {
   const id = b.id || b.iid
   actionLoading.value = id

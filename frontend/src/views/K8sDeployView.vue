@@ -56,7 +56,7 @@
         <label>{{ $t('k8sDeploy.apiUrl') }}</label>
         <input v-model="apiUrl" placeholder="https://argocd:30443">
       </div>
-      <!-- YAML 路径 + 命名空间 同一行（grid2）；Argo CD 无 YAML 路径，命名空间单独占左列 -->
+      <!-- YAML 路径 + 命名空间 同一行(grid2);Argo CD 无 YAML 路径,命名空间单独占左列 -->
       <div v-if="cdType === 'kubectl' || cdType === 'helm' || cdType === 'argocd'" class="grid2" style="margin-bottom:8px">
         <div v-if="cdType === 'kubectl' || cdType === 'helm'">
           <label>{{ $t('k8sDeploy.yamlPath') }}</label>
@@ -172,7 +172,7 @@ function showCheckModal(text) {
 }
 
 async function checkDeploy(body) {
-  // 没有 YAML 路径 → 跳过预检（FluxCD 除外，走 SSH 发现）
+  // 没有 YAML 路径 → 跳过预检(FluxCD 除外,走 SSH 发现)
   if (!body.path && body.cd_type !== 'fluxcd') return true
 
   try {
@@ -189,10 +189,10 @@ async function checkDeploy(body) {
       })
     })
 
-    if (!r.ok) return true  // 预检失败不阻断，直接放行
+    if (!r.ok) return true  // 预检失败不阻断,直接放行
 
     const data = await r.json()
-    // 只有 warning_severe_new（严重不匹配 + K8S 不存在）才弹窗
+    // 只有 warning_severe_new(严重不匹配 + K8S 不存在)才弹窗
     if (data.warning !== 'warning_severe_new') return true
 
     const text = t(`deploy_check.${data.warning}`, {
@@ -246,7 +246,7 @@ async function doDeploy() {
     lang: locale.value
   }
 
-  // 预检：YAML 名称 vs 项目名
+  // 预检:YAML 名称 vs 项目名
   const ok = await checkDeploy(body)
   if (!ok) return
 
@@ -318,7 +318,7 @@ onMounted(async () => {
   if (selectedProject.value) {
     await changeProject(selectedProject.value)
   }
-  // 从审批中心跳转：?approval=<id> 直接展开流程面板
+  // 从审批中心跳转:?approval=<id> 直接展开流程面板
   if (route.query.approval) {
     panelApprovalId.value = Number(route.query.approval) || 0
   } else {
@@ -326,7 +326,7 @@ onMounted(async () => {
   }
 })
 
-// 同页跳转（组件已挂载时 query 变化）
+// 同页跳转(组件已挂载时 query 变化)
 watch(() => route.query.approval, (v) => {
   if (v) panelApprovalId.value = Number(v) || 0
 })

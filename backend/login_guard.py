@@ -1,12 +1,12 @@
-"""登录失败限流 — 与 Devops-Glue（CI）共享 cache 表的同一把锁。
+"""登录失败限流 - 与 Devops-Glue(CI)共享 cache 表的同一把锁.
 
-两边共享 admin_users 密码表，若各自计数则攻击者可绕过 CI 的 5 次锁定只打 CD 入口。
-因此本模块严格复刻 Glue AdminAuthService 的键格式与窗口：
+两边共享 admin_users 密码表,若各自计数则攻击者可绕过 CI 的 5 次锁定只打 CD 入口.
+因此本模块严格复刻 Glue AdminAuthService 的键格式与窗口:
   表/键: cache.cache_key = 'login_fail_' + md5(ip + ':' + lower(username))
-  值:    连续失败次数；expires_at = 窗口到期 unix 时间戳
-  策略:  5 次失败锁 15 分钟，登录成功清零
+  值:    连续失败次数;expires_at = 窗口到期 unix 时间戳
+  策略:  5 次失败锁 15 分钟,登录成功清零
 
-DB 异常一律 fail-open（与 Glue 一致，保可用），仅记日志。
+DB 异常一律 fail-open(与 Glue 一致,保可用),仅记日志.
 """
 
 import hashlib
@@ -29,24 +29,24 @@ LOCK_SECONDS = 900  # 15 分钟
 
 
 class GuardDB(Protocol):
-    """login_guard 对数据库的全部依赖：一个返回连接上下文的 conn()。
+    """login_guard 对数据库的全部依赖:一个返回连接上下文的 conn().
 
-    Database（生产）与测试中的内存 sqlite FakeDB 都结构化满足该协议，
-    无需为测试构造完整的 Database（也不应该让模块依赖具体实现类）。
-    @contextmanager 装饰的函数返回 _GeneratorContextManager，它名义继承
-    AbstractContextManager，因此这里用标准库协议而非手写 __enter__/__exit__。
+    Database(生产)与测试中的内存 sqlite FakeDB 都结构化满足该协议,
+    无需为测试构造完整的 Database(也不应该让模块依赖具体实现类).
+    @contextmanager 装饰的函数返回 _GeneratorContextManager,它名义继承
+    AbstractContextManager,因此这里用标准库协议而非手写 __enter__/__exit__.
     """
 
     def conn(self) -> AbstractContextManager[Any]: ...
 
 
 def client_ip(request: Request) -> str:
-    """推导客户端真实 IP，语义必须与 Glue 修复后的 clientIp 完全一致：
+    """推导客户端真实 IP,语义必须与 Glue 修复后的 clientIp 完全一致:
 
-    - TRUSTED_PROXY_HOPS=0（默认，安全默认）：直接用对端地址，不信任任何代理头；
-    - hops>0 且对端是可信代理（loopback/私网/链路本地）时，从 X-Forwarded-For
-      **右端**取倒数第 hops 个地址（攻击者无法用自己加的左端假地址冒充）；
-    - 任何一步不合法都回退对端地址。
+    - TRUSTED_PROXY_HOPS=0(默认,安全默认):直接用对端地址,不信任任何代理头;
+    - hops>0 且对端是可信代理(loopback/私网/链路本地)时,从 X-Forwarded-For
+      **右端**取倒数第 hops 个地址(攻击者无法用自己加的左端假地址冒充);
+    - 任何一步不合法都回退对端地址.
     """
     peer = request.client.host if request.client else ""
     hops = settings.trusted_proxy_hops
@@ -56,7 +56,7 @@ def client_ip(request: Request) -> str:
         peer_addr = ipaddress.ip_address(peer)
     except ValueError:
         return peer
-    # 只有对端本身是本机/内网代理时才考虑 XFF（直连客户端发来的 XFF 不可信）
+    # 只有对端本身是本机/内网代理时才考虑 XFF(直连客户端发来的 XFF 不可信)
     if not (peer_addr.is_loopback or peer_addr.is_private or peer_addr.is_link_local):
         return peer
 
@@ -73,10 +73,10 @@ def client_ip(request: Request) -> str:
 
 
 def _key(ip: str, username: str) -> str:
-    # 这里的 MD5 是「键派生」而非安全散列：必须与 Devops-Glue 的 PHP AdminAuthService
-    # 逐字节一致（md5(ip . ':' . strtolower(username))），才能共享 cache 表里同一把登录失败锁。
-    # 换成 SHA-256 会让两侧键不一致，攻击者即可绕过 CI 的 5 次锁定只打 CD 入口。
-    # username / ip 均非机密（仅作限流桶标识），MD5 抗碰撞性在此无关紧要 —— 属 CodeQL 误报。
+    # 这里的 MD5 是"键派生"而非安全散列:必须与 Devops-Glue 的 PHP AdminAuthService
+    # 逐字节一致(md5(ip . ':' . strtolower(username))),才能共享 cache 表里同一把登录失败锁.
+    # 换成 SHA-256 会让两侧键不一致,攻击者即可绕过 CI 的 5 次锁定只打 CD 入口.
+    # username / ip 均非机密(仅作限流桶标识),MD5 抗碰撞性在此无关紧要 -- 属 CodeQL 误报.
     # lgtm[py/weak-sensitive-data-hashing]
     return KEY_PREFIX + hashlib.md5(f"{ip}:{(username or '').strip().lower()}".encode("utf-8")).hexdigest()  # nosec
 
@@ -94,7 +94,7 @@ def _upsert_sql() -> str:
 
 
 def is_login_locked(db: GuardDB, ip: str, username: str) -> bool:
-    """是否已达锁定阈值（键存在且未过期且计数 >= 5）。"""
+    """是否已达锁定阈值(键存在且未过期且计数 >= 5)."""
     try:
         with db.conn() as conn:
             row = conn.execute(
@@ -110,7 +110,7 @@ def is_login_locked(db: GuardDB, ip: str, username: str) -> bool:
 
 
 def record_login_failure(db: GuardDB, ip: str, username: str) -> None:
-    """失败计数 +1，并刷新 15 分钟窗口。"""
+    """失败计数 +1,并刷新 15 分钟窗口."""
     try:
         key = _key(ip, username)
         now = int(time.time())
@@ -126,7 +126,7 @@ def record_login_failure(db: GuardDB, ip: str, username: str) -> None:
 
 
 def clear_login_failure(db: GuardDB, ip: str, username: str) -> None:
-    """登录成功清除计数。"""
+    """登录成功清除计数."""
     try:
         with db.conn() as conn:
             conn.execute(f"DELETE FROM {CACHE_TABLE} WHERE cache_key=?", (_key(ip, username),))  # nosec

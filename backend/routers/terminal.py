@@ -11,9 +11,11 @@ import time
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
 from backend.auth import (
+    WILDCARD_PERM,
     _check_disabled,
     _delete_session,
     _lookup_session,
+    _oidc_identity,
     _query_permissions,
     _query_user_with_systems,
     cd_deploy_gate,
@@ -26,10 +28,11 @@ from backend.database import Database
 from backend.deployers.base import DeployTarget, ssh_connect
 from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.responses import ok
+from backend.services import glue_identity
 
 router = APIRouter()
 
-# ── 危险命令黑名单（正则匹配，检测完整命令行）──
+# ── 危险命令黑名单(正则匹配,检测完整命令行)──
 _DANGEROUS_PATTERNS = [
     r"\brm\s+.*-rf\s+/",  # rm -rf /
     r"\brm\s+.*-rf\s+~",  # rm -rf ~
@@ -56,13 +59,13 @@ def _check_dangerous(cmd: str) -> bool:
 
 
 async def _ws_verify(token: str | None = None) -> str:
-    """WebSocket 鉴权：通过 query param token 查服务端会话（O(1) 哈希查找）"""
+    """WebSocket 鉴权:通过 query param token 查服务端会话(O(1) 哈希查找)"""
     if not token:
         raise HTTPException(401, "请登录")
     db = get_db()
-    # 部署闸门：与 REST 同口径 —— CD 表没建全时 WebShell（最高危操作）一律拒绝。
-    # 这里是独立鉴权路径，若不拦，缺表会在握手期变成未捕获异常（而非干净的拒绝）；
-    # 故把 AppException(503) 转成 HTTPException，由调用方按状态码关闭连接。
+    # 部署闸门:与 REST 同口径 -- CD 表没建全时 WebShell(最高危操作)一律拒绝.
+    # 这里是独立鉴权路径,若不拦,缺表会在握手期变成未捕获异常(而非干净的拒绝);
+    # 故把 AppException(503) 转成 HTTPException,由调用方按状态码关闭连接.
     try:
         cd_deploy_gate(db)
     except AppException as exc:
@@ -74,35 +77,57 @@ async def _ws_verify(token: str | None = None) -> str:
         if time.time() > sess["expires_at"]:
             _delete_session(conn, token)
             raise HTTPException(401, "token 已过期，请重新登录")
+        if settings.auth_mode == "oidc":
+            # OIDC 模式:只校验 cd_sessions + 惰性复核 Glue.WebShell 是独立鉴权路径,
+            # 若不在这里分支,切档后 WS 握手仍会去读共享 admin_users(见 docs/SSO_OIDC_ZH.md §7.2).
+            # AppException → HTTPException:调用方按状态码关闭连接;401/503 都是 fail-closed.
+            try:
+                ident = _oidc_identity(db, token, sess["username"])
+            except AppException as exc:
+                raise HTTPException(exc.status_code, exc.message) from exc
+            return ident["username"]
         row = _query_user_with_systems(conn, sess["username"], "username, status")
         if row is None:
             raise HTTPException(401, "token 无效")
-        # 停用账号即时踢下线：WebSocket（WebShell）是独立鉴权路径，必须与 REST 一致校验 status
+        # 停用账号即时踢下线:WebSocket(WebShell)是独立鉴权路径,必须与 REST 一致校验 status
         _check_disabled(row)
         return row["username"]
 
 
 @router.websocket("/ws/terminal/{server_id}")
 async def terminal(websocket: WebSocket, server_id: int):
-    # 优先取 HttpOnly cookie（浏览器同源 WS 握手自动携带，token 不再进 URL/日志），
-    # 回退 query param（兼容旧客户端 / 脚本直连）。
+    # 优先取 HttpOnly cookie(浏览器同源 WS 握手自动携带,token 不再进 URL/日志),
+    # 回退 query param(兼容旧客户端 / 脚本直连).
     token = websocket.cookies.get("cd_token") or websocket.query_params.get("token")
     try:
         username = await _ws_verify(token)
     except HTTPException as e:
-        # 503 = CD 表没建全（未部署/导入不全）：给出可操作原因，而不是笼统的「鉴权失败」
+        # 503 = CD 表没建全(未部署/导入不全):给出可操作原因,而不是笼统的"鉴权失败"
         await websocket.close(code=4001, reason="CD 未部署" if e.status_code == 503 else "鉴权失败")
         return
 
-    # 权限检查：需要 cd.webshell
+    # 权限检查:需要 cd.webshell
     db = get_db()
-    with db.conn() as conn:
-        row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
-        if row:
-            perms = _query_permissions(db, row["role"])
-            if row["role"] != settings.super_admin_role and "cd.webshell" not in perms:
-                await websocket.close(code=4003, reason="权限不足")
-                return
+    if settings.auth_mode == "oidc":
+        # OIDC 模式:权限来自 Glue(复用 _ws_verify 刚建好的身份缓存,窗口内零调用);通配 "*" 放行
+        try:
+            ident = glue_identity.get_identity(username)
+        except AppException:
+            # 身份/权限不可用(角色悬空,Glue 长时间不可达):拒绝握手,不按"无权限但放行"处理
+            await websocket.close(code=4003, reason="权限校验不可用")
+            return
+        perms = ident.get("permissions") or []
+        if WILDCARD_PERM not in perms and "cd.webshell" not in perms:
+            await websocket.close(code=4003, reason="权限不足")
+            return
+    else:
+        with db.conn() as conn:
+            row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
+            if row:
+                perms = _query_permissions(db, row["role"])
+                if row["role"] != settings.super_admin_role and "cd.webshell" not in perms:
+                    await websocket.close(code=4003, reason="权限不足")
+                    return
 
     await websocket.accept()
 
@@ -123,7 +148,7 @@ async def terminal(websocket: WebSocket, server_id: int):
         ssh_key=decrypt(srv["ssh_key"] or ""),
     )
 
-    # SSH 连接（在线程池中执行，避免阻塞事件循环）
+    # SSH 连接(在线程池中执行,避免阻塞事件循环)
     try:
         ssh = await asyncio.to_thread(ssh_connect, target, settings.ssh_timeout)
     except Exception as e:
@@ -131,7 +156,7 @@ async def terminal(websocket: WebSocket, server_id: int):
         await websocket.close()
         return
 
-    # SSH 已连上，主动通知前端（onopen 只是 WebSocket 握手成功，不代表 SSH 通）
+    # SSH 已连上,主动通知前端(onopen 只是 WebSocket 握手成功,不代表 SSH 通)
     chan = await asyncio.to_thread(ssh.invoke_shell, term="xterm-256color", width=100, height=28)
     assert chan is not None, "SSH shell channel 创建失败"
     chan.settimeout(0.0)
@@ -149,7 +174,7 @@ async def terminal(websocket: WebSocket, server_id: int):
                 break
 
     async def ws_to_ssh():
-        """WebSocket 输入 → SSH，支持终端尺寸自适应 + 危险命令拦截"""
+        """WebSocket 输入 → SSH,支持终端尺寸自适应 + 危险命令拦截"""
         buf = ""  # 行缓冲
         while not chan.closed:
             try:
@@ -157,7 +182,7 @@ async def terminal(websocket: WebSocket, server_id: int):
                 if data["type"] == "websocket.receive":
                     if "text" in data:
                         text = data["text"]
-                        # 终端尺寸自适应（前端 xterm.js 发送 JSON resize 事件）
+                        # 终端尺寸自适应(前端 xterm.js 发送 JSON resize 事件)
                         if text.startswith("{"):
                             try:
                                 msg = json.loads(text)
@@ -176,10 +201,10 @@ async def terminal(websocket: WebSocket, server_id: int):
                                 continue
                             buf = ""
                         elif "\x03" in text or "\x04" in text:
-                            # Ctrl+C / Ctrl+D，清空缓冲区
+                            # Ctrl+C / Ctrl+D,清空缓冲区
                             buf = ""
                         elif text.startswith("\x1b"):
-                            # ANSI 转义序列（方向键等），保持缓冲区
+                            # ANSI 转义序列(方向键等),保持缓冲区
                             pass
                         elif text == "\x7f" or text == "\x08":
                             # 退格
@@ -195,10 +220,10 @@ async def terminal(websocket: WebSocket, server_id: int):
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
                     break
-            # 注意：必须用 asyncio.TimeoutError 而非内置 TimeoutError。
-            # Python 3.11+ 两者等价，但 Python 3.10 中 asyncio.wait_for 抛的是
-            # asyncio.exceptions.TimeoutError（独立类，非 builtins.TimeoutError 子类），
-            # 用内置 TimeoutError 会捕获不到导致 WebSocket 连接中断。
+            # 注意:必须用 asyncio.TimeoutError 而非内置 TimeoutError.
+            # Python 3.11+ 两者等价,但 Python 3.10 中 asyncio.wait_for 抛的是
+            # asyncio.exceptions.TimeoutError(独立类,非 builtins.TimeoutError 子类),
+            # 用内置 TimeoutError 会捕获不到导致 WebSocket 连接中断.
             except asyncio.TimeoutError:
                 continue
             except WebSocketDisconnect:
@@ -228,22 +253,22 @@ async def upload_file(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-    # 安全校验：跨平台文件名防路径穿越
-    # 浏览器可能传入 Windows 完整路径 (D:\tmp\2012.txt)，\ 在 Linux 上不被识别为分隔符
-    # 统一将 \ 转为 /，再取 basename，确保 Windows/Linux 后端行为一致
+    # 安全校验:跨平台文件名防路径穿越
+    # 浏览器可能传入 Windows 完整路径 (D:\tmp\2012.txt),\ 在 Linux 上不被识别为分隔符
+    # 统一将 \ 转为 /,再取 basename,确保 Windows/Linux 后端行为一致
     _fn = (file.filename or "").replace("\\", "/")
     _fn = re.sub(r"^[a-zA-Z]:", "", _fn)  # 去除 Windows 盘符
     safe_filename = _fn.rsplit("/", 1)[-1]
     if not safe_filename:
         raise ValidationError("无效文件名", error_key="errors.invalid_filename")
 
-    # 安全校验：路径必须为绝对路径
+    # 安全校验:路径必须为绝对路径
     if not path.startswith("/"):
         raise ValidationError("路径必须为绝对路径，如 /tmp", error_key="errors.path_absolute")
 
-    # 安全校验：路径遍历防护，解析 ../ 等符号
-    # 用 posixpath 强制按 POSIX 规则归一化，无论 Python 跑在 Windows 还是 Linux 都一致
-    # （os.path.realpath 在 Windows 上会自动加盘符 D:\，导致 SFTP 把目标写到错误位置）
+    # 安全校验:路径遍历防护,解析 ../ 等符号
+    # 用 posixpath 强制按 POSIX 规则归一化,无论 Python 跑在 Windows 还是 Linux 都一致
+    # (os.path.realpath 在 Windows 上会自动加盘符 D:\,导致 SFTP 把目标写到错误位置)
     combined = (path.rstrip("/") + "/" + safe_filename).replace("\\", "/")
     combined = re.sub(r"^[a-zA-Z]:", "", combined)  # 去 Windows 盘符
     target = posixpath.normpath(combined)

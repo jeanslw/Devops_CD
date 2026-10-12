@@ -1,8 +1,8 @@
-# CodeQL 高级设置（advanced setup）：扫描 Python 后端 + Vue/JS 前端。
-# 通过 .github/codeql/codeql-config.yml 排除已知误报（login_guard.py 的 MD5 键派生）。
+# CodeQL 高级设置(advanced setup):扫描 Python 后端 + Vue/JS 前端.
+# 通过 .github/codeql/codeql-config.yml 排除已知误报(login_guard.py 的 MD5 键派生).
 #
-# ⚠️ 启用本 workflow 前，若已在仓库开启了 CodeQL「默认设置（default setup）」，
-#    请到 Settings → Code security → Code scanning 关闭默认设置，避免两套扫描重复运行。
+#  启用本 workflow 前,若已在仓库开启了 CodeQL"默认设置(default setup)",
+#    请到 Settings → Code security → Code scanning 关闭默认设置,避免两套扫描重复运行.
 name: "CodeQL"
 
 on:
@@ -11,7 +11,7 @@ on:
   pull_request:
     branches: [main, 'release/**']
   schedule:
-    # 每周一 17:23 UTC（避开整点，降低峰值）
+    # 每周一 17:23 UTC(避开整点,降低峰值)
     - cron: '23 17 * * 1'
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           config-file: .github/codeql/codeql-config.yml
-          # Python / JS 均为解释型语言，无需编译，none 即可完成抽取
+          # Python / JS 均为解释型语言,无需编译,none 即可完成抽取
           build-mode: ${{ matrix.build-mode }}
 
       - name: Perform CodeQL Analysis

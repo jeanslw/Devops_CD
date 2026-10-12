@@ -32,7 +32,7 @@ export function useSseStream() {
           const block = buffer.substring(0, idx)
           buffer = buffer.substring(idx + 2)
 
-          // SSE 事件块可能含多行 data:，收集所有 data: 行拼接
+          // SSE 事件块可能含多行 data:,收集所有 data: 行拼接
           const lines = block.split('\n')
           const dataLines = []
           for (const ln of lines) {
@@ -53,8 +53,8 @@ export function useSseStream() {
             opts.onEnd?.(success)
             return success
           } else if (data.startsWith('PENDING:')) {
-            // 部署已提交审批 / 已创建定时发布，未实际执行
-            // 格式：PENDING:<approval_id>[:1(定时)/0(审批)]
+            // 部署已提交审批 / 已创建定时发布,未实际执行
+            // 格式:PENDING:<approval_id>[:1(定时)/0(审批)]
             const parts = data.substring(8).split(':')
             opts.onPending?.(parts[0], parts[1] === '1')
             return 'pending'

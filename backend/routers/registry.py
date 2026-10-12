@@ -1,4 +1,4 @@
-"""镜像制品库 API — 仓库/Artifact/同步/扫描/删除"""
+"""镜像制品库 API - 仓库/Artifact/同步/扫描/删除"""
 
 import logging
 
@@ -20,7 +20,7 @@ class DeleteArtifactRequest(BaseModel):
 
 
 class SyncConfigRequest(BaseModel):
-    interval: int  # 分钟，0 关闭
+    interval: int  # 分钟,0 关闭
 
 
 # ── 仓库 ──
@@ -31,7 +31,7 @@ def list_repositories(
     _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
-    """列出所有仓库（从数据库缓存读取）"""
+    """列出所有仓库(从数据库缓存读取)"""
     svc = RegistryService(db)
     return svc.get_repositories()
 
@@ -47,7 +47,7 @@ def list_artifacts(
     _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
-    """列出指定仓库的 artifacts/tags（分页，含扫描摘要）"""
+    """列出指定仓库的 artifacts/tags(分页,含扫描摘要)"""
     svc = RegistryService(db)
     return svc.get_artifacts(repo_id, page=page, page_size=page_size)
 
@@ -62,7 +62,7 @@ def get_scan_report(
     _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
-    """从数据库缓存读取扫描报告（秒开）"""
+    """从数据库缓存读取扫描报告(秒开)"""
     svc = RegistryService(db)
     result = svc.get_scan_report(repo_id, tag)
     if result is None:
@@ -101,7 +101,7 @@ def delete_artifact(
     _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
-    """删除指定 artifact/tag（带安全校验）"""
+    """删除指定 artifact/tag(带安全校验)"""
     try:
         svc = RegistryService(db)
         result = svc.delete_artifact(repo_id, body.tag)
@@ -122,7 +122,7 @@ def trigger_sync(
     _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
-    """触发同步：留空全量同步，指定 project 增量同步"""
+    """触发同步:留空全量同步,指定 project 增量同步"""
     try:
         svc = RegistryService(db)
         if project:
@@ -157,7 +157,7 @@ def update_sync_config(
     _user: dict = Depends(require_perm("cd.image-registry")),
     db: Database = Depends(get_db),
 ):
-    """更新定时同步间隔（分钟，0=关闭）"""
+    """更新定时同步间隔(分钟,0=关闭)"""
     if body.interval < 0:
         raise ValidationError("间隔不能为负数", error_key="errors.negative_interval")
     try:

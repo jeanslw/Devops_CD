@@ -1,4 +1,4 @@
-"""监控工具函数 — SSH 测试 + 缓存 + 目标构造（被 monitor 路由和 alert_service 共用）"""
+"""监控工具函数 - SSH 测试 + 缓存 + 目标构造(被 monitor 路由和 alert_service 共用)"""
 
 import time
 
@@ -9,12 +9,12 @@ from backend.deployers.base import DeployTarget, _ssh_cmd
 # ── 简易内存缓存 ──
 _cache: dict[str, tuple[float, object]] = {}
 
-# TTL 从配置读取，可按类型在 .env 中覆盖
+# TTL 从配置读取,可按类型在 .env 中覆盖
 _CACHE_TTL: dict[str, int] = {}
 
 
 def _get_cache_ttl() -> dict[str, int]:
-    """懒加载缓存 TTL，确保 settings 已初始化"""
+    """懒加载缓存 TTL,确保 settings 已初始化"""
     if not _CACHE_TTL:
         _CACHE_TTL.update(
             {
@@ -93,7 +93,7 @@ def _parse_kubectl_top(text: str, has_header: bool = False) -> list[dict]:
 
 
 def _ssh_test(ssh) -> dict:
-    """SSH 连接后执行一段复合脚本，获取系统资源摘要"""
+    """SSH 连接后执行一段复合脚本,获取系统资源摘要"""
     script = r"""
 echo "---CPU_CORES---"
 nproc
@@ -194,7 +194,7 @@ docker info --format '{{.ContainersRunning}}/{{.Containers}}' 2>/dev/null || ech
 
 
 def _make_target(srv) -> DeployTarget:
-    """从数据库行构造 DeployTarget，自动解密 password / ssh_key"""
+    """从数据库行构造 DeployTarget,自动解密 password / ssh_key"""
     return DeployTarget(
         host=srv["host"],
         port=srv["port"],

@@ -9,7 +9,7 @@
       <button class="btn btn-sm" @click="emit('close')">{{ $t('approvals.flowClose') }}</button>
     </div>
 
-    <!-- 阶段条：提交申请 → 等待审批 → 批准待执行 → 执行部署 → 完成 -->
+    <!-- 阶段条:提交申请 → 等待审批 → 批准待执行 → 执行部署 → 完成 -->
     <div class="steps">
       <template v-for="(s, i) in STEPS" :key="s.key">
         <div class="step" :class="stepClass(s.key)">
@@ -59,7 +59,7 @@
       <span v-if="status === 'deploying'" class="flow-polling">{{ $t('approvals.flowPolling') }}</span>
     </div>
 
-    <!-- 执行日志（SSE） -->
+    <!-- 执行日志(SSE) -->
     <pre v-if="output" class="output flow-output" v-text="output"></pre>
   </div>
 </template>
@@ -139,7 +139,7 @@ function stepMark(key) {
   return ''
 }
 
-// 连接条：当前阶段之前的连线点亮
+// 连接条:当前阶段之前的连线点亮
 function barDone(i) {
   const order = ['submit', 'wait', 'approve', 'run', 'done']
   const nextKey = order[i + 1]
@@ -182,7 +182,7 @@ watch(() => props.approvalId, async (v) => {
   if (!isTerminal.value) startTimer()
 })
 
-// ── 申请人本人执行（SSE 实时日志） ──
+// ── 申请人本人执行(SSE 实时日志) ──
 async function doExecute() {
   const id = Number(props.approvalId)
   if (!id) return
@@ -198,7 +198,7 @@ async function doExecute() {
       refresh()
     },
   })
-  // 流结束后再兜底拉一次，确保状态/部署记录号及时刷新
+  // 流结束后再兜底拉一次,确保状态/部署记录号及时刷新
   if (ok !== undefined) refresh()
 }
 

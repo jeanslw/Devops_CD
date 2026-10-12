@@ -1,4 +1,4 @@
-/* ── CD Service Vue — 暗色主题（复刻原版）── */
+/* ── CD Service Vue - 暗色主题(复刻原版)── */
 
 :root {
   --bg: #0f1117;
@@ -415,7 +415,7 @@ label {
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
 
-/* ── 表格操作列 — 部署到下拉框 ── */
+/* ── 表格操作列 - 部署到下拉框 ── */
 .deploy-select {
   width: auto; display: inline; margin: 0;
   padding: 4px 22px 4px 10px; font-size: 12px; font-weight: 600;
@@ -452,10 +452,7 @@ label {
   border: 1px solid var(--border);
   box-shadow: 0 8px 40px rgba(0,0,0,0.3);
 }
-.login-card h3 {
-  font-size: 18px; font-weight: 700; color: var(--accent);
-  margin-bottom: 6px;
-}
+/* 登录卡片顶部不再有大字标题(与按钮文案重复);本地模式首行是副标题"管理员账号" */
 .login-card p { color: var(--text-dim); font-size: 13px; margin-bottom: 24px; }
 .login-lang {
   position: absolute; top: 16px; right: 24px; z-index: 10;
@@ -480,6 +477,17 @@ label {
   border-radius: var(--radius-sm); border: 1px solid rgba(248,113,113,0.15);
 }
 .login-err.show { display: block; }
+/* OIDC 模式(AUTH_MODE=oidc):卡片顶部就是这一个登录按钮 -- 字号加大,宽度只包住"登 录"两个字;
+   下方紧跟一行说明(.login-sso-hint),本地表单折叠. */
+.login-sso {
+  width: auto; display: inline-flex; align-items: center; justify-content: center;
+  padding: 12px 20px; font-size: 18px; font-weight: 700; letter-spacing: 2px;
+  text-decoration: none;
+}
+/* 用 .login-card 前缀抬高优先级:否则 .login-card p 会盖掉这里的字号/间距 */
+.login-card .login-sso-hint {
+  color: var(--text-dim); font-size: 12px; margin: 10px 0 0; line-height: 1.5;
+}
 
 /* ── Landing 介绍页 ── */
 .landing {
@@ -632,7 +640,7 @@ label {
 /* ── 部署面板 ── */
 .deploy-layout { display: flex; flex-direction: column; gap: 16px; }
 
-/* 活跃审批单横幅（部署页顶部提醒） */
+/* 活跃审批单横幅(部署页顶部提醒) */
 .approval-banner {
   display: flex;
   align-items: center;

@@ -40,7 +40,7 @@ export function useDeploy() {
       pipelineData.tag = d.latest_tag || ''
       pipelineData.iid = d.pipeline?.iid
       pipelineData.created = d.pipeline?.created_at || ''
-      // 如果 tag 列表还没有默认值，用 pipeline 最新 tag 兜底
+      // 如果 tag 列表还没有默认值,用 pipeline 最新 tag 兜底
       if (pipelineData.tag && !selectedTag.value) {
         selectedTag.value = pipelineData.tag
       }
@@ -51,7 +51,7 @@ export function useDeploy() {
 
   async function changeProject(project) {
     selectedProject.value = project
-    // 切换项目时清空旧 tag，避免错位
+    // 切换项目时清空旧 tag,避免错位
     selectedTag.value = ''
     tagState.tags = []
     await Promise.all([loadPipeline(project), loadTags(project, 0)])

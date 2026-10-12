@@ -160,13 +160,17 @@ const router = createRouter({
   routes
 })
 
-// 导航守卫：检查认证
-router.beforeEach((to) => {
-  const { state } = useAuth()
-  // 允许未登录访问的公开路径：登录页、错误页、首页(显示介绍页)
+// 导航守卫:检查认证
+// OIDC 模式下登录成功是整页跳转(Glue → 302 /api/auth/oidc/callback → /),sessionStorage 的
+// 本地标志不会保留 即 深链首次进入时先向服务端自举一次,否则已登录用户会被误踢到 /401.
+// local 模式下仅多一次 /api/me 探测(无 cookie 即 401),结果与改动前一致.
+router.beforeEach(async (to) => {
+  const { state, bootstrap } = useAuth()
+  // 允许未登录访问的公开路径:登录页,错误页,首页(显示介绍页)
   const publicPaths = ['/login', '/401', '/']
   if (!state.authenticated && !publicPaths.includes(to.path)) {
-    return '/401'
+    await bootstrap()
+    if (!state.authenticated) return '/401'
   }
 })
 

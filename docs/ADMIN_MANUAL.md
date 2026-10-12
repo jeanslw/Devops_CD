@@ -333,7 +333,7 @@ This project interacts with K8s clusters via **SSH + kubectl CLI** (no Kubernete
 
 | Version Range | Status | Notes |
 |------|:--:|------|
-| 1.8 ~ 1.18 | ⚠️ Theoretical | Not tested; early JSONPath fields may differ |
+| 1.8 ~ 1.18 |  Theoretical | Not tested; early JSONPath fields may differ |
 | 1.19 ~ 1.31 | ✅ Recommended | All features verified |
 | 1.32+ | 🔮 Expected compatible | Core commands unchanged |
 
@@ -529,7 +529,7 @@ curl -s -S -X POST "http://cd-host:8081/api/webhooks/receive/42kYUmGU0yZHMiXdusS
   -d "{\"project\":\"$JOB_NAME\",\"tag\":\"$TAG\",\"image\":\"$IMAGE:$TAG\",\"built_at\":\"$(date +'%Y%m%d%H%M%S')\"}"
 ```
 
-> **⚠️ Important**: The `-d` JSON string must be wrapped in **double quotes** so shell variables are expanded. Single quotes will cause `$JOB_NAME`, `$TAG`, `$(date)` to be sent as literals. Prefer `jq` to safely build JSON and avoid quoting hell.
+> ** Important**: The `-d` JSON string must be wrapped in **double quotes** so shell variables are expanded. Single quotes will cause `$JOB_NAME`, `$TAG`, `$(date)` to be sent as literals. Prefer `jq` to safely build JSON and avoid quoting hell.
 
 ### Recommended Payload Fields (no strict validation; unknown fields are stored as-is)
 

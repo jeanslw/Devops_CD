@@ -1,9 +1,9 @@
-"""login_guard 回归测试 —— 与 Devops-Glue 共享登录锁的键格式、窗口与 IP 解析。
+"""login_guard 回归测试 -- 与 Devops-Glue 共享登录锁的键格式,窗口与 IP 解析.
 
-不连真实 MySQL/SQLite 文件：用单连接内存 sqlite 模拟 db.conn() 上下文，
-用 SimpleNamespace 模拟 FastAPI Request。
+不连真实 MySQL/SQLite 文件:用单连接内存 sqlite 模拟 db.conn() 上下文,
+用 SimpleNamespace 模拟 FastAPI Request.
 
-运行：
+运行:
     .venv/Scripts/python.exe -m unittest backend.tests.test_login_guard
 """
 
@@ -25,7 +25,7 @@ from backend.config import settings
 
 
 def _req(peer, xff=None) -> Request:
-    # 最小鸭子类型 mock（运行期只访问 .client.host / .headers.get），cast 仅用于静态类型检查
+    # 最小鸭子类型 mock(运行期只访问 .client.host / .headers.get),cast 仅用于静态类型检查
     headers = {}
     if xff is not None:
         headers["x-forwarded-for"] = xff
@@ -78,8 +78,8 @@ class TestClientIp(unittest.TestCase):
 
     def test_public_peer_xff_not_trusted_even_with_hops(self):
         settings.trusted_proxy_hops = 1
-        # 用真实公网地址（203.0.113.x 属 TEST-NET-3，Python ipaddress 将文档保留段也归为
-        # 非全局可达，与 PHP filter 的保留段定义本就不同；真实公网客户端两边判定一致）
+        # 用真实公网地址(203.0.113.x 属 TEST-NET-3,Python ipaddress 将文档保留段也归为
+        # 非全局可达,与 PHP filter 的保留段定义本就不同;真实公网客户端两边判定一致)
         self.assertEqual(login_guard.client_ip(_req("8.8.8.8", "10.0.0.1")), "8.8.8.8")
 
     def test_loopback_one_hop_takes_rightmost(self):
@@ -111,7 +111,7 @@ class TestClientIp(unittest.TestCase):
 
 class TestLockKey(unittest.TestCase):
     def test_key_matches_glue_format(self):
-        # 必须与 Glue AdminAuthService::loginFailKey 完全一致：
+        # 必须与 Glue AdminAuthService::loginFailKey 完全一致:
         # 'login_fail_' + md5(ip + ':' + lower(username))
         expected = "login_fail_" + hashlib.md5(b"1.2.3.4:admin").hexdigest()  # nosec
         self.assertEqual(login_guard._key("1.2.3.4", "Admin"), expected)
@@ -120,7 +120,7 @@ class TestLockKey(unittest.TestCase):
 
 class TestLockFlow(unittest.TestCase):
     def setUp(self):
-        # _upsert_sql 按 settings.db_driver 选方言；内存库是 sqlite
+        # _upsert_sql 按 settings.db_driver 选方言;内存库是 sqlite
         self._orig_driver = settings.db_driver
         settings.db_driver = "sqlite"
         self.db = _FakeDB()
@@ -144,7 +144,7 @@ class TestLockFlow(unittest.TestCase):
         for _ in range(5):
             login_guard.record_login_failure(self.db, "9.9.9.9", "dan")
         self.assertTrue(login_guard.is_login_locked(self.db, "9.9.9.9", "dan"))
-        # 直接把过期时间改成过去：is_login_locked 的 expires_at > now 判定应放行
+        # 直接把过期时间改成过去:is_login_locked 的 expires_at > now 判定应放行
         key = login_guard._key("9.9.9.9", "dan")
         self.db.raw.execute("UPDATE cache SET expires_at = 1 WHERE cache_key = ?", (key,))
         self.db.raw.commit()

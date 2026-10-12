@@ -88,7 +88,7 @@
           </div>
           <div v-if="r.error" style="color:var(--red);font-size:12px">❌ {{ r.error }}</div>
           <template v-else>
-            <!-- 诊断信息：解析结果为空但有原始输出 -->
+            <!-- 诊断信息:解析结果为空但有原始输出 -->
             <div v-if="r.diagnostic" style="margin-bottom:8px;padding:10px;background:#fff3cd;border:1px solid #ffc107;border-radius:6px">
               <div style="font-size:13px;font-weight:600;color:#856404;margin-bottom:4px">🔍 {{ $t('customMonitor.diagnosticTitle') }}</div>
               <div v-if="r.diagnostic.hint" style="font-size:12px;color:#664d03;margin-bottom:6px;line-height:1.5">{{ r.diagnostic.hint }}</div>
@@ -162,7 +162,7 @@ const { t } = useI18n()
 const { toast } = useToast()
 const { showError } = useError()
 
-// 只读用户仅查看列表，写操作（新建/编辑/删除/测试）需服务器管理权限
+// 只读用户仅查看列表,写操作(新建/编辑/删除/测试)需服务器管理权限
 const canWrite = computed(() => auth.canServerManage())
 
 const monitors = ref([])

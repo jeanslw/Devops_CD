@@ -86,14 +86,17 @@
     "footer": "Copyright © 2026 jeanslw"
   },
   "login": {
-    "title": "CD Deployment System",
+    "title": "Sign in",
     "subtitle": "Admin Account",
     "username": "Username",
     "password": "Password",
     "loginBtn": "Login",
     "enterCredentials": "Please enter username and password",
     "loginFailed": "Login failed",
-    "networkError": "Network error"
+    "networkError": "Network error",
+    "ssoBtn": "Login",
+    "ssoHint": "Single sign-on (OIDC) — you will be returned to this system automatically after signing in.",
+    "localDisabled": "Local password login is disabled (AUTH_MODE=oidc) — use Devops-Glue sign-in above"
   },
   "topbar": {
     "logout": "Logout",
@@ -931,11 +934,17 @@
     "cd_not_deployed": "CD is not deployed: the CD tables are incomplete (missing: {tables}). Ask an administrator to complete them — in auto mode restarting CD re-creates them automatically; in manual mode (MySQL) import database/init_mysql.sql",
     "db_unavailable": "Database temporarily unavailable ({driver}): {reason}. Check the database connection and configuration; in SQLite mode also make sure the data directory is writable and the disk is not full",
     "invalid_url": "Invalid URL",
+    "identity_unavailable": "Identity check failed: this account's role does not exist in Devops-Glue or was deleted. Ask an administrator to verify the role configuration",
+    "oidc_not_configured": "Single sign-on is not configured yet: the server is missing {items}. Ask an administrator to fill them in and retry (OIDC_ISSUER in config/app.env or the root .env; CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI in the root .env)",
+    "local_login_disabled": "Local password login is disabled — please use Devops-Glue single sign-on",
     "no_cd_access": "This account has no CD access. Please contact your administrator",
     "unsupported_cd_type": "Unsupported CD type",
     "unsupported_deploy_type": "Unsupported deploy type",
     "upload_blocked_path": "Upload to system directory is not allowed: {path}",
     "user_disabled": "This account has been disabled. Please contact your administrator",
+    "sso_denied": "Sign-in was not completed (cancelled on the Devops-Glue page, or the Glue session expired). Please sign in again",
+    "sso_state_invalid": "This sign-in request is no longer valid (duplicate callback or expired authorization code). Please start again",
+    "sso_unavailable": "Single sign-on is temporarily unavailable (cannot reach Devops-Glue, or the login assertion failed to verify). Please retry later; contact your administrator if it persists",
     "wrong_deploy_api": "Please use the Kubernetes-specific endpoint /api/deploy-k8s"
   }
 }

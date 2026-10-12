@@ -102,8 +102,8 @@ Whether "CD is enabled" is decided by **Devops-Glue's integration-service contra
 | Contract row state | What CD does | Gate |
 |--------------------|--------------|------|
 | table / row missing, or `enabled<>1` | zero DDL | 503 `errors.cd_not_enabled` (enable it in the CI console under "Integrated Services") |
-| `enabled=1` + `provision='auto'` | on first connect: create every listed table + add missing columns + indexes + the contract view (MySQL and SQLite alike) | incomplete ⇒ 503 `errors.cd_not_deployed` (restart CD to self-heal) |
-| `enabled=1` + `provision='manual'` | zero DDL (schema owned by the DBA: MySQL imports `database/init_mysql.sql`) | missing table ⇒ 503 `errors.cd_not_deployed` (import the DDL script) |
+| `enabled=1` + `provision='auto'` | on first connect: create every listed table + add missing columns + indexes + the contract view (MySQL and SQLite alike) | incomplete => 503 `errors.cd_not_deployed` (restart CD to self-heal) |
+| `enabled=1` + `provision='manual'` | zero DDL (schema owned by the DBA: MySQL imports `database/init_mysql.sql`) | missing table => 503 `errors.cd_not_deployed` (import the DDL script) |
 
 Disabling the integration service only freezes admission: the CD tables and their data stay as they are — never `DROP`ped. The gate covers login, every request carrying a session, the public webhook receiver and the WebShell handshake.
 
@@ -124,7 +124,7 @@ Inventory drift is guarded four ways: `backend/tests/test_cd_schema_sources.py` 
 - **`manual`**: CD issues zero DDL (not even ALTER); MySQL is imported by an administrator from `database/init_mysql.sql`, SQLite is completed by an operator (or CI is switched back to auto-migrate and CD re-enabled).
 - **Hints tell the truth per `provision`**: `cd_deploy_hint(driver, provision)` and `cd_not_enabled_hint()` (see `backend/database.py`) are the only outlets, so operators are never sent to the wrong fix. For "not enabled" the **user-visible notice is a single sentence** (the `errors.cd_not_enabled` i18n string — login box and toast share one path, `error_key` → i18n: neither appends extra text, both follow the UI language) — the action detail travels in `detail.hint` and the startup log.
 
-- **Database unavailable ≠ not enabled / not deployed**: cannot connect, cannot create tables (DB file read-only / disk full / locked), cannot get a connection ⇒ `DatabaseUnavailableError` ⇒ 503 `errors.db_unavailable` (`driver` / `reason` travel in `error_params`; check connectivity, configuration, permissions, disk). Only "not enabled" is `errors.cd_not_enabled` (go flip the switch) and only an incomplete inventory is `errors.cd_not_deployed` (go complete the tables). All are 503 but with different error keys and different actions — mixing them points operators the wrong way.
+- **Database unavailable ≠ not enabled / not deployed**: cannot connect, cannot create tables (DB file read-only / disk full / locked), cannot get a connection => `DatabaseUnavailableError` => 503 `errors.db_unavailable` (`driver` / `reason` travel in `error_params`; check connectivity, configuration, permissions, disk). Only "not enabled" is `errors.cd_not_enabled` (go flip the switch) and only an incomplete inventory is `errors.cd_not_deployed` (go complete the tables). All are 503 but with different error keys and different actions — mixing them points operators the wrong way.
 
 ## Problem Statement
 

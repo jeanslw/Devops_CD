@@ -5,7 +5,7 @@
       <button v-if="canWrite" class="btn btn-sm" @click="refresh">{{ $t('alerts.checkNow') }}</button>
     </div>
 
-    <!-- 新建/编辑表单（仅写权限可见） -->
+    <!-- 新建/编辑表单(仅写权限可见) -->
     <div v-if="canWrite">
     <div class="grid2" style="margin-bottom:12px;gap:8px">
       <select v-model="form.target_type" @change="onTargetChange">
@@ -115,7 +115,7 @@ const auth = useAuth()
 const { t, locale } = useI18n()
 const { toast } = useToast()
 
-// 只读用户仅查看规则列表，写操作（新建/编辑/删除/立即检测）需告警配置权限
+// 只读用户仅查看规则列表,写操作(新建/编辑/删除/立即检测)需告警配置权限
 const canWrite = computed(() => auth.canMonitorAlert())
 
 const rules = ref([])
@@ -133,7 +133,7 @@ const form = reactive({
 
 const resourceOptions = computed(() => {
   const items = resourceTypes.value[form.target_type] || []
-  // 自定义类型：返回包含 children 的层级结构（模板用 optgroup 渲染）
+  // 自定义类型:返回包含 children 的层级结构(模板用 optgroup 渲染)
   if (form.target_type === 'custom') return items
   return items
 })
@@ -173,7 +173,7 @@ async function loadData() {
 function onTargetChange() {
   const opts = resourceTypes.value[form.target_type] || []
   if (form.target_type === 'custom') {
-    // 自定义：取第一个有子指标的组的第一个子指标
+    // 自定义:取第一个有子指标的组的第一个子指标
     for (const g of opts) {
       if (g.children && g.children.length) {
         form.resource_type = g.children[0].value

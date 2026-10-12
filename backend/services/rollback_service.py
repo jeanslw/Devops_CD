@@ -1,11 +1,11 @@
-"""回滚服务 — 重放上一版成功部署 / 原生回滚。
+"""回滚服务 - 重放上一版成功部署 / 原生回滚.
 
-v1.5.0 新增。回滚分两类（按部署模式区分，均走审批闸门 + 统一执行器）：
-- 原生回滚（kubectl/helm/argocd）：以被回滚的那条成功记录（默认该模式最新）为上下文，
-  直接调集群原生回退命令（rollout undo / helm rollback / argocd rollback），不看 tag 记录。
-- 重放回滚（fluxcd/ssh/compose）：取项目上一版不同 tag 的成功记录（status='ok' 且带
-  params_json 快照），复用其快照参数重新执行。
-老记录（v1.5.0 前，无 params_json）不支持回滚，自动跳过。
+v1.5.0 新增.回滚分两类(按部署模式区分,均走审批闸门 + 统一执行器):
+- 原生回滚(kubectl/helm/argocd):以被回滚的那条成功记录(默认该模式最新)为上下文,
+  直接调集群原生回退命令(rollout undo / helm rollback / argocd rollback),不看 tag 记录.
+- 重放回滚(fluxcd/ssh/compose):取项目上一版不同 tag 的成功记录(status='ok' 且带
+  params_json 快照),复用其快照参数重新执行.
+老记录(v1.5.0 前,无 params_json)不支持回滚,自动跳过.
 """
 
 import json
@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 
 
 def find_rollback_source(db, project: str, before_deploy_id: int = 0, deploy_type: str = "") -> dict | None:
-    """查找可回滚的上一版成功部署记录（含 params_json 快照），无则返回 None。
+    """查找可回滚的上一版成功部署记录(含 params_json 快照),无则返回 None.
 
-    回滚目标 = 参考版本之前、tag 不同、deploy_type 相同的最近一条成功记录。
-    参考版本优先级：
-    - before_deploy_id > 0：以该 id 记录为参考；
-    - 否则 deploy_type 非空：以该模式最新成功记录为参考（按模式限定回滚）；
-    - 否则：以最新成功记录为参考（任意模式）。
-    - 按 tag 区分"版本"，避免同 tag 重复部署（含失败的回滚记录）误当成上一版。
-    - 按 deploy_type 限定"模式"，避免跨模式回滚（如 k8s 回滚到 compose）。
+    回滚目标 = 参考版本之前,tag 不同,deploy_type 相同的最近一条成功记录.
+    参考版本优先级:
+    - before_deploy_id > 0:以该 id 记录为参考;
+    - 否则 deploy_type 非空:以该模式最新成功记录为参考(按模式限定回滚);
+    - 否则:以最新成功记录为参考(任意模式).
+    - 按 tag 区分'版本',避免同 tag 重复部署(含失败的回滚记录)误当成上一版.
+    - 按 deploy_type 限定'模式',避免跨模式回滚(如 k8s 回滚到 compose).
     """
     base = (
         "SELECT * FROM cd_deploy_logs WHERE project=? AND status='ok' AND params_json IS NOT NULL AND params_json != ''"
@@ -52,14 +52,14 @@ def find_rollback_source(db, project: str, before_deploy_id: int = 0, deploy_typ
 
 
 def _find_record(db, project: str, deploy_id: int) -> dict | None:
-    """按 id 取部署记录，无则 None。"""
+    """按 id 取部署记录,无则 None."""
     with db.conn() as conn:
         row = conn.execute("SELECT * FROM cd_deploy_logs WHERE id=? AND project=?", (deploy_id, project)).fetchone()
     return dict(row) if row else None
 
 
 def _find_latest_success(db, project: str, deploy_type: str = "") -> dict | None:
-    """取项目（可选限定模式）最近一条成功记录（含 params_json 快照），无则 None。"""
+    """取项目(可选限定模式)最近一条成功记录(含 params_json 快照),无则 None."""
     base = (
         "SELECT * FROM cd_deploy_logs WHERE project=? AND status='ok' AND params_json IS NOT NULL AND params_json != ''"
     )
@@ -83,17 +83,17 @@ def prepare_rollback(
     bot_id: int = 0,
     lang: str = "en",
 ) -> dict:
-    """准备回滚：查找 source、构建 params 快照、过审批闸门。返回：
-    - 需审批: {"pending": True, "approval_id": int, "source_deploy_id": int}
-    - 可执行: {"pending": False, "params": dict, "rollback_flag": bool, "source_deploy_id": int}
+    """准备回滚:查找 source,构建 params 快照,过审批闸门.返回:
+    - 需审批: {'pending': True, 'approval_id': int, 'source_deploy_id': int}
+    - 可执行: {'pending': False, 'params': dict, 'rollback_flag': bool, 'source_deploy_id': int}
 
-    回滚三类（tag 优先级最高）：
-    - 指定 tag（tag 非空）：重放该 tag —— 以该模式最新成功记录为上下文，把 tag 换成所选值再部署。
-    - 原生回滚（kubectl/helm/argocd，tag 空）：以该模式最新成功记录为上下文，
-      直接调集群原生回退命令（rollout undo / helm rollback / argocd rollback），不看 tag 记录。
-    - 重放回滚（fluxcd/ssh/compose，tag 空）：找上一版不同 tag 的成功记录，复用其参数快照重放。
+    回滚三类(tag 优先级最高):
+    - 指定 tag(tag 非空):重放该 tag -- 以该模式最新成功记录为上下文,把 tag 换成所选值再部署.
+    - 原生回滚(kubectl/helm/argocd,tag 空):以该模式最新成功记录为上下文,
+      直接调集群原生回退命令(rollout undo / helm rollback / argocd rollback),不看 tag 记录.
+    - 重放回滚(fluxcd/ssh/compose,tag 空):找上一版不同 tag 的成功记录,复用其参数快照重放.
     """
-    # 先定模式（用于判别原生回滚 + 取上下文）：deploy_type 优先，否则取 before_deploy_id 记录的 deploy_type
+    # 先定模式(用于判别原生回滚 + 取上下文):deploy_type 优先,否则取 before_deploy_id 记录的 deploy_type
     mode = deploy_type
     if before_deploy_id:
         ref = _find_record(db, project, before_deploy_id)
@@ -103,7 +103,7 @@ def prepare_rollback(
 
     native = mode in ("k8s/kubectl", "k8s/helm", "k8s/argocd")
 
-    # 用户手工指定的回滚 tag 必须过同一白名单（历史记录重放的 tag 在部署时已校验）
+    # 用户手工指定的回滚 tag 必须过同一白名单(历史记录重放的 tag 在部署时已校验)
     if tag:
         try:
             validate_tag(tag)
@@ -111,17 +111,17 @@ def prepare_rollback(
             raise ValidationError(str(e), error_key="errors.deploy_validation") from e
 
     if tag:
-        # 指定 tag → 重放：以被回滚记录为上下文（默认该模式最新成功记录），替换 tag
+        # 指定 tag → 重放:以被回滚记录为上下文(默认该模式最新成功记录),替换 tag
         source = (
             _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
         )
     elif native:
-        # 原生回滚：以被回滚记录为上下文
+        # 原生回滚:以被回滚记录为上下文
         source = (
             _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
         )
     else:
-        # 重放回滚：找上一版不同 tag 的成功记录
+        # 重放回滚:找上一版不同 tag 的成功记录
         source = find_rollback_source(db, project, before_deploy_id, mode)
 
     if not source:
@@ -131,21 +131,21 @@ def prepare_rollback(
     if not params.get("deploy_type"):
         raise ValidationError("该部署记录缺少回滚所需参数快照", error_key="errors.rollback_unsupported")
 
-    # 指定 tag 同样属于 replay：它会创建新的部署记录并按快照重放，只是把目标 tag 替换为用户指定值。
+    # 指定 tag 同样属于 replay:它会创建新的部署记录并按快照重放,只是把目标 tag 替换为用户指定值.
     rollback_type = "native" if (native and not tag) else "replay"
     params["rollback_type"] = rollback_type
 
-    # 指定 tag → 替换目标 tag（重放到该版本）
+    # 指定 tag → 替换目标 tag(重放到该版本)
     if tag:
         params["tag"] = tag
 
-    # 回滚是独立的新操作：说明 = 回滚标记（单级）+ 本次操作者新填的说明。
-    # 不使用源记录快照 params 里的 deploy_note（那是源版本的旧说明，递归携带会形成
-    # [回滚 #x] [回滚到 ..] … 长链）；源版本说明保留在源记录上，经 [回滚 #x] 编号关联。
-    # 原生回滚实际命中的 revision 摘要由执行器在回滚完成后再前置补写。
+    # 回滚是独立的新操作:说明 = 回滚标记(单级)+ 本次操作者新填的说明.
+    # 不使用源记录快照 params 里的 deploy_note(那是源版本的旧说明,递归携带会形成
+    # [回滚 #x] [回滚到 ..] ... 长链);源版本说明保留在源记录上,经 [回滚 #x] 编号关联.
+    # 原生回滚实际命中的 revision 摘要由执行器在回滚完成后再前置补写.
     marker = f"[回滚到 {tag}]" if tag else f"[回滚 #{source['id']}]"
     user_note = (note or "").strip()
-    # 列宽 512：优先保住回滚标记，超长部分截断用户说明
+    # 列宽 512:优先保住回滚标记,超长部分截断用户说明
     max_note_len = 512 - len(marker) - 1
     if max_note_len > 0 and len(user_note) > max_note_len:
         user_note = user_note[:max_note_len]
@@ -157,12 +157,12 @@ def prepare_rollback(
     deploy_type_val = params["deploy_type"]
     server_ids = params.get("server_ids") or ""
 
-    # 仅"无 tag 且原生模式"走原生回退命令；指定 tag 或重放模式都走重放
+    # 仅"无 tag 且原生模式"走原生回退命令;指定 tag 或重放模式都走重放
     rollback_flag = native and not tag
-    # 标记原生回滚，申请人手动执行时由 run_approval 读取并剔除，还原 rollback 标志
+    # 标记原生回滚,申请人手动执行时由 run_approval 读取并剔除,还原 rollback 标志
     params["_rollback"] = rollback_flag
 
-    # 回滚同样过审批闸门（按 require_rollback_approval 判断）
+    # 回滚同样过审批闸门(按 require_rollback_approval 判断)
     gate = gate_deploy(
         db,
         project=project,
@@ -191,9 +191,9 @@ def rollback(
     bot_id: int = 0,
     lang: str = "en",
 ) -> dict:
-    """同步执行回滚（非流式）。返回：
-    - 需审批: {"pending": True, "approval_id": int, "source_deploy_id": int}
-    - 直接执行: {"pending": False, "status": "ok"|"failed"|"busy"|"cancelled", "deploy_id": int, "source_deploy_id": int, "output": str}
+    """同步执行回滚(非流式).返回:
+    - 需审批: {'pending': True, 'approval_id': int, 'source_deploy_id': int}
+    - 直接执行: {'pending': False, 'status': 'ok'|'failed'|'busy'|'cancelled', 'deploy_id': int, 'source_deploy_id': int, 'output': str}
     """
     prep = prepare_rollback(
         db,
