@@ -1,11 +1,11 @@
 <template>
   <div class="sidebar" :class="{ open }" :aria-expanded="open">
-    <!-- 仪表盘：所有角色可见 -->
+    <!-- 仪表盘:所有角色可见 -->
     <div class="item" :class="{ active: isActive('/') }" @click="go('/')">
       {{ $t('sidebar.ciBuild') }}
     </div>
 
-    <!-- 权限未配置提示（非 super_admin 且 permissions 为空） -->
+    <!-- 权限未配置提示(非 super_admin 且 permissions 为空) -->
     <div v-if="showEmptyPermsHint" class="item item-hint">
       {{ $t('sidebar.noPermissions') }}
     </div>
@@ -31,7 +31,7 @@
       </div>
     </template>
 
-    <!-- 审批中心（审批人看「审批中心」；仅部署权限的申请人看「我的部署申请」） -->
+    <!-- 审批中心(审批人看"审批中心";仅部署权限的申请人看"我的部署申请") -->
     <div v-if="auth.canViewApprovals()" class="item" :class="{ active: isActive('/approvals') }" @click="go('/approvals')">
       {{ approvalMenuText }}
       <span
@@ -81,7 +81,7 @@
       </div>
     </template>
 
-    <!-- 通知管理（折叠组：Bot 管理 + WebHook） -->
+    <!-- 通知管理(折叠组:Bot 管理 + WebHook) -->
     <template v-if="auth.canNotificationManage() && (auth.canBot() || auth.canWebhook())">
       <div class="item item-parent" @click="toggleNotify()">
         {{ $t('sidebar.notifications') }} {{ notifyOpen ? '▾' : '▸' }}
@@ -114,12 +114,12 @@ const deployOpen = ref(false)
 const monitorOpen = ref(false)
 const notifyOpen = ref(false)
 
-// 审批菜单文案：具备审批权限 → 审批中心；否则（仅有部署权限的申请人）→ 我的部署申请
+// 审批菜单文案:具备审批权限 → 审批中心;否则(仅有部署权限的申请人)→ 我的部署申请
 const approvalMenuText = computed(() =>
   auth.canApprove() ? t('sidebar.approvals') : t('sidebar.myApprovals')
 )
 
-// ── 审批菜单红点：待我审批（红）+ 我的待执行（琥珀），与 bot 通知互补的站内提醒 ──
+// ── 审批菜单红点:待我审批(红)+ 我的待执行(琥珀),与 bot 通知互补的站内提醒 ──
 const toApprove = ref(0)
 const toExecute = ref(0)
 const badgeTotal = computed(() => toApprove.value + toExecute.value)
@@ -152,7 +152,7 @@ watch(() => auth.state?.user, (u) => {
 
 onUnmounted(stopBadgePolling)
 
-// 用户已登录但未分配任何权限（非 super_admin）时显示提示
+// 用户已登录但未分配任何权限(非 super_admin)时显示提示
 const showEmptyPermsHint = computed(() => {
   const u = auth.state?.user
   return u && u.role !== 'super_admin' && Array.isArray(u.permissions) && u.permissions.length === 0
@@ -181,7 +181,7 @@ function toggleNotify() {
 </script>
 
 <style scoped>
-/* 审批菜单红点：待审批（红）/ 仅待执行（琥珀），与 bot 通知互补的站内提醒 */
+/* 审批菜单红点:待审批(红)/ 仅待执行(琥珀),与 bot 通知互补的站内提醒 */
 .badge-dot {
   display: inline-block;
   min-width: 16px;

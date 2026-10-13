@@ -7,7 +7,7 @@ import sys
 
 base = os.path.dirname(os.path.abspath(__file__))  # backend/tests/
 ROOT = os.path.dirname(os.path.dirname(base))  # 项目根
-sys.path.insert(0, ROOT)  # 使 backend 包可导入（直接脚本方式运行时 sys.path[0] 是 backend/tests/）
+sys.path.insert(0, ROOT)  # 使 backend 包可导入(直接脚本方式运行时 sys.path[0] 是 backend/tests/)
 PASS = "PASS"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -103,12 +103,12 @@ missing = []
 for fpath in all_files:
     with open(os.path.join(ROOT, fpath), encoding="utf-8") as f:
         src = f.read()
-    # 用 AST 定位 raise 语句，正确处理多行 raise XxxError(...)（error_key 换行也能识别）
+    # 用 AST 定位 raise 语句,正确处理多行 raise XxxError(...)(error_key 换行也能识别)
     for node in ast.walk(ast.parse(src)):
         if not isinstance(node, ast.Raise):
             continue
         exc = node.exc
-        # 跳过裸 `raise` / `raise ... from e`，只检查显式抛出的 *Error 调用
+        # 跳过裸 `raise` / `raise ... from e`,只检查显式抛出的 *Error 调用
         if not isinstance(exc, ast.Call):
             continue
         name = (

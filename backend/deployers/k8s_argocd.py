@@ -1,4 +1,4 @@
-"""K8S Argo CD 部署模式 — API patch image + sync + health polling"""
+"""K8S Argo CD 部署模式 - API patch image + sync + health polling"""
 
 import logging
 
@@ -13,8 +13,8 @@ from backend.deployers.k8s_utils import check_cancelled
 
 logger = logging.getLogger(__name__)
 
-# ArgoCD 始终走 HTTPS；是否校验 TLS 证书由 settings.argocd_verify_tls 控制
-# （默认 False 兼容自签名证书环境；证书受信时设 True 防中间人截获 Bearer token）
+# ArgoCD 始终走 HTTPS;是否校验 TLS 证书由 settings.argocd_verify_tls 控制
+# (默认 False 兼容自签名证书环境;证书受信时设 True 防中间人截获 Bearer token)
 _VERIFY = settings.argocd_verify_tls
 
 
@@ -32,7 +32,7 @@ class ArgoCDDeployer(K8sSubDeployer):
     def stop(
         self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
     ) -> dict:
-        """停止：删除 ArgoCD Application"""
+        """停止:删除 ArgoCD Application"""
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         token = pwd
         base = getattr(req, "api_url", "") or f"https://{host}"
@@ -49,7 +49,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             return {"success": False, "output": "Stop service failed, please contact administrator"}
 
     def rollback(self, req, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
-        """原生回滚：ArgoCD POST /rollback 回到上一 sync 版本（history id）。"""
+        """原生回滚:ArgoCD POST /rollback 回到上一 sync 版本(history id)."""
         import time
 
         import requests
@@ -70,7 +70,7 @@ class ArgoCDDeployer(K8sSubDeployer):
         try:
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-            # ── 发现 Argo CD Application 名（与 deploy 同源，不盲猜等于项目名） ──
+            # ── 发现 Argo CD Application 名(与 deploy 同源,不盲猜等于项目名) ──
             app_name = project.split("/")[-1]
             r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
             if r.status_code != 200:
@@ -110,8 +110,8 @@ class ArgoCDDeployer(K8sSubDeployer):
             prev_id = prev.get("id")
             prev_rev = prev.get("revision", "")
             rollback_summary = S("deploy_log.argocd_rollback_to", id=prev_id, revision=prev_rev)
-            # 目标版本说明结构性归入说明列（rollback_summary → deploy_note），不写入执行日志
-            # output（保持日志纯输出）；仅经 callback 实时推送，让回滚进行中的 SSE 界面能看到目标
+            # 目标版本说明结构性归入说明列(rollback_summary → deploy_note),不写入执行日志
+            # output(保持日志纯输出);仅经 callback 实时推送,让回滚进行中的 SSE 界面能看到目标
             if callable(callback):
                 callback(rollback_summary)
 
@@ -127,7 +127,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_rollback_failed", code=r.status_code, msg=r.text[:200]))
                 return {"success": False, "output": "\n".join(output)}
 
-            # ── 复用 health + sync 轮询等待回滚完成；必须确认 revision 已离开旧版本 ──
+            # ── 复用 health + sync 轮询等待回滚完成;必须确认 revision 已离开旧版本 ──
             health = ""
             sync = ""
             for i in range(30):
@@ -164,7 +164,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_timeout"))
 
             result = {"success": success, "output": "\n".join(output)}
-            # 回滚目标版本摘要（ArgoCD history id + git revision），供执行器写入部署记录的说明列
+            # 回滚目标版本摘要(ArgoCD history id + git revision),供执行器写入部署记录的说明列
             if success:
                 result["rollback_summary"] = rollback_summary
             return result
@@ -198,11 +198,11 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             log(S("deploy_log.argocd_connecting"))
 
-            # ── 发现 Argo CD Application 名，不盲猜等于项目名 ──
+            # ── 发现 Argo CD Application 名,不盲猜等于项目名 ──
             app_name = project.split("/")[-1]
             r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
             if r.status_code != 200:
-                # 精确名不存在，搜索所有 App 按镜像名匹配
+                # 精确名不存在,搜索所有 App 按镜像名匹配
                 log(S("deploy_log.argocd_searching"))
                 r_list = _get(f"{base}/api/v1/applications", headers=headers)
                 if r_list.status_code == 200:
@@ -238,7 +238,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             params = app.get("spec", {}).get("source", {}).get("helm", {}).get("parameters", [])
             kustomize = app.get("spec", {}).get("source", {}).get("kustomize", {})
             if kustomize:
-                # 用 Application 名作为 Kustomize image name（常见约定）
+                # 用 Application 名作为 Kustomize image name(常见约定)
                 new_images = [
                     {
                         "name": app_name,
@@ -301,8 +301,8 @@ class ArgoCDDeployer(K8sSubDeployer):
                 )
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
                 if health == "Healthy" and sync == "Synced":
-                    # image/tag 参数可以在不改变 Git revision 的情况下完成一次有效同步；
-                    # 因此普通部署不能要求 revision 必须变化。Healthy + Synced 才是成功条件。
+                    # image/tag 参数可以在不改变 Git revision 的情况下完成一次有效同步;
+                    # 因此普通部署不能要求 revision 必须变化.Healthy + Synced 才是成功条件.
                     log(S("deploy_log.argocd_healthy", sync=sync))
                     success = True
                     break

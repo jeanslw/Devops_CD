@@ -1,5 +1,5 @@
 <template>
-  <!-- 部署页：本项目当前用户本人发起的全部活跃审批单（待审批/已批准/执行中） -->
+  <!-- 部署页:本项目当前用户本人发起的全部活跃审批单(待审批/已批准/执行中) -->
   <div v-if="items.length" class="card active-approvals">
     <div class="aa-head">
       <span class="aa-title">📋 {{ $t('approvals.activeListTitle', { n: items.length }) }}</span>
@@ -45,7 +45,7 @@ function statusClass(s) {
   })[s] || 'badge-pending'
 }
 
-// 列表只占一行高度：ISO 时间截到分钟
+// 列表只占一行高度:ISO 时间截到分钟
 function fmtTime(t) {
   if (!t) return ''
   return String(t).replace('T', ' ').slice(0, 16)

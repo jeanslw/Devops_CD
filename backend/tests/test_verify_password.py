@@ -1,11 +1,11 @@
-"""verify_password 算法自动识别回归：bcrypt 与 argon2id 双算法兼容。
+"""verify_password 算法自动识别回归:bcrypt 与 argon2id 双算法兼容.
 
-背景：CI 侧 PASSWORD_HASH_ALGO 可在 bcrypt / argon2id 间切换，CD 登录必须
-自动识别哈希前缀，不能硬编码 bcrypt（否则 CI 切到 argon2id 后 CD 登录抛
-ValueError: Invalid salt → 500）。verify_password 对任何校验失败返回 False，
-由调用方统一按「账号或密码错误」处理，绝不抛异常。
+背景:CI 侧 PASSWORD_HASH_ALGO 可在 bcrypt / argon2id 间切换,CD 登录必须
+自动识别哈希前缀,不能硬编码 bcrypt(否则 CI 切到 argon2id 后 CD 登录抛
+ValueError: Invalid salt → 500).verify_password 对任何校验失败返回 False,
+由调用方统一按'账号或密码错误'处理,不抛异常.
 
-运行（项目根）:
+运行(项目根):
     python -m pytest backend/tests/test_verify_password.py -q
 """
 
@@ -43,18 +43,18 @@ class TestVerifyPassword(unittest.TestCase):
         self.assertFalse(verify_password("wrong", hashed))
 
     def test_malformed_hash_returns_false_not_raise(self):
-        # 既非 $argon2 也非合法 bcrypt（无 $2a/$2b 前缀）：bcrypt.checkpw 会抛
-        # ValueError，verify_password 必须吞掉并返回 False，避免登录 500。
+        # 既非 $argon2 也非合法 bcrypt(无 $2a/$2b 前缀):bcrypt.checkpw 会抛
+        # ValueError,verify_password 必须吞掉并返回 False,避免登录 500.
         self.assertFalse(verify_password("secret", "not-a-hash"))
 
     def test_null_or_empty_hash_returns_false_not_raise(self):
-        # 共享库 password_hash 理论上 NOT NULL，但脏数据 / 直写库可能出现 NULL 或空串：
-        # 此前 None 会让 hashed.startswith 抛 AttributeError → 登录 500。
+        # 共享库 password_hash 理论上 NOT NULL,但脏数据 / 直写库可能出现 NULL 或空串:
+        # 此前 None 会让 hashed.startswith 抛 AttributeError → 登录 500.
         self.assertFalse(verify_password("secret", None))
         self.assertFalse(verify_password("secret", ""))
 
     def test_argon2_mismatch_is_verification_error(self):
-        # 锁定 argon2 走校验分支（而非误入 bcrypt）的哨兵：确保前缀分派正确。
+        # 锁定 argon2 走校验分支(而非误入 bcrypt)的哨兵:确保前缀分派正确.
         hashed = _PH.hash("secret")
         with self.assertRaises(VerifyMismatchError):
             _PH.verify(hashed, "wrong")

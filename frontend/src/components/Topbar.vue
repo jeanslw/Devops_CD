@@ -37,7 +37,7 @@ defineEmits(['logout', 'toggle-sidebar'])
 
 const { locale, t, te } = useI18n()
 
-// 内置角色走 i18n 文案；CI 侧自定义角色无对应文案时直接显示角色名
+// 内置角色走 i18n 文案;CI 侧自定义角色无对应文案时直接显示角色名
 const roleLabel = computed(() => {
   const role = auth.state.user?.role || ''
   const key = 'users.role_' + role

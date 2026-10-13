@@ -1,12 +1,12 @@
-"""统一异常体系 — 替代裸 HTTPException，让业务层抛出语义异常，路由层统一处理"""
+"""统一异常体系 - 替代裸 HTTPException,让业务层抛出语义异常,路由层统一处理"""
 
 
 class AppException(Exception):
     """应用层异常基类
 
-    error_key:  前端 i18n 翻译 key，如 "errors.server_not_found"
-    error_params: i18n 插值参数，如 {"name": "my-server"}
-    message:    降级兜底文本（无前端翻译时展示）
+    error_key:  前端 i18n 翻译 key,如 'errors.server_not_found'
+    error_params: i18n 插值参数,如 {'name': 'my-server'}
+    message:    降级兜底文本(无前端翻译时展示)
     """
 
     def __init__(
@@ -38,7 +38,7 @@ class NotFoundError(AppException):
 
 
 class ConflictError(AppException):
-    """资源冲突 (409) — 如名称重复"""
+    """资源冲突 (409) - 如名称重复"""
 
     def __init__(
         self,
@@ -64,7 +64,7 @@ class ValidationError(AppException):
 
 
 class ServiceUnavailableError(AppException):
-    """外部服务不可用 (503) — 如 Harbor / CI 不可达"""
+    """外部服务不可用 (503) - 如 Harbor / CI 不可达"""
 
     def __init__(
         self,

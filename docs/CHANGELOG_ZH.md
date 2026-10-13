@@ -1,5 +1,32 @@
 # 更新日志
 
+## v1.6.0 (2026-10-11) — 集成服务开关：启用与建表交给 Devops-Glue 契约表
+
+### 升级注意
+- **CD 的启用状态改由 Devops-Glue 的集成服务契约表决定**：请先在 Devops-Glue 后台「API集成服务 → 启用」**开启 Devops-CD**，否则 CD 以「未启用」拒绝登录与所有操作（503 `errors.cd_not_enabled`）。
+- `provision='auto'`（CI 的 `DB_AUTO_MIGRATE` 开启）时 CD 会**自动建表 / 补列**，无需再手工导入脚本；`provision='manual'`（CI 关闭自动迁移）时行为与 v1.5.7 相同：由管理员导入 `database/init_mysql.sql`（幂等，升级后请重跑一次）。
+- **关闭集成服务不会删除 CD 表与数据**（只冻结准入，重新启用后历史数据继续可用）。
+- **本版起默认登录方式为 Devops-Glue 单点登录（OIDC）**：部署前请在根 `.env` 配置 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`；暂时不具备条件时，把 `AUTH_MODE=local` 写进根 `.env` 或 `config/app.env` 覆盖，即可继续使用本地密码登录。
+
+### 新增功能
+- **默认登录方式改为 Devops-Glue 单点登录（OIDC / BFF）** — `AUTH_MODE=oidc` 成为默认档（裸机与 Docker 一致）：登录走授权码流，身份与权限经 Glue API 获取，请求路径上不再读共享表；本地密码登录保留为回退档（`AUTH_MODE=local` + 重启即恢复，零 DDL）。必填项 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` 缺失时三处给出同一份清单：compose 预检中止启动、启动日志记 ERROR、登录页点 SSO 提示 `errors.oidc_not_configured`（含缺失项名，XHR 为 503 + `error_key`）。默认档在每层写实：`config/app.env`、compose 两个服务的 `AUTH_MODE: ${AUTH_MODE:-oidc}`、`backend/config.py` 字段默认值；`AUTH_MODE` 留空按未配置落回 `oidc`，拼错（如 `basic`）则启动即报错，不静默退化。
+- **登录入口统一为 `/login`** — 落地页导航栏与登录页都指向登录页，由登录页按公开接口 `/api/info` 的 `auth_mode` 决定展示 SSO 按钮还是本地表单；模式未知时不渲染任何一态，避免首帧闪动。
+- **集成服务契约驱动「启用」判定（CI 是唯一写入方）** — 新增 `Database.cd_integration_state()`：只读一行 `integrated_services`（`service_name='cd'`）拿到 `enabled` + `provision`，作为闸门第一道判据。契约表 / 行缺失或 `enabled<>1` → **零 DDL** + 503 `errors.cd_not_enabled`（提示去 CI 后台启用）；CI 后台一启用，运行中的 CD **下一个请求即生效**（无需重启、无需改配置）。
+- **`provision='auto'` 自动建表（MySQL 与 SQLite 行为一致）** — MySQL 侧新增 `_MYSQL_TABLE_DDL` / `_MYSQL_INDEXES` / `_MYSQL_COLUMN_MIGRATIONS`（`.dockerignore` 排除了 `database/`，运维脚本不进镜像，故 DDL 必须内置），与 SQLite 的 `_ensure_cd_tables` 一同在「已启用 + 首次连库」时建全 `CD_REQUIRED_TABLES`（14 张）+ 补既有表缺失列 + 补索引 + 契约视图 `v_glue_deploy_logs`，并做清单自检（漏表即报错，不留半套 schema）。
+- **前端 i18n** — 新增 `errors.cd_not_enabled`（中 / 英）；`errors.cd_not_deployed` 文案改为按 `provision` 区分（auto 重启自愈 / manual 导入脚本）。
+
+### 变更
+- **闸门判据改为「契约状态 × 清单完整性」** — `cd_deploy_gate()` 先读契约（未启用 → 503 `errors.cd_not_enabled`），再看清单（缺表 → 503 `errors.cd_not_deployed`，提示按 `provision` 说实话：`cd_deploy_hint(driver, provision)` 与新增的 `cd_not_enabled_hint()`）；启动日志同步改为三态（未启用 / 已启用但缺表 / 正常）。
+- **`manual` 模式零 DDL** — 与 CI 的手动建库模式对齐（`DB_AUTO_MIGRATE=false` 时 CI 也只补种子、不做 DDL）：CD 在 `manual` 下不建表、不补列，结构升级一律由 DBA 执行建表脚本。
+- **未启用提示只留一句话、且随语言切换** — 503 `errors.cd_not_enabled` 的用户可见文案固定为「CD 服务未启用：请在 Devops-Glue 后台『API集成服务』中启用 Devops-CD」；**登录页 error 框改为与 toast 同源**（`error_key` → 前端 i18n，切 EN 输出英文，不再直接渲染后端的中文兜底串；镜像仓库「扫描触发」失败提示同样改为先取 `error_key`）；动作细节 `cd_not_enabled_hint()` 改随响应体 `detail.hint` 与启动日志下发，不再拼进 `message`。
+- **文档与测试** — `ADMIN_MANUAL(_ZH)` / `ARCHITECTURE(_ZH)` / `FAQ(_ZH)` 的闸门章节同步改写；新增 `backend/tests/test_cd_schema_sources.py`（清单 ↔ `init_mysql.sql` ↔ `_MYSQL_TABLE_DDL` ↔ SQLite 实建表的**表 / 列 / 索引四方同构**）与共享辅助 `backend/tests/cd_contract.py`，并重写 `backend/tests/test_cd_deploy_gate.py`（三种契约状态 × 两个驱动 × 零 DDL 断言）。
+- **CI 表索引归属划清** — CD 的 `database/init_mysql.sql` 不再对共享表 `ci_pipeline_artifacts` / `ci_job_git_map` 建索引（删除相关 `CALL __add_index('idx_pa_*')`）；这两张 CI 表的索引改由 Devops-Glue 建库脚本 `database/mysql_init.sql` 负责（新增 `idx_pipeline_artifacts_project_key` / `idx_pipeline_artifacts_created`，与 Glue `sqlite_init.sql` 同名同列；`ci_job_git_map` 的索引本就齐全）。CD 只建/迁移自己的 `cd_*` 表，运行期不触碰共享表。
+- **前端构建告警清零** — `frontend/index.html` 的 xterm 样式表引用由 `/static/xterm/` 改为 `/xterm/`（Vite `base: '/static/'` 会自动加前缀，避免「`xterm.min.css` not found」告警）；`frontend/src/router/index.js` 的 LoginView 由懒加载改为静态引入（App.vue 登录门静态需要它，无法拆出独立 chunk），消除 Vite「dynamically imported but also statically imported」告警。
+- **测试补强** — `test_cd_schema_sources.py` 新增索引契约用例：断言 `init_mysql.sql` 的 `__add_index` 只作用于 `cd_*` 表、绝不对共享表（`ci_*` / `admin_users` / `roles` …）建索引；`test_webshell_perm.py` 新增 WebShell 准入用例组：`systems` 不含 `cd` 的账号 401、含 `cd` 放行、空角色 / 空权限一律 fail-closed。
+
+### 修复
+- **WebShell 鉴权与 REST 同口径（越权修复）** — `_ws_verify` 本地分支原先只查 `username, status`、漏掉 `systems` 是否允许 CD 访问：一个 `systems` 不含 `cd` 的账号仍能打开 WebShell（REST 会被 `verify_token` 拦下，WebShell 是独立鉴权路径）。现补上 `_check_cd_access(row)` + `_check_disabled(row)`，与 REST `verify_token` 同口径；权限分支由 `if row and not …`（fail-open）改为「用户不存在 / 无角色 / 权限不足一律拒绝」（fail-closed，与 `require_perm` 的 deny-by-default 同口径）。
+
 ## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
 
 ### 升级注意
@@ -17,11 +44,11 @@
 - **容器资源限制** — `docker-compose.yml` 增加 `deploy.resources.limits` / `.reservations`（服务级顶层 `resources:` 会被 Compose 静默丢弃、限制根本不生效；`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
 
 ### 变更
-- **MySQL 模式零 DDL（越界修复）** — 移除 `cd_sessions` 的 `CREATE TABLE IF NOT EXISTS` 自愈建表。CD 表全部由管理员手动导入 `database/init_mysql.sql` 建立，**该手动导入就是「启用 CD」的闸门**：未导入时应用绝不建表/建索引，共享库里不留任何 DDL 痕迹。此前那套「半套自愈」既越界又不自洽 —— 14 张 CD 表里只偷偷建了 1 张。仅保留对**已存在**表的缺失列幂等迁移（表不存在时自然跳过，零副作用）。
+- **MySQL 模式零 DDL（越界修复）** — 移除 `cd_sessions` 的 `CREATE TABLE IF NOT EXISTS` 自愈建表。CD 表全部由管理员手动导入 `database/init_mysql.sql` 建立，**该手动导入就是「启用 CD」的闸门**：未导入时应用不建表/建索引，共享库里不留任何 DDL 痕迹。此前那套「半套自愈」既越界又不自洽 —— 14 张 CD 表里只偷偷建了 1 张。仅保留对**已存在**表的缺失列幂等迁移（表不存在时自然跳过，零副作用）。
 - **表必须建全，否则禁止一切操作** — 新增 `Database.cd_missing_tables()` / `cd_deployed()`：按 `CD_REQUIRED_TABLES`（当前 14 张，与 `database/init_mysql.sql` 及 SQLite 建表清单双向校验）逐张核对，**少任何一张都算未部署**。闸门 `auth.cd_deploy_gate()` 覆盖登录（排在限流计数之前）、`authenticate()`、所有 `verify_token` / `get_current_user` 接口、公开 Webhook 接收端点与 WebShell 的 WebSocket 握手（独立鉴权路径，转 503 干净关闭而非握手期未捕获异常） —— 即「**即使能登录，也禁止做任何操作**」：半套 schema 放行只会让各功能到处 500、甚至写坏数据，因此统一返回 503 `errors.cd_not_deployed`（`error_params.tables` 列出缺失表，前端 i18n 插值展示「缺哪张」），并且只报警不补建。无认证的 `/health`、`/api/info`、`/metrics` 保持可用便于排障。该失败属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享 `cache` 表的登录失败锁（未启用的部署不该污染、更不该锁掉管理员账号）。
 - **清单即唯一真相源** — 「CD 到底启用了没有」只由 `CD_REQUIRED_TABLES` 这份清单决定（与清单张数无关）：以后新增/删除 CD 表只改三处（清单 + `database/init_mysql.sql` + `_ensure_cd_tables`），闸门判定、错误文案、启动告警、张数全自动跟随，代码里不写死数字；删表同理，无需改闸门逻辑。
 - **SQLite：建表清单自检 + 提示按驱动说实话** — SQLite 的 CD 表随库自动创建，`_ensure_cd_tables()` 末尾新增**清单自检**：清单里加了表却漏改建表逻辑时，首次连库即 `RuntimeError` 点名缺表（宁可启动失败，也不要半套 schema 跑到线上被闸门 503 才发现）。同时闸门文案不再写死「请导入 init_mysql.sql」，改为**中性描述 + 按驱动动作**（新增 `cd_deploy_hint()` 与 `Database.driver` 只读属性）：SQLite 告诉你去重启（自动建全自愈），只有 MySQL 才告诉你导入建表脚本 —— 不给运维错误指令；前端 `errors.cd_not_deployed` 中英文案同步改为按两种模式分别写明。
-- **启动醒目提示** — 服务启动时探测部署状态，未建全则打印 ERROR 日志并逐张列出缺失的表；刻意不阻断启动，`/health`、`/api/info`、`/metrics` 仍可用于探活与排障。
+- **启动醒目提示** — 服务启动时探测部署状态，未建全则打印 ERROR 日志并逐张列出缺失的表；不阻断启动，`/health`、`/api/info`、`/metrics` 仍可用于探活与排障。
 - **前端 i18n** — 新增 `errors.cd_not_deployed`（中/英，带 `{tables}` 缺失表插值）。
 - **库不可用 ≠ 未部署：原来漏成裸 500，现在统一 503** — 建表写不进去（SQLite 库文件只读/磁盘满/被占用）、库文件打不开、MySQL 取不到连接、构造期共享库校验失败，原先都会冒成**裸 500**（500 的语义是「程序缺陷」，运维会去查代码而不是环境）。现统一抛 `DatabaseUnavailableError` → **503 `errors.db_unavailable`**（`error_params.driver` / `.reason` 带上驱动与底层原因，前端中英同步新增 `errors.db_unavailable`），与「清单没建全」的 `errors.cd_not_deployed` 严格区分：前者查连接/权限/磁盘，后者才去补建表 —— error_key 不同，给的动作就不同，不会把人指向错误方向；清单自检的 `RuntimeError`（清单与 DDL 漂移 = 代码缺陷）仍原样冒泡，不被 503 掩盖。顺带修掉一个资源泄漏：建表/迁移抛异常时连接未关闭（Windows 上未关闭的句柄会锁住库文件，导致库文件删不掉、下次连库更糟），现在异常路径一律 `close()`。
 - **容器加固** — `cap_drop: ALL`、`no-new-privileges`、根文件系统 `read_only` + `/tmp` tmpfs，端口默认只绑 `127.0.0.1`（配合反代；`CD_BIND_IP=0.0.0.0` 恢复直连）。`env-check` 改为对**所有**数据库模式强制要求 `SECRET_KEY`（容器无条件 `read_only`，自动生成的 `.cd_secret_key` 永远写不出来），并对公开示例值 `devops_cd_2026` / `change_me_to_secret` 直接中止。
@@ -30,7 +57,7 @@
 
 ### 修复
 - **只读容器启动不再抛裸 `OSError`** — `SECRET_KEY` 未设置且密钥文件不可写时，`_resolve_secret()` 改为抛出中英双语 `RuntimeError` 并给出确切修复命令（`openssl rand -base64 32`），而不是导入期栈崩溃；`env-check` 在更早阶段对所有数据库模式中止。
-- **被放弃的 v1.5.7 盐文件不再导致凭据静默丢失** — v1.5.7 用 `.cd_secret_key.salt` 随机盐写入的密文仍可解出：该文件若仍存在，则只读地作为一把额外兼容密钥参与解密（绝不写入）；文件缺失或不可解析时自动跳过。
+- **被放弃的 v1.5.7 盐文件不再导致凭据静默丢失** — v1.5.7 用 `.cd_secret_key.salt` 随机盐写入的密文仍可解出：该文件若仍存在，则只读地作为一把额外兼容密钥参与解密（不写入）；文件缺失或不可解析时自动跳过。
 
 ### CI / 工具链
 - **全量测试进 CI** — pytest 全量 + `--cov` 覆盖率，新增 `.coveragerc`；锁定 `ruff==0.16.5` / `pip-audit==2.10.1` / `pytest==9.1.1` / `pytest-cov==7.1.0`。
@@ -38,16 +65,16 @@
 - **供应链加固** — 5 个 workflow 的 `uses:` 由 `@vX` 全部钉到 commit SHA；`setup-python` 升级 v5→v6 消除 Node 20 弃用告警。
 
 ### 测试
-- 新增 `backend/tests/test_cd_deploy_gate.py`：断言 MySQL 迁移路径只下发 `ALTER TABLE`、绝不出现 `CREATE TABLE` / `CREATE INDEX`（`cd_sessions` 不再被建）；校验闸门清单与 `database/init_mysql.sql`、`database.py` 自动建表**双向一致**（清单漂移即红灯）；覆盖「只缺一张 → 未部署且精确报出该表」、`authenticate` / `verify_token` / `get_current_user` / 公开 Webhook 接收统一 503、未带 token 仍 401、以及连接故障不被误判成「未部署」。
+- 新增 `backend/tests/test_cd_deploy_gate.py`：断言 MySQL 迁移路径只下发 `ALTER TABLE`、不出现 `CREATE TABLE` / `CREATE INDEX`（`cd_sessions` 不再被建）；校验闸门清单与 `database/init_mysql.sql`、`database.py` 自动建表**双向一致**（清单漂移即红灯）；覆盖「只缺一张 → 未部署且精确报出该表」、`authenticate` / `verify_token` / `get_current_user` / 公开 Webhook 接收统一 503、未带 token 仍 401、以及连接故障不被误判成「未部署」。
 - `backend/tests/test_auth_login.py` 补部署闸门用例（未建全：不查锁/不计数/不验密并下发缺失表；已建全：正常放行），并修正原用例把 `db` 误传为 `response` 的调用签名。
-- `test_cd_deploy_gate.py` 增加「清单唯一真相源」用例组：SQLite 自动建表必须覆盖清单每一项（集合比较，不写死张数）、清单多了表却缺 SQLite DDL 时首次连库即 `RuntimeError`、运行期 `DROP TABLE` 后闸门立刻拒绝且**重启自愈**、以及补表提示按驱动区分（MySQL 给导入脚本 / SQLite 给重启，绝不给出错指令）；WebShell 503 用例同步断言 SQLite 分支不再出现 `init_mysql.sql`。
+- `test_cd_deploy_gate.py` 增加「清单唯一真相源」用例组：SQLite 自动建表必须覆盖清单每一项（集合比较，不写死张数）、清单多了表却缺 SQLite DDL 时首次连库即 `RuntimeError`、运行期 `DROP TABLE` 后闸门立刻拒绝且**重启自愈**、以及补表提示按驱动区分（MySQL 给导入脚本 / SQLite 给重启，不给出错指令）；WebShell 503 用例同步断言 SQLite 分支不再出现 `init_mysql.sql`。
 - **无 shell 包装 + 占位符 quote 回归** — 断言 SSH/Ansible/Compose 命令构建不包显式 shell 包装，且 `image/project/tag/path/inventory` 占位符一律 `shlex.quote`（含 `; rm -rf …` 的 project 被中性化）。
 - **`v_glue_deploy_logs` 契约测试** — 锁定 Glue 视图列，断言 SQLite 与 `init_mysql.sql` 暴露列完全一致。
 
 ## v1.5.6 (2026-10-05) — 供 Glue 只读的部署日志契约视图
 
 ### 新增功能
-- **`v_glue_deploy_logs` 契约视图** — 在 `cd_deploy_logs` 之上建只读视图，仅暴露审计列（`id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at`），供 Devops-Glue 渲染「部署日志」审计列表。刻意排除大字段（`output`、`stage_times`）与 CD 内部/运维列（`runner`、`heartbeat_at`、`duration_ms`、`lock_key`、`params_json`、`rollback_type`、`artifact_*`），保证 Glue 只依赖一份稳定、最小化的契约。MySQL 用 `CREATE OR REPLACE VIEW`；SQLite 启动时 `DROP VIEW IF EXISTS` + `CREATE VIEW` 自愈。
+- **`v_glue_deploy_logs` 契约视图** — 在 `cd_deploy_logs` 之上建只读视图，仅暴露审计列（`id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at`），供 Devops-Glue 渲染「部署日志」审计列表。排除大字段（`output`、`stage_times`）与 CD 内部/运维列（`runner`、`heartbeat_at`、`duration_ms`、`lock_key`、`params_json`、`rollback_type`、`artifact_*`），保证 Glue 只依赖一份稳定、最小化的契约。MySQL 用 `CREATE OR REPLACE VIEW`；SQLite 启动时 `DROP VIEW IF EXISTS` + `CREATE VIEW` 自愈。
 
 ## v1.5.5 (2026-10-03) — 部署核心加固
 
@@ -238,7 +265,7 @@
 - **Webhook Token 认证**：采用 URL 路径 `{token}` 方式（非 Header），方便 Jenkins 等工具直接 POST 无需复杂签名。Token 为 32 位随机字符串（`secrets.token_urlsafe(24)`），数据库唯一索引约束
 - **自动转发机制**：接收事件 → 持久化至 DB → 若 `bot_id>0` 则自动调用 Bot Webhook → 标记 `forwarded=1`。失败不阻塞事件持久化，管理员可从 UI 手动重试
 - **消息占位符**：Bot 模板支持 `{project}{tag}{image}{status}{built_at}{target}{mode}`，无模板时默认按字段名格式化，无法解析时回退到原始 JSON 输出
-- **数据归属**：CD 仅读取 CI 数据库表（`ci_pipeline_tags`、`ci_job_git_map`），绝不写入；“构建管理”走 HTTP API，“Tag 列表/部署流程”仍走直连 DB 读取——两层互不干扰
+- **数据归属**：CD 仅读取 CI 数据库表（`ci_pipeline_tags`、`ci_job_git_map`），不写入；“构建管理”走 HTTP API，“Tag 列表/部署流程”仍走直连 DB 读取——两层互不干扰
 - **`/api/info`**：完全公开，无鉴权依赖，方便监控系统和外部工具查询 CD 运行状态
 - **`error_key`**：异常携带国际化键，前端可根据 key 映射对应语言的错误提示
 

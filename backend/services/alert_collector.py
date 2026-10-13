@@ -1,4 +1,4 @@
-"""告警指标采集器 — 连接服务器采集 CPU/内存/磁盘/Docker/Pod/进程/自定义指标"""
+"""告警指标采集器 - 连接服务器采集 CPU/内存/磁盘/Docker/Pod/进程/自定义指标"""
 
 import logging
 from contextlib import suppress
@@ -12,7 +12,7 @@ logger = logging.getLogger("cd.alert")
 
 
 def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
-    """连接服务器，根据 resource_type 采集指标，返回超标项列表"""
+    """连接服务器,根据 resource_type 采集指标,返回超标项列表"""
     results: list[dict] = []
     resource_type = (rule.get("resource_type") or "").lower()
     threshold = rule.get("threshold", 80)
@@ -28,7 +28,7 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
         if resource_type in ("cpu", "memory", "disk"):
             info = _ssh_test(ssh)
             if resource_type == "cpu":
-                # 从 /proc/loadavg 取 1min 负载，除以核数算百分比
+                # 从 /proc/loadavg 取 1min 负载,除以核数算百分比
                 load_str = info.get("load", "")
                 cores_str = info.get("cpu_cores", "1")
                 try:
@@ -104,8 +104,8 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                         mem_val = float(mem_str)  # in Mi
                     except ValueError:
                         continue
-                    # k8s top 显示的是绝对值，需要和 request/limit 对比
-                    # 简化：cpu 按 mCore 判断 > threshold*10（100m=10% 1core），内存按 node 32Gi 估算
+                    # k8s top 显示的是绝对值,需要和 request/limit 对比
+                    # 简化:cpu 按 mCore 判断 > threshold*10(100m=10% 1core),内存按 node 32Gi 估算
                     if resource_type == "pod_cpu":
                         if cpu_val > threshold * 10:
                             results.append(
@@ -168,7 +168,7 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
         elif resource_type.startswith("custom_"):
             # ── 自定义监控项 ──
             # 新格式: custom_<monitor_id>_<metric_id>  (指定指标)
-            # 旧格式: custom_<monitor_id>              (兼容：取第一个指标/单值)
+            # 旧格式: custom_<monitor_id>              (兼容:取第一个指标/单值)
             parts = resource_type.split("_")
             try:
                 monitor_id = int(parts[1])
@@ -203,7 +203,7 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                 if val is None:
                     continue
 
-                # 如果指定了 metric_id，只取匹配的指标
+                # 如果指定了 metric_id,只取匹配的指标
                 if metric_id is not None:
                     matched = [m for m in metrics_list if m["id"] == metric_id]
                     if not matched or item["field_key"] != matched[0].get("field_key", ""):

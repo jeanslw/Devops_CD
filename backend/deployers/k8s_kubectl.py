@@ -1,4 +1,4 @@
-"""K8S kubectl 部署模式 — SSH 远程 kubectl apply + rollout restart"""
+"""K8S kubectl 部署模式 - SSH 远程 kubectl apply + rollout restart"""
 
 import logging
 import shlex
@@ -30,7 +30,7 @@ class KubectlDeployer(K8sSubDeployer):
     def stop(
         self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
     ) -> dict:
-        """停止：kubectl delete -f <yaml> 或 kubectl delete deployment"""
+        """停止:kubectl delete -f <yaml> 或 kubectl delete deployment"""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
         ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
@@ -49,13 +49,13 @@ class KubectlDeployer(K8sSubDeployer):
             return {"success": False, "output": "Stop service failed, please contact administrator"}
 
     def rollback(self, req, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
-        """原生回滚：kubectl rollout undo deployment/<name>（回退到上一版本）。"""
+        """原生回滚:kubectl rollout undo deployment/<name>(回退到上一版本)."""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
         ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
 
-        # 确定 deployment 名：优先读 YAML 声明的名字（与 deploy 同源），回退到项目短名
+        # 确定 deployment 名:优先读 YAML 声明的名字(与 deploy 同源),回退到项目短名
         yaml_content = ""
         if req.path and req.path.startswith("http"):
             try:
@@ -122,8 +122,8 @@ class KubectlDeployer(K8sSubDeployer):
         tag = req.tag
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
-        # ns_flag 延后构建：留空 k8s_ns 时需先解析 YAML 提取 manifest 声明的 namespace
-        # 作为执行/验证上下文（见 effective_ns），不能在这里就按空串拼 -n ''
+        # ns_flag 延后构建:留空 k8s_ns 时需先解析 YAML 提取 manifest 声明的 namespace
+        # 作为执行/验证上下文(见 effective_ns),不能在这里就按空串拼 -n ''
 
         yaml_content = ""
         ssh = None
@@ -142,7 +142,7 @@ class KubectlDeployer(K8sSubDeployer):
             yaml_content = r.text
             _log(callback, S("deploy_log.yaml_download_ok"))
 
-        # 单次 SSH 连接：读取（本地文件）、上传、部署全部共用
+        # 单次 SSH 连接:读取(本地文件),上传,部署全部共用
         ssh = ssh_connect(target, settings.ssh_timeout)
         try:
             if not req.path.startswith("http"):
@@ -154,12 +154,12 @@ class KubectlDeployer(K8sSubDeployer):
                     return {"success": False, "output": f"Remote YAML is empty or unreadable: {req.path}\n{err}"}
                 _log(callback, S("deploy_log.yaml_read_ok"))
 
-            # ── 先渲染再校验：渲染后 {IMAGE}:{TAG} 已替换，YAML 可被 safe_load 解析 ──
+            # ── 先渲染再校验:渲染后 {IMAGE}:{TAG} 已替换,YAML 可被 safe_load 解析 ──
             yaml_content = _render_k8s_yaml(yaml_content, image, tag)
 
-            # k8s_ns 是 CD 请求的执行上下文。kubectl 的 --namespace/-n 不会覆盖
-            # manifest 中显式声明的 metadata.namespace，因此如果两者冲突必须直接失败，
-            # 避免“实际部署到 A、验证却在 B”的假成功/假失败。
+            # k8s_ns 是 CD 请求的执行上下文.kubectl 的 --namespace/-n 不会覆盖
+            # manifest 中显式声明的 metadata.namespace,因此如果两者冲突必须直接失败,
+            # 避免"实际部署到 A,验证却在 B"的假成功/假失败.
             try:
                 docs = list(yaml.safe_load_all(yaml_content))
             except yaml.YAMLError as exc:
@@ -201,16 +201,16 @@ class KubectlDeployer(K8sSubDeployer):
                         ),
                     }
 
-            # 执行/验证统一使用的 namespace：请求填写优先；留空则以 YAML 声明为准
-            # （与 K8sDeployRequest.k8s_ns 契约一致）。apply 不带 -n 时按 manifest 落位，
-            # 若 rollout/pods 查询仍不带 -n 会落到 kubeconfig 默认 ns，
-            # 造成「apply 成功、验证/重启却查错 namespace」的假失败。
+            # 执行/验证统一使用的 namespace:请求填写优先;留空则以 YAML 声明为准
+            # (与 K8sDeployRequest.k8s_ns 契约一致).apply 不带 -n 时按 manifest 落位,
+            # 若 rollout/pods 查询仍不带 -n 会落到 kubeconfig 默认 ns,
+            # 造成"apply 成功,验证/重启却查错 namespace"的假失败.
             effective_ns = namespace or manifest_ns
             ns_flag = f" -n {shlex.quote(effective_ns)}" if effective_ns else ""
 
             yaml_deploy_name = _get_deployment_name(yaml_content)
             if yaml_deploy_name and yaml_deploy_name != filter_name:
-                # 前端预检弹窗已确认，这里只打警告不拦截
+                # 前端预检弹窗已确认,这里只打警告不拦截
                 _log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=yaml_deploy_name, project=filter_name))
             tmp = f"/tmp/k8s-{filter_name}.yaml"  # nosec
 
@@ -235,7 +235,7 @@ class KubectlDeployer(K8sSubDeployer):
             is_first_deploy = False
             if not before.strip():
                 if name_mismatch:
-                    # 名字不匹配时 YAML Deployment 是新的，视为首次部署
+                    # 名字不匹配时 YAML Deployment 是新的,视为首次部署
                     is_first_deploy = True
                     _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
                 else:
@@ -265,7 +265,7 @@ class KubectlDeployer(K8sSubDeployer):
             for i, c in enumerate(cmds):
                 check_cancelled()
                 _log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
-                # kubectl apply 幂等，可安全重试；rollout restart 失败按原逻辑直接判败
+                # kubectl apply 幂等,可安全重试;rollout restart 失败按原逻辑直接判败
                 if i == 0:
                     o, e, ec = retry_idempotent(
                         lambda: _exec_exit(ssh, c),
@@ -301,7 +301,7 @@ class KubectlDeployer(K8sSubDeployer):
             if rollout_err:
                 _log(callback, rollout_err)
 
-            # ── 部署后：查当前 Pod，排除旧 Pod ──
+            # ── 部署后:查当前 Pod,排除旧 Pod ──
             _log(callback, S("deploy_log.after_version"))
             all_after = _kubectl_pods(ssh, deploy_name, effective_ns)
             if all_after.strip():
@@ -313,7 +313,7 @@ class KubectlDeployer(K8sSubDeployer):
                 after = all_after
             _log(callback, after)
 
-            # ── 成败判断：rollout status exit code ──
+            # ── 成败判断:rollout status exit code ──
             is_ok = rollout_ec == 0
             if is_ok:
                 running_count = sum(1 for line in after.split("\n") if "Running" in line)

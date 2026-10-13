@@ -1,4 +1,4 @@
-"""资源监控路由 — 统一 K8S / Docker / SSH 服务器资源查看"""
+"""资源监控路由 - 统一 K8S / Docker / SSH 服务器资源查看"""
 
 import logging
 import shlex
@@ -36,7 +36,7 @@ def list_monitor_servers(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.resource-monitor")),
 ):
-    """返回所有服务器的监控状态（按类型区分）"""
+    """返回所有服务器的监控状态(按类型区分)"""
     if not settings.monitoring_enabled:
         return {"enabled": False, "servers": []}
 
@@ -64,7 +64,7 @@ def list_monitor_servers(
             srv_type = (srv.get("type") or "").lower()
             tag_list = [t.strip().lower() for t in (srv.get("tags") or "").split(",") if t.strip()]
 
-            # type 优先；type 不明确时才用 tags 推断
+            # type 优先;type 不明确时才用 tags 推断
             if srv_type in ("k8s", "argocd", "fluxcd"):
                 is_k8s, is_docker = True, False
             elif srv_type == "docker":
@@ -354,7 +354,7 @@ def get_docker_containers(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.monitor.app")),
 ):
-    """获取 Docker 服务器容器资源占用（仅容器，系统资源走 /system）"""
+    """获取 Docker 服务器容器资源占用(仅容器,系统资源走 /system)"""
     if not settings.monitoring_enabled:
         raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 
@@ -407,7 +407,7 @@ def get_docker_containers(
             ssh.close()
 
 
-# ── 系统资源（通用：K8S / Docker / SSH 都可用）──
+# ── 系统资源(通用:K8S / Docker / SSH 都可用)──
 
 
 @router.get("/system/{server_id}")
@@ -416,7 +416,7 @@ def get_system_info(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.monitor.system")),
 ):
-    """获取服务器系统资源：CPU、内存、磁盘、负载、进程 Top5（所有类型通用）"""
+    """获取服务器系统资源:CPU,内存,磁盘,负载,进程 Top5(所有类型通用)"""
     if not settings.monitoring_enabled:
         raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
 

@@ -1,4 +1,4 @@
-"""部署编排服务 — 查映射 → 选策略 → 执行 → 记日志 → 通知"""
+"""部署编排服务 - 查映射 → 选策略 → 执行 → 记日志 → 通知"""
 
 import json
 import logging
@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_server_ids(server_ids: str) -> list[int]:
-    """安全地解析 server_ids，忽略空值和非法内容。"""
+    """安全地解析 server_ids,忽略空值和非法内容."""
     return [int(s) for s in (server_ids or "").split(",") if s.strip().isdigit()]
 
 
 def _parse_command_options(commands: str) -> dict:
-    """解析命令字符串中的 |INV| 标记。
+    """解析命令字符串中的 |INV| 标记.
 
     格式: <commands>[|INV|<inventory>]
     """
@@ -53,7 +53,7 @@ def _parse_command_options(commands: str) -> dict:
 
 
 class DeployService:
-    """部署编排：整合 CI 查询 + Deployer 执行 + 日志记录 + 通知"""
+    """部署编排:整合 CI 查询 + Deployer 执行 + 日志记录 + 通知"""
 
     def __init__(self, db: Database):
         self._db = db
@@ -69,9 +69,9 @@ class DeployService:
                 placeholders = ",".join("?" * len(ids))
                 rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()  # nosec
             else:
-                # server_ids 为空 = 部署到全部可用服务器；K8S 集群（type=k8s/argocd/fluxcd）
-                # 只能走 /api/deploy-k8s（cluster_id 指定），不属于本 SSH/Compose 路线，
-                # 须过滤掉，否则空选择会误把 K8S 集群当 SSH/Compose 目标导致签名错位。
+                # server_ids 为空 = 部署到全部可用服务器;K8S 集群(type=k8s/argocd/fluxcd)
+                # 只能走 /api/deploy-k8s(cluster_id 指定),不属于本 SSH/Compose 路线,
+                # 须过滤掉,否则空选择会误把 K8S 集群当 SSH/Compose 目标导致签名错位.
                 rows = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name").fetchall()
 
             return [
@@ -89,7 +89,7 @@ class DeployService:
             ]
 
     def _build_target_str(self, results: list, is_batch: bool, total: int) -> str:
-        """批量时合并 target 描述，单台时返回单条描述。"""
+        """批量时合并 target 描述,单台时返回单条描述."""
         if is_batch:
             return ", ".join(f"[{i + 1}/{total}] #{r['server_id']} {r['host']}" for i, r in enumerate(results))
         if not results:
@@ -98,7 +98,7 @@ class DeployService:
         return f"#{r['server_id']} {r['host']}"
 
     def _build_output(self, results: list, is_batch: bool, total: int) -> str:
-        """合并部署输出，批量时加服务器分隔线。"""
+        """合并部署输出,批量时加服务器分隔线."""
         if is_batch:
             parts = []
             for i, r in enumerate(results):
@@ -132,22 +132,22 @@ class DeployService:
         user: dict | None = None,
         approval_id: int = 0,
     ) -> dict:
-        """批量部署到一台或多台服务器。
-        user 参数：当前登录用户信息 dict（含 role / permissions / username），
-                 用于部署前的二次权限校验与审计日志 triggered_by 字段，
-                 传入 None 时跳过校验（仅限内部可信调用）。
-        v1.3.1 起：部署开始插入 running 记录（并发锁 + 取消依据），结束时更新
-                 状态 / 耗时 / 分阶段耗时 / 说明。"""
-        # K8S 子模式必须走 _deploy_k8s_core，禁止走 SSH/Compose 路线（API 签名不兼容）
+        """批量部署到一台或多台服务器.
+        user 参数:当前登录用户信息 dict(含 role / permissions / username),
+                 用于部署前的二次权限校验与审计日志 triggered_by 字段,
+                 传入 None 时跳过校验(仅限内部可信调用).
+        v1.3.1 起:部署开始插入 running 记录(并发锁 + 取消依据),结束时更新
+                 状态 / 耗时 / 分阶段耗时 / 说明."""
+        # K8S 子模式必须走 _deploy_k8s_core,禁止走 SSH/Compose 路线(API 签名不兼容)
         if deploy_type.startswith("k8s/"):
             raise ValueError(
                 f"部署类型 '{deploy_type}' 不属于 SSH/Compose 路线，"
                 "请使用 DeployService 之外的 K8S 专用流程（routers/k8s_deploy._deploy_k8s_core）"
             )
-        # ── 部署时二次权限校验（防御深度）──
+        # ── 部署时二次权限校验(防御深度)──
         if user is not None:
             enforce_deploy_perm(user, deploy_type)
-        # ── tag 白名单校验（必须在任何 SSH 命令拼接之前；非法 tag 直接拒绝）──
+        # ── tag 白名单校验(必须在任何 SSH 命令拼接之前;非法 tag 直接拒绝)──
         validate_tag(tag)
         triggered_by = (user or {}).get("username", "")
 
@@ -158,7 +158,7 @@ class DeployService:
         image = f"{settings.harbor_registry}/{harbor_repo}:{tag}"
         project_key = self._ci.resolve_project_key(project) or project
 
-        # ── 并发锁：同一项目同时只允许一个进行中部署 ──
+        # ── 并发锁:同一项目同时只允许一个进行中部署 ──
         running = find_running_deploy(self._db, project_key)
         if running:
             raise ValidationError(
@@ -187,7 +187,7 @@ class DeployService:
 
         deployer = deployer_registry.create(deploy_type)
 
-        # ── 参数快照（含 deploy_type 路由判别），供回滚重放 ──
+        # ── 参数快照(含 deploy_type 路由判别),供回滚重放 ──
         params_json = json.dumps(
             {
                 "deploy_type": deploy_type,
@@ -211,7 +211,7 @@ class DeployService:
         )
 
         # ── 领取/插入部署记录 + 注册取消信号 ──
-        # 经审批单执行：复用申请阶段的 pending 记录（v1.5.3 前的旧已批准单无记录时回退新建）
+        # 经审批单执行:复用申请阶段的 pending 记录(v1.5.3 前的旧已批准单无记录时回退新建)
         try:
             deploy_id = claim_pending_deploy_record(self._db, project=project_key, approval_id=approval_id)
             if not deploy_id:
@@ -228,7 +228,7 @@ class DeployService:
                     approval_id=approval_id,
                 )
         except ValueError as e:
-            # 唯一索引冲突（同项目已有 running）= busy，包装为与 K8S 路径一致的语义异常
+            # 唯一索引冲突(同项目已有 running)= busy,包装为与 K8S 路径一致的语义异常
             raise ValidationError(str(e), error_key="errors.deploy_busy") from e
         deploy_run_manager.register(deploy_id)
         set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
@@ -392,11 +392,11 @@ class DeployService:
             clear_cancel_checker()
 
     def list_logs(self, project: str = "", page: int = 1, page_size: int = 15) -> dict:
-        """查询部署记录（分页）。
+        """查询部署记录(分页).
 
-        列表页只取渲染所需列，剔除 params_json（完整请求快照）/ stage_times（阶段耗时 JSON）
-        两个大字段：前端日志页不消费它们（回滚重放由 rollback_service 直接查库），
-        避免每页把 15 行的快照/耗时 JSON 无谓传给浏览器（日志瘦身/截断）。
+        列表页只取渲染所需列,剔除 params_json(完整请求快照)/ stage_times(阶段耗时 JSON)
+        两个大字段:前端日志页不消费它们(回滚重放由 rollback_service 直接查库),
+        避免每页把 15 行的快照/耗时 JSON 无谓传给浏览器(日志瘦身/截断).
         """
         page = max(page, 1)
         page_size = max(min(page_size, 100), 1)
@@ -423,7 +423,7 @@ class DeployService:
                     (page_size, offset),
                 ).fetchall()
             items = [dict(r) for r in rows]
-            # 批量挂载审批信息（approval_id>0 的记录），避免 N+1
+            # 批量挂载审批信息(approval_id>0 的记录),避免 N+1
             approval_ids = list({r["approval_id"] for r in items if r.get("approval_id")})
             if approval_ids:
                 ph = ",".join("?" * len(approval_ids))
@@ -431,7 +431,7 @@ class DeployService:
                     f"SELECT id, approver, approved_at, status FROM cd_approvals WHERE id IN ({ph})",  # nosec
                     approval_ids,
                 ).fetchall()
-                # 带 status：前端日志页审批徽章按状态渲染（已批准/待审批/已撤销/已驳回）
+                # 带 status:前端日志页审批徽章按状态渲染(已批准/待审批/已撤销/已驳回)
                 amap = {
                     r["id"]: {
                         "approver": r.get("approver", ""),

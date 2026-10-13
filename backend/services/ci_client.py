@@ -1,4 +1,4 @@
-"""CI HTTP 客户端 — 对照 CI OpenAPI (/api/openapi.json) 实现"""
+"""CI HTTP 客户端 - 对照 CI OpenAPI (/api/openapi.json) 实现"""
 
 import logging
 import threading
@@ -11,7 +11,7 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger("ci_client")
 
-# ── CI API 路径（来源：CI 的 /api/openapi.json）──
+# ── CI API 路径(来源:CI 的 /api/openapi.json)──
 API = {
     "login": "/api/admin/login",  # POST {user, password} → {token}
     "projects": "/api/build/jobs/list",  # GET → [{job_name, ci_provider, project_id, current_path}]
@@ -19,22 +19,22 @@ API = {
     "projects_full": "/api/build/projects",  # GET → [{job_name, ..., latest_tag, latest_pipeline, tag_time}]
     "tags": "/api/build/{path}/tags",  # GET → {items, total, page, page_size, total_pages}
     "trigger": "/api/build/{path}/trigger",  # POST {ref, variables} → trigger result
-    "log": "/api/build/{path}/logs/{id}",  # GET → text/plain（id=job id）
-    "pipeline_log": "/api/build/{path}/pipelines/{id}/logs",  # GET → text/plain（Gitea 专属：id=run id）
+    "log": "/api/build/{path}/logs/{id}",  # GET → text/plain(id=job id)
+    "pipeline_log": "/api/build/{path}/pipelines/{id}/logs",  # GET → text/plain(Gitea 专属:id=run id)
     "variables": "/api/build/{path}/variables",  # GET → {key: options}
     "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
-    "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline（仅 GitLab CI）
-    "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline（仅 GitLab CI）
-    "rbac_users": "/api/rbac/users",  # GET 用户列表（账号写操作在 CI 侧完成）
+    "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline(仅 GitLab CI)
+    "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline(仅 GitLab CI)
+    "rbac_users": "/api/rbac/users",  # GET 用户列表(账号写操作在 CI 侧完成)
     "rbac_roles": "/api/rbac/roles",  # GET 角色目录 → {roles: [{name, description}]}
 }
 
 
 class CiClientError(Exception):
-    """CI API 调用异常。
+    """CI API 调用异常.
 
-    status_code:   上游 HTTP 状态码（写接口错误映射用，如 400/403/404/409；读接口为 None）
-    remote_message: 上游 jsonError 返回的 message（已翻译，仅诊断，非稳定标识）
+    status_code:   上游 HTTP 状态码(写接口错误映射用,如 400/403/404/409;读接口为 None)
+    remote_message: 上游 jsonError 返回的 message(已翻译,仅诊断,非稳定标识)
     """
 
     def __init__(self, message: str, status_code: int | None = None, remote_message: str | None = None):
@@ -44,12 +44,12 @@ class CiClientError(Exception):
 
 
 class CiClient:
-    """CI HTTP 客户端，线程安全。
+    """CI HTTP 客户端,线程安全.
 
-    两种认证模式：
-      - API token 模式（推荐）：构造时传入 `token`（dg_ 前缀），直接作为 Bearer token 使用，
-        不登录、不刷新，token 由 CI 管理界面的「API 管理」创建，适合服务账号 / 第三方。
-      - 账号模式（回退）：未传 token 时用 username/password 登录，自动管理 24h 登录 token。
+    两种认证模式:
+      - API token 模式(推荐):构造时传入 `token`(dg_ 前缀),直接作为 Bearer token 使用,
+        不登录,不刷新,token 由 CI 管理界面的'API 管理'创建,适合服务账号 / 第三方.
+      - 账号模式(回退):未传 token 时用 username/password 登录,自动管理 24h 登录 token.
     """
 
     def __init__(
@@ -64,7 +64,7 @@ class CiClient:
         self._username = username
         self._password = password
         self._timeout = timeout
-        # API token 模式：token 已在构造时确定，无需登录/刷新
+        # API token 模式:token 已在构造时确定,无需登录/刷新
         self._token: str | None = token or None
         self._static_token: bool = bool(token)
         self._token_expiry: float = 0
@@ -75,10 +75,10 @@ class CiClient:
         self._session.mount("http://", HTTPAdapter(max_retries=retry))
         self._session.mount("https://", HTTPAdapter(max_retries=retry))
 
-    # ── URL 构造（处理含 / 的 path 参数）──
+    # ── URL 构造(处理含 / 的 path 参数)──
 
     def _url(self, template: str, **kwargs) -> str:
-        """构造完整 URL — 直接替换，不二次编码（前端/上游已 encodeURIComponent）"""
+        """构造完整 URL - 直接替换,不二次编码(前端/上游已 encodeURIComponent)"""
         for k, v in kwargs.items():
             template = template.replace(f"{{{k}}}", str(v))
         return f"{self._base}{template}"
@@ -86,7 +86,7 @@ class CiClient:
     # ── 认证 ──
 
     def _login(self) -> str:
-        """POST /api/admin/login — CI 使用 user 字段（非 username）"""
+        """POST /api/admin/login - CI 使用 user 字段(非 username)"""
         resp = self._session.post(
             self._url(API["login"]),
             json={"user": self._username, "password": self._password},
@@ -100,10 +100,10 @@ class CiClient:
         return token
 
     def _ensure_token(self):
-        """确保有有效 token。
+        """确保有有效 token.
 
-        API token 模式：token 固定，直接返回。
-        账号模式：过期前 60 秒自动刷新。
+        API token 模式:token 固定,直接返回.
+        账号模式:过期前 60 秒自动刷新.
         """
         if self._static_token:
             return
@@ -153,7 +153,7 @@ class CiClient:
 
     @staticmethod
     def _extract_error_message(resp) -> str | None:
-        """从错误响应体提取 message（CI jsonError 返回 {code, message}）。"""
+        """从错误响应体提取 message(CI jsonError 返回 {code, message})."""
         if resp is None:
             return None
         try:
@@ -182,14 +182,14 @@ class CiClient:
         return {"Authorization": f"Bearer {self._token}"}
 
     def _force_relogin(self):
-        # API token 模式无账号可重登：401 即 token 失效（撤销/过期），直接报错
+        # API token 模式无账号可重登:401 即 token 失效(撤销/过期),直接报错
         if self._static_token:
             raise CiClientError("CI API token 无效（已撤销或过期），请在 CI「API 管理」重新生成")
         with self._lock:
             self._token = None
         self._ensure_token()
 
-    # ── 业务方法（一一对应 CI OpenAPI）──
+    # ── 业务方法(一一对应 CI OpenAPI)──
 
     def list_projects(self) -> Any:
         """GET /api/build/jobs/list?format=json → [{job_name, ci_provider, project_id, current_path}]"""
@@ -225,18 +225,18 @@ class CiClient:
         return result
 
     def trigger_build(self, project: str, ref: str, variables: dict | None = None) -> Any:
-        """POST /api/build/{path}/trigger — body: {ref, variables}"""
+        """POST /api/build/{path}/trigger - body: {ref, variables}"""
         body: dict[str, Any] = {"ref": ref}
         if variables:
             body["variables"] = variables
         return self._post(self._url(API["trigger"], path=project), body)
 
     def get_build_log(self, project: str, build_id: int | str) -> str:
-        """GET /api/build/{path}/logs/{id} → text/plain（id=job id）"""
+        """GET /api/build/{path}/logs/{id} → text/plain(id=job id)"""
         return self._get_text(self._url(API["log"], path=project, id=build_id))
 
     def get_pipeline_log(self, project: str, run_id: int | str) -> str:
-        """GET /api/build/{path}/pipelines/{id}/logs → text/plain（Gitea 专属：id=run id → 全部 job 日志拼接）"""
+        """GET /api/build/{path}/pipelines/{id}/logs → text/plain(Gitea 专属:id=run id → 全部 job 日志拼接)"""
         return self._get_text(self._url(API["pipeline_log"], path=project, id=run_id))
 
     def get_variables(self, project: str) -> Any:
@@ -247,24 +247,24 @@ class CiClient:
         return result
 
     def get_branches(self, project: str) -> Any:
-        """GET /api/build/{path}/branches → ["main", "master", ...]"""
+        """GET /api/build/{path}/branches → ['main', 'master', ...]"""
         result = self._get(self._url(API["branches"], path=project))
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result
 
     def retry_pipeline(self, project: str, build_id: int | str) -> Any:
-        """POST /api/build/{path}/pipelines/{id}/retry — 重试 Pipeline（仅 GitLab CI）"""
+        """POST /api/build/{path}/pipelines/{id}/retry - 重试 Pipeline(仅 GitLab CI)"""
         return self._post(self._url(API["retry"], path=project, id=build_id), {})
 
     def cancel_pipeline(self, project: str, build_id: int | str) -> Any:
-        """POST /api/build/{path}/pipelines/{id}/cancel — 取消 Pipeline（仅 GitLab CI）"""
+        """POST /api/build/{path}/pipelines/{id}/cancel - 取消 Pipeline(仅 GitLab CI)"""
         return self._post(self._url(API["cancel"], path=project, id=build_id), {})
 
-    # ── RBAC 只读接口（账号写操作统一在 CI 侧管理，CD 不代理）──
+    # ── RBAC 只读接口(账号写操作统一在 CI 侧管理,CD 不代理)──
 
     def list_users(self) -> list[dict]:
-        """GET /api/rbac/users → {"users": [{username, role, systems, status}]}（无 password_hash）"""
+        """GET /api/rbac/users → {'users': [{username, role, systems, status}]}(无 password_hash)"""
         result = self._get(self._url(API["rbac_users"]))
         if isinstance(result, dict):
             users = result.get("users")
@@ -272,7 +272,7 @@ class CiClient:
         return result if isinstance(result, list) else []
 
     def list_roles(self) -> list[dict]:
-        """GET /api/rbac/roles → {"roles": [{name, description}]}"""
+        """GET /api/rbac/roles → {'roles': [{name, description}]}"""
         result = self._get(self._url(API["rbac_roles"]))
         if isinstance(result, dict):
             roles = result.get("roles")
@@ -297,7 +297,7 @@ def get_ci_client() -> CiClient:
 
         if not settings.ci_api_url:
             raise CiClientError("CI_API_URL 未配置，请在 .env 中设置")
-        # 优先 API token；未配置时回退账号密码登录
+        # 优先 API token;未配置时回退账号密码登录
         _client_instance = CiClient(
             base_url=settings.ci_api_url,
             username=settings.ci_admin_user,

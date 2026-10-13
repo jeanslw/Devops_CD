@@ -15,7 +15,6 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 
 ✅ 一套 API, 多 Git 平台 + 多 CI 通道 + Harbor → 全搞定
 ✅ SQLite 零配置启动, MySQL (推荐)
-✅ 10 年运维老兵的实战结晶
 ✅ 从 CI 构建到 CD 部署, 全流程覆盖
 
 **不是大厂的遥控器，是小团队的瑞士军刀。**
@@ -35,7 +34,7 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 - **数据库**：无独立数据库，完全跟随 Devops-Glue API 的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+
 - **端口**：8081
 - **版本**：v1.5.7（Changelog / v1.5.7 tag 2026-10-08 更新）
-- **认证**：与 Devops-Glue API 共享数据库，不透明会话 token（HttpOnly cookie / Bearer 头，logout 可即时吊销），密码哈希自动识别（bcrypt / argon2id），不可单独使用
+- **认证**：默认 Devops-Glue 单点登录（OIDC，`AUTH_MODE=oidc`）；本地密码登录保留为回退档（`AUTH_MODE=local`，与 Glue 共享 admin_users / roles 表）。会话为不透明 token（HttpOnly cookie / Bearer 头，logout 可即时吊销），密码哈希自动识别（bcrypt / argon2id），不可单独使用
 <details>
 ## <summary>快速开始</summary>
 
@@ -59,6 +58,8 @@ cp .env.example .env
 # SECRET_KEY：裸机可留空（自动生成 .cd_secret_key）；docker compose 必填（只读容器写不出密钥文件），
 #            用 openssl rand -base64 32（见 docs/ADMIN_MANUAL_ZH.md）
 # 业务参数（超时 / 缓存 TTL / 间隔 / 监控开关等）在 config/app.env，已带合理默认值，一般不用改
+# 认证：默认 Devops-Glue 单点登录（AUTH_MODE=oidc）⇒ 需在 .env 配置 OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI；
+# 暂不具备条件时把 AUTH_MODE=local 写进 .env 覆盖
 
 python main.py
 # 访问 http://localhost:8081

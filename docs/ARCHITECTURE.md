@@ -52,7 +52,7 @@
 		┌─────────────────────────────────────────────┐
 		│ Shared Database (SQLite / MySQL / MariaDB)  │
 		│                                             │
-		│  ci_pipeline_artifacts ← CI write / CD read │
+		│  ci_pipeline_artifacts ← CI write           │
 		│  v_glue_deploy_logs    ← CI read-only view  │
 		│  cd_servers            ←  CD maintain       │
 		│  cd_deploy_logs        ← CD write           │
@@ -95,26 +95,36 @@
 - **Factory Pattern**: `GitProviderFactory` auto-matches Git platform adapter by URL
 - **Dual-driver Database**: SQLite / MySQL / MariaDB unified interface, one codebase for three modes, sharing the same database instance with PHP API
 
-## CD Table Inventory (Deployment Gate)
+## CD Table Inventory (Integrated-Service Switch × Deployment Gate)
 
-Whether CD is enabled is decided solely by the single inventory `backend/database.py::CD_REQUIRED_TABLES` (independent of how many tables it holds): as soon as **every** listed table exists, CD counts as deployed; if even one is missing, CD counts as not deployed — login, every request carrying a session, the public webhook receiver and the WebShell handshake all return 503 `errors.cd_not_deployed`, and the app only reports, it **never creates tables**. That inventory is the watershed between "CD enabled" and "CD not deployed".
+Whether "CD is enabled" is decided by **Devops-Glue's integration-service contract table `integrated_services`** (CI is the only writer): the `enabled` and `provision` values on the `service_name='cd'` row are the switches, and CD only reads them (`Database.cd_integration_state()`) instead of guessing from "does the table exist".
 
-**Adding or removing a CD table touches only three places** (gate verdict, error texts, startup warning and counts all follow automatically — nothing is hard-coded):
+| Contract row state | What CD does | Gate |
+|--------------------|--------------|------|
+| table / row missing, or `enabled<>1` | zero DDL | 503 `errors.cd_not_enabled` (enable it in the CI console under "Integrated Services") |
+| `enabled=1` + `provision='auto'` | on first connect: create every listed table + add missing columns + indexes + the contract view (MySQL and SQLite alike) | incomplete => 503 `errors.cd_not_deployed` (restart CD to self-heal) |
+| `enabled=1` + `provision='manual'` | zero DDL (schema owned by the DBA: MySQL imports `database/init_mysql.sql`) | missing table => 503 `errors.cd_not_deployed` (import the DDL script) |
+
+Disabling the integration service only freezes admission: the CD tables and their data stay as they are — never `DROP`ped. The gate covers login, every request carrying a session, the public webhook receiver and the WebShell handshake.
+
+**Adding or removing a CD table touches four places** (gate verdict, error texts, startup warning and counts all follow automatically — nothing is hard-coded):
 
 | # | Location | Notes |
 |---|----------|-------|
 | 1 | `backend/database.py::CD_REQUIRED_TABLES` | The single inventory; its order is the order shown in error messages |
-| 2 | `database/init_mysql.sql` | MySQL DDL (the only way to enable CD in production; idempotent, safe to re-run) |
-| 3 | `backend/database.py::_ensure_cd_tables` | SQLite auto-create; ends with an **inventory self-check** that fails the first connection if the DDL was not updated |
+| 2 | `database/init_mysql.sql` | DDL for `manual` mode (idempotent, safe to re-run) |
+| 3 | `backend/database.py::_MYSQL_TABLE_DDL` (with `_MYSQL_INDEXES` / `_MYSQL_COLUMN_MIGRATIONS`) | MySQL auto-create for `auto` mode: `.dockerignore` excludes `database/`, so the ops script never reaches the image and the DDL must be embedded |
+| 4 | `backend/database.py::_ensure_cd_tables` | SQLite auto-create for `auto` mode; ends with an **inventory self-check** that fails the first connection if the DDL was not updated |
 
-Inventory drift is guarded three ways: `backend/tests/test_cd_deploy_gate.py` cross-checks 1↔2 in both directions and asserts set coverage for 1↔3 (using `len(inventory)`, never a hard-coded count), with the runtime self-check in `_ensure_cd_tables` as the last line of defence.
+Inventory drift is guarded four ways: `backend/tests/test_cd_schema_sources.py` locks table sets, per-table columns and indexes across 1↔2↔3↔4 (reflecting the real SQLite DDL), `backend/tests/test_cd_deploy_gate.py` locks the runtime behaviour (three contract states × two drivers), and the inventory self-check inside `_ensure_mysql_tables` / `_ensure_cd_tables` is the last line of defence.
 
-**How the two drivers differ**:
+**How the modes and drivers differ**:
 
-- **MySQL**: tables come only from the administrator importing `database/init_mysql.sql`; the app issues zero DDL (only idempotent ADD COLUMN migrations on **existing** tables). Incomplete ⇒ gate 503 pointing at the import script.
-- **SQLite**: tables are created automatically with the DB file, so development is frictionless; if one is manually `DROP TABLE`d at runtime the gate immediately answers 503 (no silent repair) and **restarting the service re-creates them and heals it**; the message gives the driver-correct action (`cd_deploy_hint()` reads `Database.driver`), so nobody is sent to the wrong fix.
+- **`auto`**: CD creates its tables on first connect (MySQL from the embedded `_MYSQL_TABLE_DDL`, SQLite via `_ensure_cd_tables`) and adds missing columns to existing tables; when tables are incomplete the gate answers 503 and tells you to restart CD.
+- **`manual`**: CD issues zero DDL (not even ALTER); MySQL is imported by an administrator from `database/init_mysql.sql`, SQLite is completed by an operator (or CI is switched back to auto-migrate and CD re-enabled).
+- **Hints tell the truth per `provision`**: `cd_deploy_hint(driver, provision)` and `cd_not_enabled_hint()` (see `backend/database.py`) are the only outlets, so operators are never sent to the wrong fix. For "not enabled" the **user-visible notice is a single sentence** (the `errors.cd_not_enabled` i18n string — login box and toast share one path, `error_key` → i18n: neither appends extra text, both follow the UI language) — the action detail travels in `detail.hint` and the startup log.
 
-- **Database unavailable ≠ not deployed**: cannot connect, cannot create tables (DB file read-only / disk full / locked), cannot get a connection ⇒ `DatabaseUnavailableError` ⇒ 503 `errors.db_unavailable` (`driver` / `reason` travel in `error_params`; check connectivity, configuration, permissions, disk). Only an incomplete inventory yields `errors.cd_not_deployed` (go complete the tables). Both are 503 but with different error keys and different actions — mixing them points operators the wrong way.
+- **Database unavailable ≠ not enabled / not deployed**: cannot connect, cannot create tables (DB file read-only / disk full / locked), cannot get a connection => `DatabaseUnavailableError` => 503 `errors.db_unavailable` (`driver` / `reason` travel in `error_params`; check connectivity, configuration, permissions, disk). Only "not enabled" is `errors.cd_not_enabled` (go flip the switch) and only an incomplete inventory is `errors.cd_not_deployed` (go complete the tables). All are 503 but with different error keys and different actions — mixing them points operators the wrong way.
 
 ## Problem Statement
 

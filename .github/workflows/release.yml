@@ -45,7 +45,7 @@ jobs:
               body = "⚠️ CHANGELOG.md not found"
           else:
               out, found = [], False
-              # 兼容标题格式：## v0.0.0 ... 与 ## [v0.0.0] ...
+              # 兼容标题格式:## v0.0.0 ... 与 ## [v0.0.0] ...
               heading_re = re.compile(r"^##\s+\[?(?:v?)(\d+\.\d+\.\d+)\]?")
               lines = changelog.read_text(encoding="utf-8-sig").splitlines()
               for line in lines:
@@ -87,7 +87,7 @@ jobs:
             TARGET="$(gh release view "$VERSION" --json targetCommitish --jq .targetCommitish)"
             echo "Existing release ${VERSION} (target=${TARGET}, HEAD=${HEAD_SHA})"
             if [ "$TARGET" != "$HEAD_SHA" ]; then
-              # 旧 release 指向过期 commit（如 tag 被 force-push / 重建后残留）
+              # 旧 release 指向过期 commit(如 tag 被 force-push / 重建后残留)
               echo "Target mismatch -> deleting stale release and recreating"
               gh release delete "$VERSION" --yes
               for i in $(seq 1 30); do
@@ -97,7 +97,7 @@ jobs:
               done
               create_release
             else
-              # 同 commit：更新 title/body，并确保最终为正式发布（非 draft）
+              # 同 commit:更新 title/body,并确保最终为正式发布(非 draft)
               echo "Updating release ${VERSION} and ensuring it is published"
               gh release edit "$VERSION" --title "$TITLE" --notes-file "$NOTES" --draft=false $PRERELEASE_FLAG
             fi
@@ -105,7 +105,7 @@ jobs:
             create_release
           fi
 
-          # 最终校验：确认 release 已正式发布
+          # 最终校验:确认 release 已正式发布
           if ! gh release view "$VERSION" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^false$'; then
             echo "::error::Release ${VERSION} is still not published"
             exit 1

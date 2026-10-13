@@ -30,7 +30,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Database**：No standalone database — shares the same database instance as Devops-Glue API (SQLite / MySQL 8.0+ / MariaDB 10.4+)
 - **Port**：8081
 - **Version**：v1.5.7 (Changelog v1.5.7 updated 2026-10-08)
-- **Authentication**：Shared database with Devops-Glue API; opaque session tokens (HttpOnly cookie / Bearer header, server-side revocable via logout), bcrypt / argon2id password hashes auto-detected. Cannot be used independently.
+- **Authentication**: Devops-Glue single sign-on (OIDC, `AUTH_MODE=oidc`) by default; local password login is kept as the rollback track (`AUTH_MODE=local`, sharing admin_users / roles with Glue). Opaque session tokens (HttpOnly cookie / Bearer header, revocable server-side on logout), bcrypt / argon2id password hashes auto-detected. Cannot be used independently.
 <details>
 ## <summary> Quick Start (click to expand)</summary>
 
@@ -54,6 +54,8 @@ cp .env.example .env
 # SECRET_KEY: bare-metal may leave it empty (auto-generates .cd_secret_key); docker compose REQUIRES it
 # (read-only container cannot write the key file) — openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
 # Application parameters (timeouts / cache TTLs / intervals / monitoring switch) live in config/app.env with sane defaults
+# Authentication: Devops-Glue single sign-on (AUTH_MODE=oidc) is the default => set OIDC_ISSUER / CD_OIDC_SECRET /
+# CD_OIDC_REDIRECT_URI in .env ; put AUTH_MODE=local in .env to keep password login for now
 
 python main.py
 # Open http://localhost:8081

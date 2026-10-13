@@ -85,7 +85,6 @@ CREATE TABLE IF NOT EXISTS cd_registry_artifacts (
 
 -- ============================================================================
 -- 索引（幂等创建，避免重复执行报错）
--- CI 相关表（ci_pipeline_artifacts / ci_job_git_map）由 PHP API 管理，仅在该表已存在时建索引
 -- 使用 INFORMATION_SCHEMA 检查实现跨引擎幂等（MySQL 不支持 CREATE INDEX IF NOT EXISTS）
 -- ============================================================================
 DELIMITER $$
@@ -115,11 +114,6 @@ CALL __add_index('cd_deploy_logs', 'idx_cdl_project', 'project');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_created', 'created_at');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_project_tag_status', 'project, tag, status');
 CALL __add_index('cd_deploy_logs', 'idx_cdl_status', 'status');
-
--- CI 相关表索引（表可能不存在，存储过程内部会检查并跳过）
-CALL __add_index('ci_pipeline_artifacts', 'idx_pa_project_key', 'project_key');
-CALL __add_index('ci_pipeline_artifacts', 'idx_pa_created', 'created_at');
-CALL __add_index('ci_job_git_map', 'idx_jgm_path', 'current_path(255)');
 
 -- cd_registry_artifacts 索引（表在本脚本中已创建）
 CALL __add_index('cd_registry_artifacts', 'idx_cdr_repo_id', 'repo_id');

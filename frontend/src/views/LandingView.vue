@@ -15,6 +15,7 @@
           <button :class="{ active: locale === 'zh' }" @click="setLang('zh')">中文</button>
           <button :class="{ active: locale === 'en' }" @click="setLang('en')">EN</button>
         </div>
+        <!-- 登录入口固定指向 /login:由登录页按 AUTH_MODE 决定展示 SSO 按钮还是本地表单. -->
         <router-link to="/login" class="nav-btn">🔐 {{ $t('landing.nav.login') }}</router-link>
       </div>
     </nav>

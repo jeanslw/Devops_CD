@@ -1,9 +1,9 @@
-"""K8S 部署执行核心 — 从 routers/k8s_deploy.py 抽取，供路由与审批/回滚执行器共用。
+"""K8S 部署执行核心 - 从 routers/k8s_deploy.py 抽取,供路由与审批/回滚执行器共用.
 
-避免 services 层反向依赖 routers 层。包含：
+避免 services 层反向依赖 routers 层.包含:
 - K8sDeployRequest 请求模型
 - 集群 / 镜像解析
-- 部署核心流程（并发锁 + running 记录 + 取消 + 耗时 + 参数快照）
+- 部署核心流程(并发锁 + running 记录 + 取消 + 耗时 + 参数快照)
 - 通知
 """
 
@@ -41,15 +41,15 @@ class K8sDeployRequest(BaseModel):
     cluster_id: int = 0
     path: str = ""  # YAML path for kubectl mode
     api_url: str = ""  # Argo CD / Flux API base
-    k8s_ns: str = ""  # 留空不传 -n，namespace 以 YAML 声明为准；填写后执行/验证统一使用该 namespace
-    deploy_note: str = ""  # 部署说明（记录到 cd_deploy_logs.deploy_note）
-    scheduled_at: str = ""  # 可选定时发布：'YYYY-MM-DD HH:MM[:SS]'，空=不启用定时（按常规审批/直通流程）
+    k8s_ns: str = ""  # 留空不传 -n,namespace 以 YAML 声明为准;填写后执行/验证统一使用该 namespace
+    deploy_note: str = ""  # 部署说明(记录到 cd_deploy_logs.deploy_note)
+    scheduled_at: str = ""  # 可选定时发布:'YYYY-MM-DD HH:MM[:SS]',空=不启用定时(按常规审批/直通流程)
     bot_id: int = 0
     lang: str = "en"  # 前端当前语言 en/zh
 
 
 def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
-    """解析集群信息，返回 (host, port, user, pwd, ssh_key) 或抛异常"""
+    """解析集群信息,返回 (host, port, user, pwd, ssh_key) 或抛异常"""
     if req.cluster_id:
         with db.conn() as conn:
             srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (req.cluster_id,)).fetchone()
@@ -65,7 +65,7 @@ def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
 
 
 def _resolve_image(db, req):
-    """解析镜像地址，返回 (image, project_key, project_short) 或抛异常"""
+    """解析镜像地址,返回 (image, project_key, project_short) 或抛异常"""
     svc = CiService(db)
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
@@ -96,21 +96,21 @@ def _deploy_k8s_core(
     rollback=False,
     approval_id=0,
 ):
-    """执行 K8S 部署核心流程：并发锁 + running 记录 + 取消 + 耗时 + 参数快照。
+    """执行 K8S 部署核心流程:并发锁 + running 记录 + 取消 + 耗时 + 参数快照.
 
-    返回 deployer 的结果 dict（含 deploy_id）；被取消时返回 {"success": False, "cancelled": True}。
-    通知由调用方负责（区分同步/流式），避免阻塞 SSE 结束信号。
+    返回 deployer 的结果 dict(含 deploy_id);被取消时返回 {'success': False, 'cancelled': True}.
+    通知由调用方负责(区分同步/流式),避免阻塞 SSE 结束信号.
 
-    rollback=True 时走 deployer 原生回滚（kubectl rollout undo / helm rollback），
-    而非重放旧 tag 的普通部署。
+    rollback=True 时走 deployer 原生回滚(kubectl rollout undo / helm rollback),
+    而非重放旧 tag 的普通部署.
     """
-    # ── tag 白名单（同步/流式/审批重放/回滚重放的统一收口）──
+    # ── tag 白名单(同步/流式/审批重放/回滚重放的统一收口)──
     try:
         validate_tag(req.tag)
     except InvalidTag as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
 
-    # ── 并发锁：同一项目同时只允许一个进行中部署 ──
+    # ── 并发锁:同一项目同时只允许一个进行中部署 ──
     running = find_running_deploy(db, project_key)
     if running:
         raise ValidationError(
@@ -123,9 +123,9 @@ def _deploy_k8s_core(
         raise ValidationError(f"不支持的 CD 类型: {req.cd_type}", error_key="errors.unsupported_cd_type")
 
     deploy_type = f"k8s/{req.cd_type}"
-    # 参数快照（含 deploy_type 路由判别），供回滚重放
+    # 参数快照(含 deploy_type 路由判别),供回滚重放
     params_json = json.dumps({"deploy_type": deploy_type, **req.model_dump()}, ensure_ascii=False)
-    # 经审批单执行：复用申请阶段的 pending 记录（v1.5.3 前的旧已批准单无记录时回退新建）
+    # 经审批单执行:复用申请阶段的 pending 记录(v1.5.3 前的旧已批准单无记录时回退新建)
     try:
         deploy_id = claim_pending_deploy_record(db, project=project_key, approval_id=int(approval_id or 0))
         if not deploy_id:
@@ -155,7 +155,7 @@ def _deploy_k8s_core(
         ok = bool(result.get("success"))
         status = "ok" if ok else "failed"
         duration_ms = int((time.time() - started) * 1000)
-        # 原生回滚执行后才知道实际回滚目标（如 ArgoCD history id + revision），写入说明列
+        # 原生回滚执行后才知道实际回滚目标(如 ArgoCD history id + revision),写入说明列
         note = None
         summary = result.get("rollback_summary")
         if rollback and summary:

@@ -1,4 +1,4 @@
-/** 统一错误处理 — 解析后端 error_key 并 i18n 翻译 */
+/** 统一错误处理 - 解析后端 error_key 并 i18n 翻译 */
 import { useToast } from './useToast.js'
 import { useI18n } from 'vue-i18n'
 
@@ -9,7 +9,7 @@ export function useError() {
   /** 根据 Response 或 body 显示错误提示 */
   async function showError(responseOrBody) {
     let body = responseOrBody
-    // 如果是 Response 对象（fetch 未解析），先解析
+    // 如果是 Response 对象(fetch 未解析),先解析
     if (body && typeof body.json === 'function') {
       try {
         body = await body.json()
@@ -25,7 +25,7 @@ export function useError() {
       const params = body?.error_params || {}
       toast(t(errorKey, params), false)
     } else if (body?.error) {
-      // 兜底：原始 error 字段
+      // 兜底:原始 error 字段
       toast(body.error, false)
     } else if (body?.detail && typeof body.detail === 'string') {
       toast(body.detail, false)

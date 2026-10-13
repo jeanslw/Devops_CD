@@ -1,4 +1,4 @@
-"""通知服务 — 钉钉 / 企业微信 webhook"""
+"""通知服务 - 钉钉 / 企业微信 webhook"""
 
 import base64
 import hashlib
@@ -14,7 +14,7 @@ _ALLOWED_WEBHOOK_DOMAINS = ["oapi.dingtalk.com", "qyapi.weixin.qq.com", "open.fe
 
 
 def _is_allowed_webhook(url: str) -> bool:
-    """检查 webhook URL 是否在允许的域名白名单内。"""
+    """检查 webhook URL 是否在允许的域名白名单内."""
     try:
         domain = urlparse(url).hostname or ""
         return any(domain == d or domain.endswith("." + d) for d in _ALLOWED_WEBHOOK_DOMAINS)
@@ -23,15 +23,15 @@ def _is_allowed_webhook(url: str) -> bool:
 
 
 def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
-    """发送钉钉/企微/custom text 消息，失败不抛异常。
+    """发送钉钉/企微/custom text 消息,失败不抛异常.
 
-    bot_type: 机器人类型（dingtalk/wecom/feishu/custom 等）。
-    仅当 bot_type 为 "custom" 时跳过域名白名单校验（自定义 webhook 可以是任意 URL）。
-    其他类型（含默认）仍受 _ALLOWED_WEBHOOK_DOMAINS 白名单保护，防止 SSRF。
+    bot_type: 机器人类型(dingtalk/wecom/feishu/custom 等).
+    仅当 bot_type 为 'custom' 时跳过域名白名单校验(自定义 webhook 可以是任意 URL).
+    其他类型(含默认)仍受 _ALLOWED_WEBHOOK_DOMAINS 白名单保护,防止 SSRF.
     """
     if not url or not message:
         return False
-    # custom 类型跳过白名单（用户在 Bot 管理中显式配置的自定义 webhook）
+    # custom 类型跳过白名单(用户在 Bot 管理中显式配置的自定义 webhook)
     if (bot_type or "").lower() != "custom" and not _is_allowed_webhook(url):
         return False
     try:
@@ -60,7 +60,7 @@ def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
         return False
 
 
-# ── 默认模板（中/英文） ──
+# ── 默认模板(中/英文) ──
 _DEFAULT_TEMPLATES = {
     "zh": ("[{time}] {project} [部署通知]\n版本：{tag} --> {status}\n目标：{target}\n模式：{mode}\n镜像：{image}"),
     "en": (
@@ -96,10 +96,10 @@ _LANG_MAP = {
 
 
 def _t(lang: str, field: str, value: str) -> str:
-    """根据 lang 翻译 status/mode 值，lang 非 zh/en 则原样返回。"""
+    """根据 lang 翻译 status/mode 值,lang 非 zh/en 则原样返回."""
     if lang not in _LANG_MAP or field not in _LANG_MAP[lang]:
         return value
-    # 状态可能是 "⚠️ Partial success 2/3" 这种带数字格式，做前缀匹配
+    # 状态可能是 " Partial success 2/3" 这种带数字格式,做前缀匹配
     if field == "status":
         for en_key, zh_val in _LANG_MAP[lang]["status"].items():
             if value.startswith(en_key):
@@ -118,9 +118,9 @@ def notify_deploy(
     targets: list,
     lang: str = "en",
 ):
-    """构造消息并发送部署通知。bot_id=0 则跳过。
-    targets 如 ["k8s[192.168.1.1]"] 或 ["ssh[1.1.1.1]", "docker[2.2.2.2]"]
-    lang: 前端当前语言 (en/zh)，用于选择 status/mode 的文本语言
+    """构造消息并发送部署通知.bot_id=0 则跳过.
+    targets 如 ['k8s[192.168.1.1]'] 或 ['ssh[1.1.1.1]', 'docker[2.2.2.2]']
+    lang: 前端当前语言 (en/zh),用于选择 status/mode 的文本语言
     """
     if not bot_id:
         return
@@ -150,7 +150,7 @@ def notify_deploy(
 
 
 def notify_approval(db, bot_id: int, message: str):
-    """发送审批通知（纯文本，消息由调用方按语言拼好），bot_id=0 跳过。"""
+    """发送审批通知(纯文本,消息由调用方按语言拼好),bot_id=0 跳过."""
     if not bot_id:
         return
     with db.conn() as conn:

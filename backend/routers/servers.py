@@ -35,7 +35,7 @@ def list_servers(
         result = []
         for r in rows:
             row = dict(r)
-            # 不暴露明文 key/password，只标记是否存在
+            # 不暴露明文 key/password,只标记是否存在
             row["has_password"] = bool(row.get("password"))
             row["has_ssh_key"] = bool(row.get("ssh_key"))
             row["password"] = MASK if row.get("password") else ""
@@ -86,7 +86,7 @@ def update_server(
         if not existing:
             raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-        # 前端发来 MASK 表示未修改，保留数据库现有值
+        # 前端发来 MASK 表示未修改,保留数据库现有值
         password = existing["password"]
         if req.password and req.password != MASK:
             password = encrypt(req.password)
@@ -178,30 +178,30 @@ def test_server_connection(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.server-manage")),
 ):
-    """测试服务器 SSH 连接。
-    trust=True 时会自动信任主机密钥并保存到 known_hosts。
-    sid>0 时为编辑已有服务器，凭据字段为 MASK/空 视为未修改，从数据库读取真实值。
+    """测试服务器 SSH 连接.
+    trust=True 时会自动信任主机密钥并保存到 known_hosts.
+    sid>0 时为编辑已有服务器,凭据字段为 MASK/空 视为未修改,从数据库读取真实值.
     """
     password = req.password
     ssh_key = req.ssh_key
 
-    # 编辑模式：与 PUT 更新接口保持一致的凭据处理逻辑
+    # 编辑模式:与 PUT 更新接口保持一致的凭据处理逻辑
     if sid:
         with db.conn() as conn:
             row = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
             if row:
-                # password：有值且非MASK才用前端新值，否则从DB取解密后原值
+                # password:有值且非MASK才用前端新值,否则从DB取解密后原值
                 if req.password and req.password != MASK:
                     password = req.password
                 else:
                     password = decrypt(row["password"]) if row.get("password") else ""
-                # ssh_key：有值且非MASK才用前端新值，否则从DB取解密后原值
+                # ssh_key:有值且非MASK才用前端新值,否则从DB取解密后原值
                 if req.ssh_key and req.ssh_key != MASK:
                     ssh_key = req.ssh_key
                 else:
                     ssh_key = decrypt(row["ssh_key"]) if row.get("ssh_key") else ""
 
-    # 切换认证方式时清除旧凭据（与 PUT 保持一致）
+    # 切换认证方式时清除旧凭据(与 PUT 保持一致)
     if req.auth_type == "password":
         ssh_key = ""
     elif req.auth_type == "key":
@@ -220,7 +220,7 @@ def test_server_connection(
         else:
             return {"success": False, "message": result["message"]}
     else:
-        # 普通连接测试（使用 RejectPolicy）
+        # 普通连接测试(使用 RejectPolicy)
         from backend.deployers.base import DeployTarget, ssh_connect
 
         try:
@@ -254,7 +254,7 @@ def trust_existing_server(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.server-manage")),
 ):
-    """信任已存在的服务器（获取并保存主机密钥）"""
+    """信任已存在的服务器(获取并保存主机密钥)"""
     with db.conn() as conn:
         row = conn.execute("SELECT * FROM cd_servers WHERE id=?", (sid,)).fetchone()
         if not row:
@@ -263,7 +263,7 @@ def trust_existing_server(
         password = decrypt(row["password"]) if row.get("password") else ""
         ssh_key = decrypt(row["ssh_key"]) if row.get("ssh_key") else ""
 
-        # 与 PUT 更新接口保持一致：按 auth_type 过滤旧凭据
+        # 与 PUT 更新接口保持一致:按 auth_type 过滤旧凭据
         auth_type = (row.get("auth_type") or "password").lower()
         if auth_type == "password":
             ssh_key = ""

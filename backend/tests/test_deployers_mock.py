@@ -1,13 +1,13 @@
-"""部署器 mock 测试 —— 不依赖真实 SSH / K8s / ArgoCD / Docker / Ansible。
+"""部署器 mock 测试 -- 不依赖真实 SSH / K8s / ArgoCD / Docker / Ansible.
 
-用 unittest.mock 伪造 SSH 连接、paramiko channel 与 requests，验证四个部署功能
-（argocd / fluxcd / ansible(ssh) / docker(compose)）的编排逻辑。
+用 unittest.mock 伪造 SSH 连接,paramiko channel 与 requests,验证四个部署功能
+(argocd / fluxcd / ansible(ssh) / docker(compose))的编排逻辑.
 
-约定：
-  - 已修复的 bug 用回归断言固化（修复后行为），防止回退。
-  - 纯函数（YAML 渲染 / 参数解析 / 镜像切分）走正确性断言。
+约定:
+  - 已修复的 bug 用回归断言固化(修复后行为),防止回退.
+  - 纯函数(YAML 渲染 / 参数解析 / 镜像切分)走正确性断言.
 
-运行（纯标准库 unittest，无需 pytest）:
+运行(纯标准库 unittest,无需 pytest):
     .venv/Scripts/python.exe backend/tests/test_deployers_mock.py
 """
 
@@ -53,7 +53,7 @@ class FakeStream:
 
 
 class FakeSSH:
-    """handler(cmd) -> (stdout, stderr, exit_code)。"""
+    """handler(cmd) -> (stdout, stderr, exit_code)."""
 
     def __init__(self, handler=None):
         self._handler = handler
@@ -79,7 +79,7 @@ class _Resp:
 
 
 # ─────────────────────────────────────────────────────────────
-# 纯函数正确性（回归保护）
+# 纯函数正确性(回归保护)
 # ─────────────────────────────────────────────────────────────
 class TestPureHelpers(unittest.TestCase):
     def test_render_k8s_yaml_placeholders(self):
@@ -101,7 +101,7 @@ class TestPureHelpers(unittest.TestCase):
         self.assertEqual(_get_deployment_name(yaml), "myapp")
 
     def test_split_image_ref_ported_registry(self):
-        # 带端口 registry：从最后一个冒号切分，仓库/标签都不被端口破坏
+        # 带端口 registry:从最后一个冒号切分,仓库/标签都不被端口破坏
         self.assertEqual(
             split_image_ref("hub.example.com:5000/repo/app:v1.0"), ("hub.example.com:5000/repo/app", "v1.0")
         )
@@ -127,7 +127,7 @@ class TestPureHelpers(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# Ansible / SSH 部署器（ssh.py）
+# Ansible / SSH 部署器(ssh.py)
 # ─────────────────────────────────────────────────────────────
 class TestSSHDeployer(unittest.TestCase):
     def _deploy(self, mode, commands="", path="", exit_code=0):
@@ -149,7 +149,7 @@ class TestSSHDeployer(unittest.TestCase):
             return SSHDeployer().deploy(target, "hub.example.com/app:v1.0", "group/app", "v1.0")
 
     def test_commands_mode_exit_code_failure(self):
-        # 修复后：远程命令 exit!=0 判为 failed
+        # 修复后:远程命令 exit!=0 判为 failed
         r = self._deploy("commands", commands="exit 1", exit_code=1)
         self.assertEqual(r.status, "failed")
 
@@ -158,12 +158,12 @@ class TestSSHDeployer(unittest.TestCase):
         self.assertEqual(r.status, "ok")
 
     def test_ansible_mode_exit_code_failure(self):
-        # 修复后：ansible-playbook 失败（exit!=0）判为 failed
+        # 修复后:ansible-playbook 失败(exit!=0)判为 failed
         r = self._deploy("ansible", path="/opt/ansible/deploy.yml", exit_code=2)
         self.assertEqual(r.status, "failed")
 
     def test_stop_checks_exit_code(self):
-        # 修复后：stop 检查命令 exit code，非 0 报失败
+        # 修复后:stop 检查命令 exit code,非 0 报失败
         target = DeployTarget(host="1.2.3.4", user="root")
         fake = FakeSSH(handler=lambda cmd: ("", "stop failed", 1))
         session = MagicMock()
@@ -176,11 +176,11 @@ class TestSSHDeployer(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# Docker Compose 部署器（compose.py）
+# Docker Compose 部署器(compose.py)
 # ─────────────────────────────────────────────────────────────
 class TestComposeDeployer(unittest.TestCase):
     def test_commands_mode_exit_code_failure(self):
-        # 修复后：commands 模式以命令 exit code 判定成败
+        # 修复后:commands 模式以命令 exit code 判定成败
         target = DeployTarget(host="1.2.3.4", user="root", mode="commands", options={"commands": "exit 1"})
         fake = FakeSSH()
         session = MagicMock()
@@ -194,7 +194,7 @@ class TestComposeDeployer(unittest.TestCase):
         self.assertEqual(r.status, "failed")
 
     def test_ssh_run_prefers_stdout(self):
-        # 修复后：_ssh_run 返回 (out or err)，stdout 优先级高于 stderr。
+        # 修复后:_ssh_run 返回 (out or err),stdout 优先级高于 stderr.
         def handler(cmd):
             return ("STDOUT_REAL_RESULT", "STDERR_BENIGN_WARNING", 0)
 
@@ -202,7 +202,7 @@ class TestComposeDeployer(unittest.TestCase):
         self.assertEqual(r.output, "STDOUT_REAL_RESULT")
 
     def test_stop_checks_exit_code(self):
-        # 修复后：stop 检查 docker-compose down 的 exit code
+        # 修复后:stop 检查 docker-compose down 的 exit code
         target = DeployTarget(host="1.2.3.4", user="root")
         fake = FakeSSH(handler=lambda cmd: ("", "compose file not found", 1))
         session = MagicMock()
@@ -215,7 +215,7 @@ class TestComposeDeployer(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# Argo CD 部署器（k8s_argocd.py）
+# Argo CD 部署器(k8s_argocd.py)
 # ─────────────────────────────────────────────────────────────
 class TestArgoCD(unittest.TestCase):
     def _req(self):
@@ -234,7 +234,7 @@ class TestArgoCD(unittest.TestCase):
         ):
             result = ArgoCDDeployer().deploy(self._req(), image, "group/app", "argocd-host", pwd="token")
         patch_body = mock_put.call_args.kwargs.get("json")
-        # 这些用例的契约就是部署成功且发出 sync PUT；原生 assert 同时完成静态类型收窄
+        # 这些用例的契约就是部署成功且发出 sync PUT;原生 assert 同时完成静态类型收窄
         assert result is not None
         assert patch_body is not None
         return result, patch_body
@@ -246,14 +246,14 @@ class TestArgoCD(unittest.TestCase):
         self.assertTrue(result["success"])
 
     def test_kustomize_ported_registry_rsplit(self):
-        # 修复后：registry 带端口时 newName/newTag 用 rsplit 正确切分
+        # 修复后:registry 带端口时 newName/newTag 用 rsplit 正确切分
         _, patch_body = self._deploy("hub.example.com:5000/repo/app:v1.0", {"source": {"kustomize": {"images": []}}})
         images = patch_body["spec"]["source"]["kustomize"]["images"][0]
         self.assertEqual(images["newName"], "hub.example.com:5000/repo/app")
         self.assertEqual(images["newTag"], "v1.0")
 
     def test_stop_without_api_url_falls_back_to_host(self):
-        # 修复后：DeployRequest 无 api_url 不再抛 AttributeError，回退 https://{host}
+        # 修复后:DeployRequest 无 api_url 不再抛 AttributeError,回退 https://{host}
         from backend.models.requests import DeployRequest
 
         req = DeployRequest(project="group/app", tag="v1")
@@ -321,7 +321,7 @@ class TestArgoCD(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# Flux CD 部署器（k8s_fluxcd.py）
+# Flux CD 部署器(k8s_fluxcd.py)
 # ─────────────────────────────────────────────────────────────
 class TestFluxCD(unittest.TestCase):
     def test_discover_flux_resource_exact_match(self):
@@ -350,7 +350,7 @@ class TestFluxCD(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 镜像 tag 白名单（deployers/base.py）— 命令注入第一道关
+# 镜像 tag 白名单(deployers/base.py)- 命令注入第一道关
 # ─────────────────────────────────────────────────────────────
 class TestTagValidation(unittest.TestCase):
     VALID = ["v1.2.3", "V1.2.3", "123", "a-b_c.x", "release_2026.01.01", "a" * 128, "latest", "_x"]
@@ -381,7 +381,7 @@ class TestTagValidation(unittest.TestCase):
                 validate_tag(tag)
 
     def test_compose_rejects_malicious_tag_before_any_shell(self):
-        # commands 模式：validate_tag 在任何 SSH 会话建立之前就应拒绝
+        # commands 模式:validate_tag 在任何 SSH 会话建立之前就应拒绝
         target = DeployTarget(host="1.2.3.4", user="root", mode="commands", options={"commands": "echo hi"})
         session = MagicMock()
         with (
@@ -392,7 +392,7 @@ class TestTagValidation(unittest.TestCase):
         p.assert_not_called()
 
     def test_compose_remote_env_rewrite_commands_no_sed(self):
-        """直接驱动 remote 流程断言 .env 重写命令内容（上一用例的可执行版本）。"""
+        """直接驱动 remote 流程断言 .env 重写命令内容(上一用例的可执行版本)."""
         settings.harbor_registry = ""
         image_name = "hub.example.com/group/app"
         tag = "v1.2.3"
@@ -439,24 +439,24 @@ class TestTagValidation(unittest.TestCase):
 
         self.assertEqual(result.status, "ok", result.output)
         rewrite = captured["rewrite"]
-        # 必须用 printf 追加、grep 剔除旧行；不得出现 sed / echo 插值
+        # 必须用 printf 追加,grep 剔除旧行;不得出现 sed / echo 插值
         self.assertIn("printf %s", rewrite)
         self.assertIn("grep -v -e '^IMAGE=' -e '^TAG='", rewrite)
         self.assertNotIn("sed", rewrite)
         self.assertNotIn("echo IMAGE", rewrite)
         self.assertNotIn("echo TAG", rewrite)
-        # IMAGE/TAG 内容经 shlex 处理（无特殊字符时 shlex.quote 原样返回）
+        # IMAGE/TAG 内容经 shlex 处理(无特殊字符时 shlex.quote 原样返回)
         self.assertIn(shlex.quote(f"IMAGE={image_name}\nTAG={tag}\n"), rewrite)
         # pull/up 命令中 project 被引用
         self.assertTrue(all(project_short in c for c in stream_cmds), stream_cmds)
 
 
 class TestNoShellCommand(unittest.TestCase):
-    """部署器命令不得包显式 shell（bash -c / sh -c），占位符必须 shlex.quote。
+    """部署器命令不得包显式 shell(bash -c / sh -c),占位符必须 shlex.quote.
 
-    SSH exec 通道在远端仍会经登录 shell 执行命令，因此安全边界是：
-    1) 不再额外包一层 sh -c / bash -c（避免二次解释已转义的参数）；
-    2) 所有用户输入（image/project/tag/path/inventory）进命令前 shlex.quote。
+    SSH exec 通道在远端仍会经登录 shell 执行命令,因此安全边界是:
+    1) 不再额外包一层 sh -c / bash -c(避免二次解释已转义的参数);
+    2) 所有用户输入(image/project/tag/path/inventory)进命令前 shlex.quote.
     """
 
     def _assert_no_shell_wrapper(self, cmd: str) -> None:
@@ -474,7 +474,7 @@ class TestNoShellCommand(unittest.TestCase):
         self._assert_no_shell_wrapper(cmd)
 
     def test_ssh_commands_mode_neutralizes_metachar_project(self):
-        # project 含 shell 元字符时必须被 shlex.quote 包进单引号，不得裸拼
+        # project 含 shell 元字符时必须被 shlex.quote 包进单引号,不得裸拼
         project = "grp/app; rm -rf /tmp/x"
         target = DeployTarget(host="h", mode="commands", options={"commands": "echo {project}"})
         cmd = SSHDeployer()._build_commands(target, "img:v1", project, "v1")
@@ -511,10 +511,10 @@ class TestNoShellCommand(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 幂等命令重试入口（base.retry_idempotent）
+# 幂等命令重试入口(base.retry_idempotent)
 # ─────────────────────────────────────────────────────────────
 class TestRetryIdempotent(unittest.TestCase):
-    """仅用于 docker compose up -d / kubectl apply 等可安全重跑的命令。"""
+    """仅用于 docker compose up -d / kubectl apply 等可安全重跑的命令."""
 
     def test_success_on_first_attempt_does_not_retry(self):
         calls = []
@@ -538,7 +538,7 @@ class TestRetryIdempotent(unittest.TestCase):
         out, ec = retry_idempotent(func, attempts=3, delay=0, log_fn=logs.append)
         self.assertEqual((out, ec), ("ok", 0))
         self.assertEqual(len(calls), 3)
-        self.assertEqual(logs, [2, 3])  # 第 2、3 次尝试前各触发一次重试提示
+        self.assertEqual(logs, [2, 3])  # 第 2,3 次尝试前各触发一次重试提示
 
     def test_returns_last_failure_without_raising(self):
         calls = []
@@ -563,7 +563,7 @@ class TestRetryIdempotent(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────
-# 取消信号生命周期（deploy_run.py）
+# 取消信号生命周期(deploy_run.py)
 # ─────────────────────────────────────────────────────────────
 class TestDeployRun(unittest.TestCase):
     def test_cancel_signal_lifecycle(self):

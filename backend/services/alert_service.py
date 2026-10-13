@@ -1,4 +1,4 @@
-"""告警检测服务 — 后台线程定时检测阈值 + 推送 Bot 通知"""
+"""告警检测服务 - 后台线程定时检测阈值 + 推送 Bot 通知"""
 
 import logging
 import threading
@@ -12,17 +12,17 @@ from backend.services.notification import send_webhook
 
 logger = logging.getLogger("cd.alert")
 
-# ── 告警冷却记录（内存）: "rule_server_entity" → last_alert_ts ──
+# ── 告警冷却记录(内存): "rule_server_entity" → last_alert_ts ──
 _cooldowns: dict[str, float] = {}
 
-# ── 持续超标追踪（内存）: "rule_server_entity" → first_exceeded_ts ──
+# ── 持续超标追踪(内存): "rule_server_entity" → first_exceeded_ts ──
 _durations: dict[str, float] = {}
 
 # ── 后台线程 ──
 _runner: threading.Thread | None = None
 _stop = threading.Event()
 
-# ── 默认告警模板（中/英文）──
+# ── 默认告警模板(中/英文)──
 _DEFAULT_TEMPLATES = {
     "system": {
         "zh": ("⚠️ [资源告警] {time}\n服务器：{server}({host})\n资源：{resource_name} ({value}%)\n阈值：{threshold}%"),
@@ -87,12 +87,12 @@ _TYPE_NAMES = {
 
 
 def _track_key(rule_id: int, server_id: int, entity: str = "") -> str:
-    """统一追踪键：规则 + 服务器 + 实体标签"""
+    """统一追踪键:规则 + 服务器 + 实体标签"""
     return f"{rule_id}_{server_id}_{entity}"
 
 
 def _check_cooldown(rule_id: int, server_id: int, cooldown_minutes: int, entity: str = "") -> bool:
-    """检查是否在冷却期，返回 True = 跳过（纯查询，不修改状态）"""
+    """检查是否在冷却期,返回 True = 跳过(纯查询,不修改状态)"""
     key = _track_key(rule_id, server_id, entity)
     last = _cooldowns.get(key, 0)
     return (time.time() - last) < cooldown_minutes * 60
@@ -102,7 +102,7 @@ def _set_cooldown(rule_id: int, server_id: int, entity: str = ""):
     """记录告警发送时间"""
     key = _track_key(rule_id, server_id, entity)
     _cooldowns[key] = time.time()
-    # 清理过期记录（>1 天）
+    # 清理过期记录(>1 天)
     for k in list(_cooldowns):
         if time.time() - _cooldowns[k] > 86400:
             del _cooldowns[k]
@@ -116,7 +116,7 @@ def _mark_exceeded(rule_id: int, server_id: int, entity: str = ""):
     key = _track_key(rule_id, server_id, entity)
     if key not in _durations:
         _durations[key] = time.time()
-    # 清理过期记录（>1 天）
+    # 清理过期记录(>1 天)
     for k in list(_durations):
         if time.time() - _durations[k] > 86400:
             del _durations[k]
@@ -181,7 +181,7 @@ def _check_one(db, rule: dict):
             for r in results:
                 entity = r.get("entity_label", "")
 
-                # 有超标项 —— 追踪持续时间（按实体）
+                # 有超标项 -- 追踪持续时间(按实体)
                 _mark_exceeded(rule_id, sid, entity)
 
                 # 检查是否已达标持续时间
@@ -201,9 +201,9 @@ def _check_one(db, rule: dict):
                 for lang in ("zh", "en"):
                     _send_alert(rule, server, r, bot, template, lang, target_type)
         else:
-            # 无超标 —— 重置持续时间追踪（恢复正常），清除所有该规则+服务器的实体记录
+            # 无超标 -- 重置持续时间追踪(恢复正常),清除所有该规则+服务器的实体记录
             _clear_duration(rule_id, sid)
-            # 也清理旧的以服务器为 key 的记录（向后兼容）
+            # 也清理旧的以服务器为 key 的记录(向后兼容)
             for k in list(_durations):
                 if k.startswith(f"{rule_id}_{sid}_"):
                     _durations.pop(k, None)
@@ -219,7 +219,7 @@ def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     resource_type = result["resource"]
 
-    # 自定义资源：用监控项名称作为显示名
+    # 自定义资源:用监控项名称作为显示名
     if resource_type.startswith("custom_"):
         resource_name = result.get("name", resource_type)
     else:
@@ -261,7 +261,7 @@ def _run_loop():
             from backend.database import Database
             from backend.dlock import acquire
 
-            # 多副本/多 worker 隔离：锁被其他存活实例持有时静默跳过本轮
+            # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
             if not acquire(Database(), "alert_check", ttl_seconds=max(interval * 3, 90)):
                 continue
             check_all_rules()

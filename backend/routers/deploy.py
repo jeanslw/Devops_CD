@@ -28,20 +28,20 @@ def deploy(
     db: Database = Depends(get_db),
     user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
-    # K8S 子模式必须走 /api/deploy-k8s，禁止混进 SSH/Compose 路线（签名不兼容）
+    # K8S 子模式必须走 /api/deploy-k8s,禁止混进 SSH/Compose 路线(签名不兼容)
     if req.deploy_type.startswith("k8s/"):
         raise ValidationError(
             f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/deploy-k8s",
             error_key="errors.wrong_deploy_api",
         )
-    # 按具体 deploy_type 做二次权限校验（防御深度：service 层也会再查一次）
+    # 按具体 deploy_type 做二次权限校验(防御深度:service 层也会再查一次)
     enforce_deploy_perm(user, req.deploy_type)
-    # tag 白名单：在创建审批单/执行任何远端命令之前拒绝非法 tag
+    # tag 白名单:在创建审批单/执行任何远端命令之前拒绝非法 tag
     try:
         validate_tag(req.tag)
     except InvalidTag as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
-    # 审批闸门：需审批则创建审批单并返回 pending，不执行
+    # 审批闸门:需审批则创建审批单并返回 pending,不执行
     gate = gate_deploy(
         db,
         project=req.project,
@@ -91,7 +91,7 @@ def deploy_cancel(
     db: Database = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """取消进行中的部署 — 按 deploy_id 或 project 定位 running 记录。"""
+    """取消进行中的部署 - 按 deploy_id 或 project 定位 running 记录."""
     if not req.deploy_id and not req.project:
         raise ValidationError("请提供 deploy_id 或 project", error_key="errors.deploy_validation")
 
@@ -112,7 +112,7 @@ def deploy_cancel(
     if not row:
         return {"success": False, "message": "No running deployment found (may already be finished)"}
 
-    # 权限校验：按该部署的 deploy_type 判断（k8s 记录形如 "k8s/kubectl"）
+    # 权限校验:按该部署的 deploy_type 判断(k8s 记录形如 "k8s/kubectl")
     deploy_type = row["deploy_type"] or "ssh"
     if deploy_type.startswith("k8s/"):
         enforce_deploy_perm(user, "k8s", deploy_type.split("/", 1)[1])
@@ -128,8 +128,8 @@ def stop(
     db: Database = Depends(get_db),
     user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
-    """停止服务 — 按 deploy_type 分发到对应 Deployer"""
-    # K8S 子模式必须走 /api/stop-k8s，禁止混进 SSH/Compose 路线（签名不兼容）
+    """停止服务 - 按 deploy_type 分发到对应 Deployer"""
+    # K8S 子模式必须走 /api/stop-k8s,禁止混进 SSH/Compose 路线(签名不兼容)
     if req.deploy_type.startswith("k8s/"):
         raise ValidationError(
             f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/stop-k8s",
@@ -174,7 +174,7 @@ def stop_k8s(
     db: Database = Depends(get_db),
     user: dict = Depends(require_perm("cd.deploy.k8s")),
 ):
-    """K8S 停止 — 按 cd_type 分发到对应 K8S 子模式 Deployer"""
+    """K8S 停止 - 按 cd_type 分发到对应 K8S 子模式 Deployer"""
     enforce_deploy_perm(user, "k8s", req.cd_type)
     if not req.server_ids:
         raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
@@ -203,8 +203,8 @@ async def deploy_stream(
     db: Database = Depends(get_db),
     user: dict = Depends(require_perm("cd.deploy-manage")),
 ):
-    """实时部署（SSE 流式推送）"""
-    # K8S 子模式必须走 /api/deploy-k8s-stream，禁止混进 SSH/Compose 路线（签名不兼容）
+    """实时部署(SSE 流式推送)"""
+    # K8S 子模式必须走 /api/deploy-k8s-stream,禁止混进 SSH/Compose 路线(签名不兼容)
     if req.deploy_type.startswith("k8s/"):
         msg = f"部署类型 '{req.deploy_type}' 请使用 K8S 专用接口 /api/deploy-k8s-stream"
 
@@ -213,12 +213,12 @@ async def deploy_stream(
 
         return StreamingResponse(_err(), media_type="text/event-stream")
     enforce_deploy_perm(user, req.deploy_type)
-    # tag 白名单：非法 tag 直接拒绝，不创建审批单、不执行远端命令
+    # tag 白名单:非法 tag 直接拒绝,不创建审批单,不执行远端命令
     try:
         validate_tag(req.tag)
     except InvalidTag as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
-    # 审批闸门：需审批则以 PENDING 事件结束流，前端引导去审批
+    # 审批闸门:需审批则以 PENDING 事件结束流,前端引导去审批
     gate = gate_deploy(
         db,
         project=req.project,
@@ -290,7 +290,7 @@ async def deploy_stream(
                 msg = await asyncio.to_thread(log_queue.get, timeout=30)
                 if msg is None:
                     break
-                # 多行消息需要每行都加 data: 前缀，否则 SSE 只解析第一行
+                # 多行消息需要每行都加 data: 前缀,否则 SSE 只解析第一行
                 safe_msg = msg.replace("\n", "\ndata: ")
                 yield f"data: {safe_msg}\n\n"
             except queue.Empty:
@@ -298,7 +298,7 @@ async def deploy_stream(
                 await asyncio.sleep(1)
 
         if deploy_result.get("success"):
-            # 实时日志已通过 STATUS: 事件流式发出，END 只携带成功标志
+            # 实时日志已通过 STATUS: 事件流式发出,END 只携带成功标志
             result = deploy_result["data"]
             yield f"data: END:{str(result.get('success', False)).lower()}\n\n"
         else:

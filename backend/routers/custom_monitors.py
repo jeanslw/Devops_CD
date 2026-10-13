@@ -75,7 +75,7 @@ class CustomMonitorRequest(BaseModel):
 # ── 工具: 多格式解析 ──
 def parse_output(raw: str, output_format: str, metrics: list[dict]) -> list[dict]:
     """
-    按指定格式解析命令输出, 返回结构化结果。
+    按指定格式解析命令输出, 返回结构化结果.
     每条结果: { metric_name, field_key, value: float|None, unit, entity: dict }
     entity 包含行级标签(如 CSV 第一列作为实体标识).
     """
@@ -96,7 +96,7 @@ def parse_output(raw: str, output_format: str, metrics: list[dict]) -> list[dict
 
 
 def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
-    """CSV/TSV/空白分隔 解析: 第一行表头, 后续每行是一条实体。
+    """CSV/TSV/空白分隔 解析: 第一行表头, 后续每行是一条实体.
     自动识别逗号/制表符/分号/竖线分隔(csv.Sniffer), 不识别时回退到空白拆分(处理 free -m 等变长空白输出).
     """
     results: list[dict] = []
@@ -282,7 +282,7 @@ def _try_float(s: str) -> float | None:
 
 
 def _json_get(obj: dict, path: str):
-    """简易 JSON path 取值, 支持 "a.b.c" """
+    """简易 JSON path 取值, 支持 'a.b.c'"""
     cur = obj
     for seg in path.split("."):
         if isinstance(cur, dict) and seg in cur:

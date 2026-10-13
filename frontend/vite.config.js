@@ -6,15 +6,15 @@ import { resolve } from 'path'
 export default defineConfig({
   plugins: [
     vue(),
-    // 预编译 i18n 文案（AST），避免 vue-i18n 运行时 new Function 触发 CSP unsafe-eval 拦截
+    // 预编译 i18n 文案(AST),避免 vue-i18n 运行时 new Function 触发 CSP unsafe-eval 拦截
     vueI18n({
       include: [resolve(__dirname, 'src/locales/*.json')],
-      strictMessage: false, // 文案含 <br>（landing 卡片 v-html 渲染），默认 true 会报错
+      strictMessage: false, // 文案含 <br>(landing 卡片 v-html 渲染),默认 true 会报错
     }),
   ],
-  // unplugin-vue-i18n v11 已默认产出 JIT AST 文案，但 vue-i18n 9.x runtime 需显式开启
-  // JIT 编译才会 registerMessageCompiler(compile)，否则 t() 会把 AST 原样返回，
-  // 抛 "Unexpected return type in composer"。JIT 走 format(ast)，不用 new Function，CSP 不受影响。
+  // unplugin-vue-i18n v11 已默认产出 JIT AST 文案,但 vue-i18n 9.x runtime 需显式开启
+  // JIT 编译才会 registerMessageCompiler(compile),否则 t() 会把 AST 原样返回,
+  // 抛 "Unexpected return type in composer".JIT 走 format(ast),不用 new Function,CSP 不受影响.
   define: {
     __INTLIFY_JIT_COMPILATION__: true,
   },

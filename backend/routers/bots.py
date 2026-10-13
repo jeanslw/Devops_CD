@@ -1,4 +1,4 @@
-"""BOT 管理路由 — 钉钉/企微/自定义 webhook"""
+"""BOT 管理路由 - 钉钉/企微/自定义 webhook"""
 
 import pymysql
 from fastapi import APIRouter, Depends
