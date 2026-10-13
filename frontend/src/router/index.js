@@ -1,5 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
+// LoginView 由 App.vue 的登录门静态渲染(未登录分支),这里再懒加载无法拆出独立 chunk,
+// 故改为静态引入,与 App.vue 同源,避免 Vite 告警「dynamically imported but also statically imported」.
+import LoginView from '@/views/LoginView.vue'
 
 const routes = [
   {
@@ -25,7 +28,7 @@ const routes = [
   {
     path: '/login',
     name: 'Login',
-    component: () => import('@/views/LoginView.vue'),
+    component: LoginView,
   },
   {
     path: '/servers',
