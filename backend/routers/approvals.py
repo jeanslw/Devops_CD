@@ -164,9 +164,8 @@ def execute_approval(
     try:
         result = svc.run_approval(db, approval_id, exec_user)
     except Exception:
-        # 双保险:与 execute-stream 的兜底一致.领取成功后单据已是 deploying,
-        # 且关联部署记录 running 持有项目并发锁--异常时必须置 failed 并退回
-        # 部署记录 pending 释放锁,否则单据卡死,该项目被锁到进程重启.
+        # 双保险:与 execute-stream 的兜底一致.领取后单据已是 deploying,关联部署记录 running
+        # 持有项目并发锁,异常时必须置 failed 并退回 pending 释放锁,否则该项目被锁到进程重启.
         logger.error("Approval execute failed id=%s", approval_id, exc_info=True)
         with suppress(Exception):
             svc._transition(db, approval_id, [svc.DEPLOYING], svc.FAILED)

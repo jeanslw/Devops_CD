@@ -157,9 +157,9 @@ deploy_run_manager = DeployRunManager()
 
 
 # ── 心跳:多副本 / 多 worker 隔离 ──
-# running 记录带 runner(进程实例标识)+ heartbeat_at,证明持锁进程仍存活.
-# 其他进程启动恢复(recover_stale_running)时只清"无实例标识或心跳已过期"的记录,
-# 不动其他进程正在执行的部署.心跳间隔须远小于恢复的过期阈值.
+# running 记录带 runner(进程实例标识)+ heartbeat_at,证明持锁进程仍存活;其他进程启动恢复
+# (recover_stale_running)时只清"无实例标识或心跳已过期"的记录,不动其他进程正在执行的部署.
+# 心跳间隔须远小于恢复的过期阈值.
 _HEARTBEAT_INTERVAL = 15  # 秒
 _heartbeat_thread = None
 _heartbeat_stop = threading.Event()
@@ -439,9 +439,8 @@ def finish_deploy_record(
     output_truncated = (output or "")[: settings.log_truncate_chars]
     stage_times_json = json.dumps(stage_times or [], ensure_ascii=False)
 
-    # terminated 由部署线程自身检测到取消时写入:此时允许在 cancel 已置 terminated 后
-    # 补充 output/duration,故按 id 无条件更新;其余终态只终结仍为 running 的记录,
-    # 避免覆盖并发 cancel 写入的 terminated.
+    # terminated 由部署线程自身检测到取消时写入(cancel 可能已置过 terminated),故按 id 无条件
+    # 更新以补 output/duration;其余终态只终结仍为 running 的记录,避免覆盖并发 cancel 的写入.
     where_clause = "WHERE id=?" if normalized_status == "terminated" else "WHERE id=? AND status='running'"
     note_clause = ", deploy_note=?" if note is not None else ""
     note_value = (note or "")[:512] if note is not None else None

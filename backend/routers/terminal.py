@@ -63,9 +63,9 @@ async def _ws_verify(token: str | None = None) -> str:
     if not token:
         raise HTTPException(401, "请登录")
     db = get_db()
-    # 部署闸门:与 REST 同口径 -- CD 表没建全时 WebShell(最高危操作)一律拒绝.
-    # 这里是独立鉴权路径,若不拦,缺表会在握手期变成未捕获异常(而非干净的拒绝);
-    # 故把 AppException(503) 转成 HTTPException,由调用方按状态码关闭连接.
+    # 部署闸门:与 REST 同口径 -- CD 表没建全时 WebShell(最高危操作)一律拒绝.这里是独立鉴权路径,
+    # 若不拦,缺表会在握手期变成未捕获异常(而非干净拒绝);故把 AppException(503) 转成 HTTPException,
+    # 由调用方按状态码关闭连接.
     try:
         cd_deploy_gate(db)
     except AppException as exc:
@@ -78,9 +78,8 @@ async def _ws_verify(token: str | None = None) -> str:
             _delete_session(conn, token)
             raise HTTPException(401, "token 已过期，请重新登录")
         if settings.auth_mode == "oidc":
-            # OIDC 模式:只校验 cd_sessions + 惰性复核 Glue.WebShell 是独立鉴权路径,
-            # 若不在这里分支,切档后 WS 握手仍会去读共享 admin_users(见 docs/SSO_OIDC_ZH.md §7.2).
-            # AppException → HTTPException:调用方按状态码关闭连接;401/503 都是 fail-closed.
+            # OIDC 模式:只校验 cd_sessions + 惰性复核 Glue;切档后 WS 握手仍会读共享 admin_users,
+            # 故必须在此分支(见 docs/SSO_OIDC_ZH.md §7.2);异常转换同上,401/503 都是 fail-closed.
             try:
                 ident = _oidc_identity(db, token, sess["username"])
             except AppException as exc:
@@ -220,10 +219,9 @@ async def terminal(websocket: WebSocket, server_id: int):
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
                     break
-            # 注意:必须用 asyncio.TimeoutError 而非内置 TimeoutError.
-            # Python 3.11+ 两者等价,但 Python 3.10 中 asyncio.wait_for 抛的是
-            # asyncio.exceptions.TimeoutError(独立类,非 builtins.TimeoutError 子类),
-            # 用内置 TimeoutError 会捕获不到导致 WebSocket 连接中断.
+            # 必须用 asyncio.TimeoutError 而非内置 TimeoutError:3.10 里 asyncio.wait_for 抛的是
+            # asyncio.exceptions.TimeoutError(独立类,非 builtins 子类),内置类捕不到会中断 WS 连接
+            # (3.11+ 两者等价).
             except asyncio.TimeoutError:
                 continue
             except WebSocketDisconnect:
@@ -253,9 +251,8 @@ async def upload_file(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-    # 安全校验:跨平台文件名防路径穿越
-    # 浏览器可能传入 Windows 完整路径 (D:\tmp\2012.txt),\ 在 Linux 上不被识别为分隔符
-    # 统一将 \ 转为 /,再取 basename,确保 Windows/Linux 后端行为一致
+    # 安全校验:跨平台文件名防路径穿越.浏览器可能传入 Windows 完整路径(D:\tmp\2012.txt),\
+    # 在 Linux 上不算分隔符,故先统一转 / 再取 basename,保证两端行为一致.
     _fn = (file.filename or "").replace("\\", "/")
     _fn = re.sub(r"^[a-zA-Z]:", "", _fn)  # 去除 Windows 盘符
     safe_filename = _fn.rsplit("/", 1)[-1]
@@ -266,9 +263,8 @@ async def upload_file(
     if not path.startswith("/"):
         raise ValidationError("路径必须为绝对路径，如 /tmp", error_key="errors.path_absolute")
 
-    # 安全校验:路径遍历防护,解析 ../ 等符号
-    # 用 posixpath 强制按 POSIX 规则归一化,无论 Python 跑在 Windows 还是 Linux 都一致
-    # (os.path.realpath 在 Windows 上会自动加盘符 D:\,导致 SFTP 把目标写到错误位置)
+    # 安全校验:路径遍历防护(解析 ../ 等).用 posixpath 强制按 POSIX 规则归一化,两平台一致 --
+    # os.path.realpath 在 Windows 上会自动加盘符 D:\,导致 SFTP 把目标写到错误位置.
     combined = (path.rstrip("/") + "/" + safe_filename).replace("\\", "/")
     combined = re.sub(r"^[a-zA-Z]:", "", combined)  # 去 Windows 盘符
     target = posixpath.normpath(combined)

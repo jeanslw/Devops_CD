@@ -27,18 +27,16 @@ router = APIRouter(tags=["auth"])
 
 @router.post("/api/login")
 def login(req: LoginRequest, request: Request, response: Response, db: Database = Depends(get_db)):
-    # 登录失败限流:与 CI(Devops-Glue)共享 cache 表计数,5 次失败锁 15 分钟.
-    # 必须在验密之前检查,任何失败(含停用/无 CD 权限)都计数,成功才清零--
-    # 唯一例外是"CD 未部署"(见下),它是部署状态而非凭据失败,不计入.
+    # 登录失败限流:与 CI(Devops-Glue)共享 cache 表计数,5 次失败锁 15 分钟;须在验密之前检查,
+    # 任何失败(含停用 / 无 CD 权限)都计数,成功才清零;唯一例外是"CD 未部署"(部署状态,见下).
     ip = client_ip(request)
-    # 部署闸门:清单(CD_REQUIRED_TABLES)没建全时禁止登录,且不代为建表,提示按驱动给出补齐动作.
-    # 必须排在限流计数之前:未启用的部署不该在共享 cache 表里累积失败次数,
-    # 更不该把管理员的账号锁掉(那把锁属于 Devops-Glue,CD 无权污染).
+    # 部署闸门:清单(CD_REQUIRED_TABLES)没建全时禁止登录,且不代为建表,提示按驱动给出补齐动作;
+    # 须排在限流计数之前 -- 未启用的部署不该在共享 cache 表累积失败次数,更不该锁掉管理员账号
+    # (那把锁属于 Devops-Glue,CD 无权污染).
     cd_deploy_gate(db)
     # ── 模式守卫:OIDC 模式下本地密码登录关闭 ──
-    # 必须排在登录失败限流之前:这条拒绝属于"模式",不该在 Devops-Glue 共享的 cache 表里
-    # 记一笔失败次数(更不该把管理员账号锁掉).回退到 local 即立即恢复(代码保留),
-    # 见 docs/SSO_OIDC_ZH.md §6.3 / §7.1.
+    # 须排在登录失败限流之前(模式类拒绝属于另一类,不该计入共享失败锁).回退到 local 即立即恢复
+    # (代码保留),见 docs/SSO_OIDC_ZH.md §6.3 / §7.1.
     if settings.auth_mode == "oidc":
         raise AppException(
             "本地密码登录已停用，请使用 Devops-Glue 单点登录",

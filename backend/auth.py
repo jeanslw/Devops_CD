@@ -108,39 +108,33 @@ def get_db() -> Database:
 def cd_deploy_gate(db: Database) -> None:
     """部署闸门:CD 必须'已启用'且'表建全'才放行,否则禁止一切操作.
 
-    判据来自 Devops-Glue 的集成服务契约表(CI 是唯一写入方;语义见 database.py 顶部注释):
+    判据 = Devops-Glue 的集成服务契约表(CI 是唯一写入方;语义见 database.py 顶部注释):
+    1) 未启用(契约表 / 契约行缺失,或 enabled<>1)→ 503 errors.cd_not_enabled,**用户可见提示
+       只留 CD_NOT_ENABLED_MSG**(免把提示框撑长),动作细节(cd_not_enabled_hint)随 detail.hint
+       与启动日志下发;CD 不提供自开通入口,也不会因为'表恰好存在'就放行;
+    2) 已启用但清单没建全 → 503 errors.cd_not_deployed,带缺失表明细 + 按 provision 给正确动作
+       (auto:CD 自动建表,重启即自愈;manual:MySQL 导入 database/init_mysql.sql);
+    3) 两者都满足才放行.半套 schema 一律不放行:登录后各功能只会缺表 500,甚至写坏数据.
 
-    1) 未启用(契约表 / 契约行缺失,或 enabled<>1)→ 503 errors.cd_not_enabled,**用户可见提示只留
-       CD_NOT_ENABLED_MSG 这一句**(提示框不被长文案撑长):动作细节(cd_not_enabled_hint)随
-       detail.hint 与服务端启动日志下发 -- CD 不提供自开通入口,也不会因为'表恰好存在'就放行;
-    2) 已启用但清单没建全 → 503 errors.cd_not_deployed,带上缺失表明细 + 按 provision 给出正确动作
-       (auto:CD 会自动建表,重启即自愈;manual:MySQL 导入 database/init_mysql.sql);
-    3) 两者都满足才放行.
-
-    半套 schema 一律不放行:登录后各功能只会缺表 500,甚至写坏数据,宁可在入口整体拒绝.
-    覆盖范围:登录(routers/auth.login,排在限流计数之前)+ authenticate + 所有带 verify_token /
+    覆盖:登录(routers/auth.login,排在限流计数之前)+ authenticate + 所有带 verify_token /
     get_current_user 的接口 + 公开 Webhook 接收端点 + WebShell 的 WS 握手 -- 即'即使能登录,
     也禁止做任何操作';无认证的探活接口(/health,/api/info,/metrics)保持可用.
 
-    该拒绝属于'部署状态'而非'凭据失败',因此不计入与 Devops-Glue 共享的登录失败锁.
-
-    另一种 503 与之严格区分:数据库**当前不可用**(连不上 / 建不了表 / 被锁 / 只读)抛的是
-    backend.database.DatabaseUnavailableError → 503 errors.db_unavailable(排查连接,配置,
-    文件权限,磁盘空间),不混进上面两种骗人去点开关或重跑建表脚本.
-
-    顺序'先读契约,再查清单':未启用时不必去数表(少一次元数据查询),提示也不会跑偏.
+    该拒绝属'部署状态'而非'凭据失败',不计入与 Glue 共享的登录失败锁;数据库当前不可用抛
+    DatabaseUnavailableError(503 errors.db_unavailable),与上面两种严格区分(见 database.py).
+    顺序'先读契约,再查清单':未启用时不数表(省一次元数据查询),提示也不跑偏.
     """
     from backend.exceptions import AppException
 
     state = db.cd_integration_state()
     if not state.enabled:
         raise AppException(
-            # 用户可见文案只留这一句(登录页提示框读 error,toast 读 error_key→i18n,两处都只有它);
-            # message 的定位就是"无前端翻译时的兜底展示"(见 exceptions.AppException),不该塞长提示.
+            # 用户可见文案只留这一句(登录页读 error,toast 读 error_key→i18n);message 的定位
+            # 就是"无前端翻译时的兜底展示"(见 exceptions.AppException),不该塞长提示.
             CD_NOT_ENABLED_MSG,
             status_code=503,
-            # 动作细节(cd_not_enabled_hint)改走 detail.hint:useError 只渲染"字符串型"detail,
-            # dict 不会被弹进提示框;curl / 脚本排查时仍能拿到完整指引(启动日志也已打印同一份).
+            # 动作细节(cd_not_enabled_hint)走 detail.hint:useError 只渲染"字符串型"detail,
+            # dict 不进提示框;curl / 脚本排查仍能拿到完整指引(启动日志也已打印同一份).
             detail={"hint": cd_not_enabled_hint()},
             error_key="errors.cd_not_enabled",
             error_params={"service": CD_SYSTEM},
@@ -158,8 +152,8 @@ def cd_deploy_gate(db: Database) -> None:
 
 
 # ── OIDC 模式(AUTH_MODE=oidc):会话校验 + 惰性 Glue 复核,全程不读共享表 ──
-# 两种模式共用同一张 cd_sessions(CD 自有表),同一套不透明 token,同一套 401 语义:
-# "切模式"不需要迁移任何数据,回滚也只是把 AUTH_MODE 改回 local(见 docs/SSO_OIDC_ZH.md §4.2).
+# 两种模式共用 cd_sessions(CD 自有表),同一套不透明 token 与 401 语义:切模式不需要迁移
+# 任何数据,回滚也只是把 AUTH_MODE 改回 local(见 docs/SSO_OIDC_ZH.md §4.2).
 
 
 def _oidc_session(db: Database, token: str) -> dict:
@@ -196,13 +190,12 @@ def _identity_disabled(ident: dict) -> bool:
 
 def _oidc_identity(db: Database, token: str, username: str) -> dict:
     """惰性复核 + 准入(每 OIDC_REVALIDATE_SECONDS 至多 1~2 次 Glue 调用),返回身份 dict:
+    {username, role, systems, status, permissions, usable, checked_at, last_ok_at}.
 
-        {username, role, systems, status, permissions, usable, checked_at, last_ok_at}
-
-    · status=0 / systems 不含 cd 即 删会话行 + 401(停用即刻踢下线,前端 handle401 → logout);
-    · 账号被删 / 角色悬空 即 删会话行 + 401 errors.identity_unavailable(明确否定,不进软失败);
-    · Glue 不可达且超出软失败窗口 即 503 errors.service_unavailable(fail-closed);
-    · 窗口内命中进程内缓存 即 零 Glue 调用(见 backend/services/glue_identity.py).
+    · status=0 / systems 不含 cd → 删会话行 + 401(停用即刻踢下线,前端 handle401 → logout);
+    · 账号被删 / 角色悬空 → 删会话行 + 401 errors.identity_unavailable(明确否定,不进软失败);
+    · Glue 不可达且超出软失败窗口 → 503 errors.service_unavailable(fail-closed);
+    · 窗口内命中进程内缓存 → 零 Glue 调用(见 backend/services/glue_identity.py).
     """
     from backend.exceptions import AppException
 
@@ -228,9 +221,8 @@ def verify_token(
     db: Database = Depends(get_db),
 ) -> str:
     """从 cookie / Bearer token 验证用户身份,返回 username.
-    服务端会话表 + 不透明 token:token 本身不携带任何用户信息,
-    校验即查 cd_sessions(O(1) 哈希查找),logout 删行即时失效.
-    同时检查 systems 字段(如果存在)是否允许 CD 访问."""
+    服务端会话表 + 不透明 token:token 本身不携带用户信息,校验即查 cd_sessions
+    (O(1) 哈希查找),logout 删行即时失效;同时检查 systems 是否允许 CD 访问."""
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
@@ -380,9 +372,8 @@ def resolve_deploy_perm(deploy_type: str, cd_type: str = "") -> str:
 
 def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None:
     """部署执行前的二次权限校验(防御深度:API 层 + Service 层双保险).
-    若用户既无 blanket 级 cd.deploy-manage,也无对应 deploy_type 的子权限则抛 403.
-    super_admin 直接放行;通配权限 '*'(OIDC 模式下 Glue 授予超管的权限)同样放行
-    (与 require_perm 语义保持一致)."""
+    既无 blanket 级 cd.deploy-manage 也无对应 deploy_type 子权限则抛 403.
+    super_admin 直接放行;通配权限 '*'(OIDC 下 Glue 授予超管的权限)同样放行(同 require_perm)."""
     role = user.get("role") or ""
     if role == settings.super_admin_role:
         return
@@ -397,10 +388,9 @@ def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None
 def verify_password(plain: str, hashed: str | None) -> bool:
     """校验密码哈希,自动识别算法:argon2id($argon2 前缀)或 bcrypt(默认).
 
-    CI 侧 PASSWORD_HASH_ALGO 可在 bcrypt / argon2id 间切换,CD 必须兼容两者,
-    不能硬编码单一算法(否则 CI 一切到 argon2id,CD 登录即抛 ValueError: Invalid salt).
-    任何校验失败(NULL/空哈希 / 算法未知 / 哈希格式损坏 / 未安装 argon2-cffi)都返回
-    False,不抛异常 -- 登录路径不允许因脏数据 500.
+    CI 侧 PASSWORD_HASH_ALGO 可在两者间切换,CD 必须兼容(不能硬编码:CI 一切到 argon2id,
+    CD 登录即抛 ValueError: Invalid salt).任何校验失败(NULL / 空哈希 / 算法未知 / 哈希格式
+    损坏 / 未安装 argon2-cffi)都返回 False,不抛异常 -- 登录路径不允许因脏数据 500.
     """
     if not hashed:
         return False
@@ -422,9 +412,9 @@ def verify_password(plain: str, hashed: str | None) -> bool:
 
 def authenticate(user: str, password: str, db: Database) -> str | None:
     """验证用户凭据,同时检查 systems(如果存在)是否允许 CD 访问.
-    成功返回不透明会话 token(会话写入 cd_sessions,logout 删行即时吊销);
-    CD 表没建全(MySQL 未导入建表脚本 / SQLite 建表未跑全)抛出 AppException(503):未部署即禁止登录,
-    应用也不代为建表;账号已停用抛出 AppException(403) 以区别于密码错误;
+    成功返回不透明会话 token(写入 cd_sessions,logout 删行即时吊销);
+    CD 表没建全(MySQL 未导入脚本 / SQLite 建表未跑全)抛 AppException(503):未部署即禁止登录,
+    应用也不代为建表;账号已停用抛 AppException(403) 以区别于密码错误;
     其余失败返回 None(由调用方统一按'账号或密码错误'处理)"""
     from backend.exceptions import AppException
 
@@ -471,10 +461,9 @@ def revoke_session(db: Database, token: str) -> None:
 def load_user_context(db: Database, username: str) -> dict:
     """按用户名加载执行上下文 {username, role, permissions}.
 
-    用于审批单/回滚在后台执行时重建执行身份(无 token 场景).返回的角色与权限
-    与 get_current_user 一致,执行时仍会做部署权限二次校验(防御深度).
-    账号已停用(status=0)抛 AppException(403):手动执行路径登录即被拦,
-    后台/定时执行路径由此处拦截,保证停用账号的已批准定时单不会被自动执行.
+    用于审批单 / 回滚后台执行时重建执行身份(无 token 场景).角色与权限同 get_current_user,
+    执行时仍做部署权限二次校验(防御深度).账号已停用(status=0)抛 AppException(403):
+    手动执行路径登录即被拦,后台 / 定时执行路径由此处拦截,保证停用账号的已批准定时单不会被执行.
     """
     from backend.exceptions import AppException
 

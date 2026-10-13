@@ -16,14 +16,12 @@ from backend.exceptions import AppException
 class DatabaseUnavailableError(AppException):
     """数据库**当前不可用**(连不上 / 建不了表 / 库被锁或只读 / 磁盘满)-- 与'CD 表未部署'严格区分.
 
-    两种 503 必须分清(提示与排查方向完全不同):
+    两种 503 混为一谈会把运维指向错误动作(重跑建表脚本,问题照旧),故 error_key 分开:
       - '清单里的表没建全'= **部署状态**问题 → 503 errors.cd_not_deployed(让人去补齐建表);
       - '库现在连不上/写不进'= **运行环境**问题 → 本异常 → 503 errors.db_unavailable
         (让人去查连接,配置,文件权限(SQLite 目录可写),磁盘空间).
-    都返回 503,但 error_key 不同:混为一谈会把运维指向错误动作(重跑建表脚本,问题照旧).
-
     继承 AppException:由 main.py 的统一异常处理器输出带 error_key/error_params 的 JSON(503),
-    因此无论抛在依赖注入(get_db)还是路由内部,客户端拿到的都是结构化错误而不是裸 500.
+    故无论抛在依赖注入(get_db)还是路由内部,客户端拿到的都是结构化错误而不是裸 500.
     """
 
     def __init__(self, message: str, driver: str = "", reason: str = ""):
@@ -39,26 +37,23 @@ class DatabaseUnavailableError(AppException):
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 
 # ── CD 部署闸门:集成服务契约 × 唯一表清单 ──────────────────────────────────────
-# "CD 启用了没有"不再看表在不在,而是看 Devops-Glue 的集成服务契约表 integrated_services
-# 里 service_name='cd' 的那一行(CI 是唯一写入方;语义见 Devops-Glue 的 ADMIN_MANUAL §16):
-#   - 契约表缺失 / 契约行缺失 / enabled<>1 → **CD 未启用**:应用零 DDL,
-#     登录与所有已持有会话的请求统一 503 errors.cd_not_enabled(去 CI 后台启用);
-#   - enabled=1 且 provision='auto'   → CD **被授权自动建表**(MySQL / SQLite 皆然):
-#     首次连库自动建全下面的清单 + 补齐既有表的缺失列,缺表则 503 errors.cd_not_deployed;
-#   - enabled=1 且 provision='manual' → CD **不建表**,只认运维预建的清单表
-#     (MySQL 由管理员导入 database/init_mysql.sql),缺表同样 503 errors.cd_not_deployed.
-# 关闭集成服务(enabled=0)只冻结准入,**不 DROP / 清空 CD 表** -- 数据原样保留.
+# "CD 启用了没有"看 Devops-Glue 的集成服务契约表 integrated_services 里 service_name='cd'
+# 那一行(CI 是唯一写入方;语义见 Glue 的 ADMIN_MANUAL §16),不再看表在不在:
+#   - 契约表 / 契约行缺失 或 enabled<>1 → **CD 未启用**:应用零 DDL,登录与所有已持有会话的
+#     请求统一 503 errors.cd_not_enabled(去 CI 后台启用);关闭集成服务只冻结准入,
+#     **不 DROP / 清空 CD 表** -- 数据原样保留;
+#   - enabled=1 且 provision='auto'   → CD **被授权自动建表**(MySQL / SQLite 皆然):首次
+#     连库建全清单 + 补齐既有表的缺失列;
+#   - enabled=1 且 provision='manual' → CD **不建表**,只认运维预建的清单表(MySQL 由管理员
+#     导入 database/init_mysql.sql);后两种缺表时统一 503 errors.cd_not_deployed.
+# 少任何一张表都当作未部署(半套 schema 放行只会让登录后功能到处 500,甚至写坏数据),故抢在
+# 入口整体拒绝,见 backend.auth.cd_deploy_gate.
 #
-# 下面这份清单仍然在用,但它定义的是"CD 表有哪些",不再等于"谁负责建":
-# 建表授权来自 CI 后台开关(enabled + provision),闸门 = 契约状态 × 清单完整性.
-# 少任何一张都当作未部署 -- 半套 schema 放行只会让登录后的功能到处 500,甚至写坏数据,
-# 所以抢在入口整体拒绝(见 backend.auth.cd_deploy_gate:登录 + 所有已持有会话的请求统一 503).
-#
-# 增删一张 CD 表 = 四处同步(清单是唯一真相源;闸门,错误文案,张数全都自动跟随,代码不写死数字):
+# 增删一张 CD 表 = 四处同步(清单是唯一真相源:闸门 / 错误文案 / 张数自动跟随,代码不写死数字):
 #   1. 下面的 CD_REQUIRED_TABLES(唯一清单,顺序 = 错误提示里的展示顺序)
 #   2. database/init_mysql.sql(manual 模式:管理员导入的建表脚本)
 #   3. backend/database.py::_MYSQL_TABLE_DDL(auto 模式:MySQL 自动建表 DDL)
-#   4. backend/database.py::_ensure_cd_tables(auto 模式:SQLite 自动建表;结尾自检会当场拦截漏改)
+#   4. backend/database.py::_ensure_cd_tables(auto 模式:SQLite 自动建表;结尾自检当场拦截漏改)
 # 1/2/3 由 backend/tests/test_cd_deploy_gate.py 双向校验,4 由运行时自检兜底.
 CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_servers",
@@ -77,9 +72,8 @@ CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_sessions",
 )
 
-# 列出现存基础表:MySQL 走 information_schema(DATABASE() = 当前共享库),
-# SQLite 走 sqlite_master.视图 v_glue_deploy_logs 是给 Glue 的契约视图,非 CD 自身表,
-# 不参与闸门(故 MySQL 侧限定 BASE TABLE,两驱动语义一致).
+# 列出现存基础表:MySQL 走 information_schema(DATABASE() = 当前共享库),SQLite 走 sqlite_master.
+# 视图 v_glue_deploy_logs 是给 Glue 的契约视图,非 CD 自身表,不参与闸门(故 MySQL 侧限定 BASE TABLE,两驱动语义一致).
 _CD_TABLE_LIST_SQL = {
     "mysql": (
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
@@ -89,9 +83,8 @@ _CD_TABLE_LIST_SQL = {
 
 # ── 集成服务契约(Devops-Glue 侧 integrated_services 表;CI 是唯一写入方)────────────
 # "CD 是否启用 / 能否建表"的唯一开关:CI 的启用向导把 enabled + provision + 配套服务 token
-# 写进这一行,CD 进闸门时直读它,不再用"表在不在"猜启用状态.
-# enabled=0 只冻结准入:契约行,CD 表,CD 数据全部保留(不 DROP / 清空)--
-# 重新启用时 CI 只换掉行上的 token 引用,历史数据继续可用.
+# 写进这一行,CD 进闸门时直读它,不再用"表在不在"猜启用状态;重新启用时 CI 只换行上的 token
+# 引用,历史数据继续可用(三种组合的动作见上).
 INTEGRATED_SERVICES_TABLE = "integrated_services"
 CD_SERVICE_NAME = "cd"
 PROVISION_AUTO = "auto"  # CI 自动迁移模式(DB_AUTO_MIGRATE 开启)→ 授权 CD 自动建表 / 补列
@@ -111,10 +104,9 @@ class CdIntegrationState(NamedTuple):
 
 
 # ── auto 模式的 MySQL 建表 DDL(与 database/init_mysql.sql 同构)──────────────────
-# 为什么代码里再写一份:.dockerignore 排除了 database/ 目录,运维脚本不进镜像,auto 模式下
-# 容器里的 CD 必须自带 MySQL 方言建表语句.两份 DDL 的"表集合 + 每张表的列集合"与索引清单
-# 由 backend/tests/test_cd_deploy_gate.py 严格比对(漂移即测试失败);运行期不解析 SQL 文件.
-# 只建 CD 自有表(cd_*):共享表(admin_users / roles / ci_* 等)schema 归 Devops-Glue,CD 不得触碰.
+# 代码里再写一份:.dockerignore 排除了 database/,运维脚本不进镜像,auto 模式下容器必须自带
+# MySQL 方言建表语句.两份 DDL 的表 / 列集合与索引清单由 backend/tests/test_cd_deploy_gate.py
+# 严格比对(漂移即测试失败);运行期不解析 SQL 文件.只建 CD 自有表(cd_*),共享表归 Glue.
 _MYSQL_TABLE_DDL: dict[str, str] = {
     "cd_servers": """CREATE TABLE IF NOT EXISTS cd_servers (
         id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -280,10 +272,9 @@ _MYSQL_TABLE_DDL: dict[str, str] = {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 }
 
-# auto 模式下的 MySQL 索引清单(幂等:重复建索引报 1061,由 suppress 吞掉).
-# 只建 CD 自有表的索引 -- init_mysql.sql 里对 ci_pipeline_artifacts / ci_job_git_map 的索引
-# 调用是给运维脚本用的历史遗留,CD 运行期不触碰共享表.
-# 元组含义:(索引名, 表名, 列清单, 是否唯一).
+# auto 模式下的 MySQL 索引清单,元组含义 = (索引名, 表名, 列清单, 是否唯一);幂等:
+# 重复建索引报 1061,由 suppress 吞掉.只建 CD 自有表的索引 -- init_mysql.sql 里对
+# ci_pipeline_artifacts / ci_job_git_map 的索引调用是运维脚本的历史遗留,CD 运行期不触碰共享表.
 _MYSQL_INDEXES: tuple[tuple[str, str, str, bool], ...] = (
     ("idx_cds_type", "cd_servers", "type", False),
     ("idx_cdl_project", "cd_deploy_logs", "project", False),
@@ -300,9 +291,8 @@ _MYSQL_INDEXES: tuple[tuple[str, str, str, bool], ...] = (
     ("idx_cwh_enabled", "cd_webhooks", "enabled", False),
 )
 
-# auto 模式下的 MySQL 缺列迁移(CREATE TABLE IF NOT EXISTS 不会为已存在的表补列).
-# 与 SQLite 侧 _ensure_cd_tables 的迁移清单在"最终列集合"上必须一致(由测试锁定).
-# 注意:MySQL 的 TEXT 列不支持字面量 DEFAULT,统一用 VARCHAR.
+# auto 模式下的 MySQL 缺列迁移(CREATE TABLE IF NOT EXISTS 不会为已存在的表补列),与 SQLite 侧
+# _ensure_cd_tables 的清单在"最终列集合"上必须一致(测试锁定).TEXT 列不支持字面量 DEFAULT,统一 VARCHAR.
 _MYSQL_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("cd_deploy_logs", "approval_id", "INT DEFAULT 0"),
     ("cd_deploy_logs", "runner", "VARCHAR(128) DEFAULT ''"),
@@ -456,16 +446,11 @@ class _SqliteWrapper:
 class Database:
     """统一数据库连接 - 无独立数据库,完全跟随 Devops-Glue API.
 
-    启用与建表规则(唯一开关 = Devops-Glue 的集成服务契约表 integrated_services):
-      - 未启用(契约表 / 契约行缺失,或 enabled<>1):**零 DDL**,cd_deploy_gate 统一 503
-        errors.cd_not_enabled(让人去 CI 后台开启,而不是去补表);
-      - enabled=1 + provision='auto'   :**CD 自动建表**(MySQL / SQLite 同理)-- 首次连库
-        建全 CD_REQUIRED_TABLES + 补既有表缺失列 + 索引 + 契约视图;缺表则 503 errors.cd_not_deployed;
-      - enabled=1 + provision='manual' :**不建表,不补列**,只认运维预建的清单表
-        (MySQL 由管理员执行 database/init_mysql.sql,详见 docs/ADMIN_MANUAL_ZH.md).
-    共享表(admin_users / roles / ci_* 等)schema 归 Devops-Glue,CD 在任何模式下都不得改动.
-    使用 DBUtils 连接池.
-    启动时校验 ci_pipeline_artifacts 表是否存在,不存在则报错(数据库指向错误).
+    建表 / 补列规则:唯一开关 = 集成服务契约表(三种组合的动作见本文件顶部注释),未启用 /
+    manual 时**零 DDL**,enabled + auto 时建全 CD_REQUIRED_TABLES + 补缺失列 + 索引 + 契约视图
+    (MySQL / SQLite 各自实现,见下方 _ensure_*;全部幂等).
+    共享表(admin_users / roles / ci_* 等)schema 归 Glue,CD 任何模式下都不得改动;连接走 DBUtils
+    连接池.启动时校验 ci_pipeline_artifacts 表是否存在,不存在即报错(库指向错误).
     """
 
     DRIVERS = ("sqlite", "mysql")
@@ -588,15 +573,10 @@ class Database:
         """返回共享库中缺失的 CD 表名(空列表 = 表建全 = CD 已部署).
 
         '建全'以 CD_REQUIRED_TABLES 为准(与 database/init_mysql.sql,SQLite 建表逻辑一致):
-        少任何一张都算未部署 -- 半套 schema 不该放行登录(登录后处处 500 更糟),
-        判定由 backend.auth.cd_deploy_gate 统一消费(登录 + 已持有会话的请求都拒绝).
-
-        注意:本方法只回答'表在不在',不回答'CD 启用了没有'-- 启用与否由集成服务契约表决定
-        (cd_integration_state),闸门按'先看契约,再看清单'的顺序判定,两种拒绝的 error_key 不同.
-
-        缺失表属于'部署状态',不是'数据库故障':连接不可用/建表失败等一律抛
-        DatabaseUnavailableError(503 errors.db_unavailable),避免把库宕机误报成'未部署'而
-        误导运维去重跑建表脚本 -- 两种 503 的 error_key 不同,客户端提示的排查动作也不同.
+        少任何一张都算未部署,判定由 backend.auth.cd_deploy_gate 统一消费(登录 + 已持有会话的
+        请求都拒绝).本方法只回答'表在不在',不回答'CD 启用了没有'(后者看集成服务契约表).
+        连接不可用 / 建表失败一律抛 DatabaseUnavailableError(503 errors.db_unavailable),
+        免得把库宕机误报成'未部署'而误导运维重跑建表脚本.
         """
         try:
             with self.conn() as conn:
@@ -613,11 +593,9 @@ class Database:
         """CD 是否已部署(= CD_REQUIRED_TABLES 清单里的表全部存在,与清单张数无关).
 
         只在'已启用'的前提下才有意义(闸门先看契约表,再调本方法):
-          - provision='auto'  :CD 首次连库自动建全(MySQL 用 _MYSQL_TABLE_DDL,SQLite 用
-            _ensure_cd_tables,两者结尾都有清单自检),正常情况下恒为 True;运行期若被人为 DROP
-            掉某张表,闸门立刻拒绝(不静默补救),重启服务后重新建全;
-          - provision='manual':表归运维预建(MySQL 导入 database/init_mysql.sql),未建全即为 False,
-            此时登录与任何已持有会话的请求都会被拒(503 errors.cd_not_deployed).
+          - provision='auto'  :首次连库自动建全(建表实现结尾都有清单自检,见 _ensure_*),
+            正常恒为 True;运行期被人为 DROP 掉某张表则闸门立刻拒绝(不静默补救),重启后重新建全;
+          - provision='manual':表归运维预建,未建全即 False,登录与已持有会话的请求都会被拒.
         """
         return not self.cd_missing_tables()
 
@@ -647,14 +625,10 @@ class Database:
             wrapper = _SqliteWrapper(raw)
 
         if not Database._tables_ensured:
-            # 建表授权来自集成服务契约(enabled + provision),不再是"MySQL 永不建表的驱动硬规则":
-            #   - 未启用 / provision=manual → **零 DDL**(既不建表也不补列):表齐不齐一律由闸门判定;
-            #     manual 模式下 DDL 归运维(MySQL 跑 database/init_mysql.sql),CD 只读;
-            #   - enabled + provision=auto  → 建全 CD_REQUIRED_TABLES + 缺列迁移 + 索引 + 契约视图
-            #     (MySQL 用 _MYSQL_TABLE_DDL,SQLite 用 _ensure_cd_tables),全部幂等.
+            # 建表授权来自契约(见本文件顶部),不是"MySQL 永不建表"的驱动硬规则:未启用 / manual
+            # 零 DDL(表齐不齐由闸门判定),auto 建全清单 + 缺列 + 索引 + 契约视图(见 _ensure_*).
             # 未启用时不置 _tables_ensured:CI 后台一点"启用",下一个请求就自动建表,无需重启.
-            # admin_users/roles 等共享表 schema 由 Devops-Glue 统一管理,CD 不得改动.
-            # 必须传 wrapper(统一 .execute/.commit 接口):MySQL 池化 raw 连接无 execute.
+            # 须传 wrapper(MySQL 池化 raw 连接没有 .execute/.commit;共享表 schema 归 Glue).
             try:
                 state = self._read_integration_state(wrapper)
                 if state.enabled:
@@ -665,9 +639,8 @@ class Database:
                             self._ensure_cd_tables(wrapper)
                     Database._tables_ensured = True
             except sqlite3.Error as e:
-                # 建表 / 读契约写不进去(只读 / 磁盘满 / 被占用):CD 表当下不可用 → 503 errors.db_unavailable.
-                # 只吞 sqlite3.Error:_ensure_cd_tables / _ensure_mysql_tables 末尾的清单自检抛 RuntimeError
-                # (清单与 DDL 漂移,属代码/配置缺陷)必须原样冒泡,不能被伪装成"服务暂时不可用"而掩盖.
+                # 建表 / 读契约写不进去(只读 / 磁盘满 / 被占用)→ 503 errors.db_unavailable;只吞
+                # sqlite3.Error,而自检抛的 RuntimeError(清单与 DDL 漂移)必须冒泡,不得伪装成故障.
                 wrapper.close()  # 失败也必须释放连接(Windows 上未关闭的句柄会锁住库文件)
                 raise DatabaseUnavailableError(f"自动建表失败（{self._driver}）：{e}", self._driver, str(e)) from e
             except Exception:
@@ -713,11 +686,10 @@ class Database:
     def _ensure_mysql_tables(self, conn):
         """MySQL **auto 模式**(契约行 enabled=1 且 provision='auto')下的自动建表.
 
-        与 manual 模式严格分界:manual 时本方法根本不会被调用(CD 零 DDL,只认运维预建表).
-        顺序:建表 → 索引 → 缺列迁移 → 契约视图,全部幂等,可安全重复执行;
-        只操作 CD 自有表(cd_*),不触碰 Devops-Glue 的共享表(admin_users / roles / ci_* 等).
-        跑完做清单自检:_MYSQL_TABLE_DDL 与 CD_REQUIRED_TABLES 漂移(漏表)当场报错,
-        与 SQLite 侧 _ensure_cd_tables 的自检同构(宁可启动失败,也不留半套 schema).
+        与 manual 严格分界:manual 时本方法根本不会被调用(CD 零 DDL,只认运维预建表).
+        顺序:建表 → 索引 → 缺列迁移 → 契约视图,全幂等,可安全重复执行;只操作 cd_* 自有表,
+        不触碰 Glue 的共享表.跑完做清单自检:_MYSQL_TABLE_DDL 与 CD_REQUIRED_TABLES 漏表即报错
+        (宁可启动失败,也不留半套 schema),与 SQLite 侧自检同构.
         """
         for table in CD_REQUIRED_TABLES:
             ddl = _MYSQL_TABLE_DDL.get(table)
@@ -766,11 +738,10 @@ class Database:
         """MySQL 缺列迁移:只对**已存在**的表 ADD COLUMN,不建表 / 建索引(DDL 授权在调用方).
 
         auto 模式在建表之后调用(补旧库缺的列,否则新增列如 cd_approvals.scheduled_at 的迁移
-        永远跑不到);表不存在时 ALTER 报错被 suppress 吞掉,即零副作用.
-        重复加列报 MySQL 1060 duplicate column,同样 suppress 掉即可.
-        清单与 SQLite 侧逐列对齐(_MYSQL_COLUMN_MIGRATIONS ↔ _ensure_cd_tables,由测试锁定).
-        共享表(admin_users / roles 等)schema 归 Devops-Glue,CD 不得改动.
-        注意:MySQL TEXT 列不支持字面 DEFAULT,统一用 VARCHAR.
+        永远跑不到);表不存在时 ALTER 报错被 suppress 吞掉(零副作用),重复加列报 MySQL 1060
+        duplicate column 同样吞掉.清单与 SQLite 侧逐列对齐(_MYSQL_COLUMN_MIGRATIONS ↔
+        _ensure_cd_tables,由测试锁定);共享表 schema 归 Glue,CD 不得改动.
+        MySQL TEXT 列不支持字面 DEFAULT,统一用 VARCHAR.
         """
         for tbl, col, col_def in _MYSQL_COLUMN_MIGRATIONS:
             with suppress(Exception):
@@ -1052,8 +1023,7 @@ class Database:
         conn.commit()
 
         # ── 清单自检(CD_REQUIRED_TABLES 是唯一真相源)──
-        # 建表跑完必须覆盖清单里的每一张:清单加了表却忘了在上面补 DDL 时,开发机第一次
-        # 连库就当场报错(宁可启动失败,也不要半套 schema 跑起来等闸门 503 才发现).
+        # 清单加了表却忘在上面补 DDL 时,首次连库就当场报错(宁可启动失败,也不要半套 schema 跑起来).
         existing = {_first_col_value(row) for row in conn.execute(_CD_TABLE_LIST_SQL["sqlite"]).fetchall()}
         missing = [t for t in CD_REQUIRED_TABLES if t not in existing]
         if missing:

@@ -295,8 +295,8 @@ def callback(
     logger.info("%s 成功：%s", _LABEL, ident["username"])
     resp = RedirectResponse("/", status_code=302)
     # 会话 cookie 与 /api/login 完全一致(HttpOnly + SameSite=Lax + Path=/,§6.2).
-    # 注意:OIDC 是整页跳转回 SPA,sessionStorage 里的本地登录标志不会保留 即 前端启动需
-    # 自举一次(useAuth.bootstrap → GET /api/me)来还原登录态,见 §7.2 末行.
+    # OIDC 是整页跳转回 SPA,sessionStorage 的本地登录标志不保留,故前端启动需自举一次
+    # (useAuth.bootstrap → GET /api/me)还原登录态,见 §7.2 末行.
     resp.set_cookie(
         "cd_token",
         token,

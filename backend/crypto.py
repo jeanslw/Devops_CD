@@ -16,13 +16,11 @@ from backend.config import BASE_DIR, settings
 
 # ── 密钥管理 ──
 
-# 优先从环境变量读取 SECRET_KEY;否则尝试从 CD 项目根目录的 .cd_secret_key 文件读取;
-# 都不存在则生成新密钥并持久化到该文件.
-# 落盘位置恒为 CD 项目根目录(BASE_DIR):DB_PATH 指向的是与 Devops-Glue 共享的数据库
-# 文件,可能位于第三方项目目录 -- CD 只在自身项目目录内读写运行时文件,不把密钥 /
-# 盐文件写进 Devops-Glue 等项目目录(历史上 sqlite 模式会写进去,见 _key_file_path).
-# 注意:docker compose 部署为 read_only 容器,密钥文件写不出来 -- 该场景由
-# env-check 预检强制要求在 .env 设置 SECRET_KEY(见 docker-compose.yml).
+# 优先读环境变量 SECRET_KEY,其次读 CD 项目根目录的 .cd_secret_key 文件,都不存在则生成并落盘.
+# 落盘位置恒为 CD 项目根目录(BASE_DIR):DB_PATH 指向与 Glue 共享的库,可能位于第三方项目目录,
+# 而 CD 只在自身目录内读写运行时文件(历史上 sqlite 会写进 Glue 项目目录,见 _key_file_path).
+# compose 为 read_only 容器,密钥文件写不出来,故由 env-check 预检强制要求 .env 设置 SECRET_KEY
+# (见 docker-compose.yml).
 
 
 # 历史版本/配套仓库 .env(.example) 中出现过的公开示例值.所有照抄示例的部署共享同一把密钥,
