@@ -39,9 +39,9 @@ lscpu | grep -E '^CPU\(s\)|^Thread|^Core|^Socket'
 
 ## 数据库
 
-### Q: 启动报错 "ci_pipeline_artifacts 表不存在"？
+### Q: CD 提示「未启用」，但数据库看着已配置？
 
-cd_service 必须与 Devops-Glue API 共用同一个数据库。检查 `DB_PATH`（SQLite）或 `DB_*`（MySQL）配置是否正确。
+cd_service 必须与 Devops-Glue API 共用同一个数据库实例（CD 只读其中的 `integrated_services` 契约表）。若该表缺失——例如 `DB_PATH`/`DB_*` 指向了错误的库——CD 会按「未启用」fail-closed。请核对 `DB_PATH`（SQLite）或 `DB_*`（MySQL）是否与 Glue 的库一致。
 
 ### Q: 登录报错「CD 服务未启用：请在 Devops-Glue 后台『API集成服务』中启用 Devops-CD」？
 

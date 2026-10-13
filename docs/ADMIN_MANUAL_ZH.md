@@ -87,7 +87,7 @@ SECRET_KEY=
 TRUSTED_PROXY_HOPS=0
 
 # ── 认证模式（默认档 oidc = Devops-Glue 单点登录；改 local + 重启即回退本地密码登录）──
-# oidc 必填以下三项，缺任一项时 compose 预检中止启动、裸机启动日志记 ERROR（见 docs/SSO_OIDC_ZH.md §6）
+# oidc 必填以下三项，缺任一项时 compose 预检中止启动、裸机启动日志记 ERROR
 AUTH_MODE=oidc
 OIDC_ISSUER=http://glue.example.com        # Glue 对外地址，须与 discovery 的 issuer 完全一致
 CD_OIDC_SECRET=                            # 与 Glue oauth_clients['cd']['secret'] 完全一致
@@ -131,7 +131,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ## 3. 数据库说明
 
-> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例。启动时会校验 `ci_pipeline_artifacts` 表是否存在。
+> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例。CD 只读共享库里的 `integrated_services` 契约表（不再探测 `ci_pipeline_artifacts`）；该表/行缺失时一律按「未启用」fail-closed。
 
 | 驱动 | 适用场景 | 注意 |
 |------|----------|------|
@@ -498,7 +498,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 - 登录：POST `/api/login`，用户名 + 密码
 - 登录失败限流：同一 IP+用户名连续失败 5 次锁定 15 分钟
 
-两档切换只需**改 `AUTH_MODE` + 重启**（零 DDL，CD 数据无损）；切换步骤与 fail-closed 口径见 `docs/SSO_OIDC_ZH.md` §6。
+两档切换只需**改 `AUTH_MODE` + 重启**（零 DDL，CD 数据无损）；
 
 ## 8. CI 构建管理集成（可选）
 

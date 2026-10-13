@@ -52,7 +52,7 @@
 		┌─────────────────────────────────────────────┐
 		│ Shared Database (SQLite / MySQL / MariaDB)  │
 		│                                             │
-		│  ci_pipeline_artifacts ← CI write / CD read │
+		│  ci_pipeline_artifacts ← CI write           │
 		│  v_glue_deploy_logs    ← CI read-only view  │
 		│  cd_servers            ←  CD maintain       │
 		│  cd_deploy_logs        ← CD write           │

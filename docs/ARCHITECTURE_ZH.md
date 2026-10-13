@@ -53,7 +53,7 @@
 		┌──────────────────────────────────────┐
 		│ 共享数据库 (SQLite / MySQL / MariaDB)│
 		│                                      │
-		│  ci_pipeline_artifacts ← CI 写/CD 读 │
+		│  ci_pipeline_artifacts ← CI 写       │
 		│  v_glue_deploy_logs    ← CI 只读视图 │
 		│  cd_servers            ← CD 维护     │
 		│  cd_deploy_logs        ← CD 写       │

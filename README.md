@@ -55,7 +55,7 @@ cp .env.example .env
 # (read-only container cannot write the key file) — openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
 # Application parameters (timeouts / cache TTLs / intervals / monitoring switch) live in config/app.env with sane defaults
 # Authentication: Devops-Glue single sign-on (AUTH_MODE=oidc) is the default => set OIDC_ISSUER / CD_OIDC_SECRET /
-#   CD_OIDC_REDIRECT_URI in .env (see docs/SSO_OIDC.md §6.1); put AUTH_MODE=local in .env to keep password login for now
+# CD_OIDC_REDIRECT_URI in .env ; put AUTH_MODE=local in .env to keep password login for now
 
 python main.py
 # Open http://localhost:8081

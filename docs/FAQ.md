@@ -38,9 +38,9 @@ Yes. Add multiple metrics under a single monitor item, each targeting a differen
 
 ## Database
 
-### Q: Startup error "ci_pipeline_artifacts table not found"?
+### Q: CD reports "not enabled" even though the database looks configured?
 
-cd_service must share the same database as Devops-Glue API. Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) settings are correct.
+cd_service must share the same database instance as Devops-Glue API (CD reads only the `integrated_services` contract table from it). If that table is missing — e.g. `DB_PATH`/`DB_*` points at the wrong database — CD fails closed as "not enabled". Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) matches Glue's database.
 
 ### Q: Login fails with "CD is not enabled: enable Devops-CD in the Devops-Glue console under 'API Integration Services'"?
 

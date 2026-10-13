@@ -91,7 +91,6 @@ TRUSTED_PROXY_HOPS=0
 
 # ── Authentication mode (default: oidc = Devops-Glue single sign-on; set local + restart to roll back) ──
 # oidc requires the three keys below; miss any and the compose precheck aborts / bare-metal startup logs an ERROR
-# (see docs/SSO_OIDC.md §6)
 AUTH_MODE=oidc
 OIDC_ISSUER=http://glue.example.com        # public Glue URL; must equal the discovery issuer exactly
 CD_OIDC_SECRET=                            # must match Glue oauth_clients['cd']['secret']
@@ -135,7 +134,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ## 3. Database
 
-> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API. On startup, it verifies that the `ci_pipeline_artifacts` table exists.
+> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API. It reads only the `integrated_services` contract table from the shared DB (it no longer probes `ci_pipeline_artifacts`); if that table/row is missing, CD fails closed as "not enabled".
 
 | Driver | Use Case | Notes |
 |--------|----------|-------|
@@ -502,7 +501,7 @@ The rollback track `AUTH_MODE=local` (password login + reading `admin_users` / `
 - Login: POST `/api/login` with username + password
 - Failed logins are rate-limited: 5 consecutive failures (per IP+username) lock login for 15 minutes
 
-Switching either way is just **changing `AUTH_MODE` + restarting** (zero DDL, no CD data loss); the cut-over steps and the fail-closed contract are in `docs/SSO_OIDC.md` §6.
+Switching either way is just **changing `AUTH_MODE` + restarting** (zero DDL, no CD data loss); 
 
 ## 8. CI Build Management Integration (optional)
 
