@@ -93,7 +93,7 @@ async def _ws_verify(token: str | None = None) -> str:
             raise HTTPException(401, "token 已过期，请重新登录")
         if settings.auth_mode == "oidc":
             # OIDC 模式:只校验 cd_sessions + 惰性复核 Glue;切档后 WS 握手仍会读共享 admin_users,
-            #异常转换同上,401/503 都是 fail-closed.
+            # 异常转换同上,401/503 都是 fail-closed.
             try:
                 ident = _oidc_identity(db, token, sess["username"])
             except AppException as exc:
