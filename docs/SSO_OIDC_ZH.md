@@ -7,7 +7,7 @@
 > → `/api/me` 200（20 项权限逐项等于 Glue 权限端点）→ `/api/logout` 后 `/api/me` 401。
 > 失败面实测：`systems` 不含 `cd` → 401 `errors.no_cd_access` 且会话行即时删除；不存在账号 → 401 `errors.identity_unavailable`；
 > 伪造 token 与 `nonce` / `iss` / `aud` / `exp` 负例全部拒绝；运行日志无 secret / id_token / access_token。
-> 后端全量单测 313 passed（基线 215 例）。分支与提交血统见评审记录，本节不再重复。
+> 后端全量单测 314 passed（基线 215 例）。分支与提交血统见评审记录，本节不再重复。
 > **上游**：Devops-Glue 作为 OAuth2 / OIDC Provider（Glue 侧 `docs/单点登录.md`；上游设计文档 v1.0.4）。
 > **相关**：[`ARCHITECTURE_ZH.md`](ARCHITECTURE_ZH.md)（部署闸门与 CD 表清单）、[`ADMIN_MANUAL_ZH.md`](ADMIN_MANUAL_ZH.md)（配置与切换/回退步骤）、[`FAQ_ZH.md`](FAQ_ZH.md)（登录失败排查）。
 
@@ -223,6 +223,9 @@ CD_OIDC_REDIRECT_URI=              # 必须与 Glue 侧登记值逐字符一致
 
 ### 6.3 必填项缺失的处理（fail-closed）
 
+`AUTH_MODE` 的默认档为 `oidc`，三处写实：`config/app.env`（`AUTH_MODE=oidc`）、compose 的 `AUTH_MODE: ${AUTH_MODE:-oidc}`、`backend/config.py` 的字段默认值；
+留空按未配置处理，落回 `oidc`；拼错（如 `basic`）启动即报错，不静默退化。
+
 `AUTH_MODE=oidc` 且 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` 任一为空时，三处提示同一份缺失清单：
 
 | 位置 | 行为 |
@@ -276,7 +279,7 @@ CD_OIDC_REDIRECT_URI=              # 必须与 Glue 侧登记值逐字符一致
 | `main.py` | `:206-235` `/api/info` | 追加 `"auth_mode": settings.auth_mode`（**只暴露模式，不含任何密钥**），供登录页决定渲染形态 |
 | `config/app.env` | `:38`（`SUPER_ADMIN_ROLE`）之后 | 新增 §6.1 的 5 个非密项（含注释说明） |
 | `.env.example` | `:65`（`CI_API_TOKEN`）之后 | 新增 `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` 及「留空 = 未启用」语义说明 |
-| `docker-compose.yml` | `:45-62` 启动脚本区；`:79-90` env 区 | ① `AUTH_MODE=oidc` 而 OIDC 关键项为空 → **启动中止**（与 `SECRET_KEY` 检查同构，中英双语）；② 透传 `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` |
+| `docker-compose.yml` | `:45-62` 启动脚本区；`:79-90` env 区 | ① `AUTH_MODE=oidc` 而 OIDC 关键项为空 → **启动中止**（与 `SECRET_KEY` 检查同构，中英双语）；② 透传 `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`；③ 两个服务都写实默认档 `AUTH_MODE: ${AUTH_MODE:-oidc}`（根 `.env` 写 `AUTH_MODE=local` 即覆盖） |
 | `frontend/src/views/LoginView.vue` | 模板 + `onMounted` | 卡片形态随模式切换：`oidc` 渲染「使用 Devops-Glue 登录」（`<a href="/api/auth/oidc/start">`，整页跳转）并折叠本地表单；`local` 渲染密码表单。挂载时读 `route.query.error`（必填项缺失时另带 `missing` 清单）→ 复用 `te(key)/t(key)` 策略并插值，随后清除 query；模式未知（`settled=false`）时不渲染任何一态；错误框置于两种形态之外、两态共用。后端全部失败键都落到这个提示框 |
 | `frontend/src/views/LandingView.vue` + `frontend/src/composables/useAppInfo.js` | `useAppInfo` 暴露 `authMode`（读 `/api/info.auth_mode`，失败静默）与 `settled`（探测是否已有结论，成功/失败都置位） | 落地页导航栏登录按钮固定为 `router-link to="/login"`：登录入口单一化，形态由登录页决定（`authMode` 只服务登录页） |
 | `main.py` | `:145-148`（app 创建后） | `install_access_log_filter()`：uvicorn 访问日志脱敏（§10） |
@@ -480,7 +483,7 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 | # | 场景 | 步骤 | 期望 |
 |---|---|---|---|
-| **A** | 回退到本地模式 | `AUTH_MODE=local` + 重启 | 密码登录、`/api/me`、部署、审计、WebShell 全部与 v1.6.0 一致；`/api/auth/oidc/start` → 404；后端 313 例全绿 |
+| **A** | 回退到本地模式 | `AUTH_MODE=local` + 重启 | 密码登录、`/api/me`、部署、审计、WebShell 全部与 v1.6.0 一致；`/api/auth/oidc/start` → 404；后端 314 例全绿 |
 | **B** | 走通 SSO（默认档） | `AUTH_MODE=oidc` + `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` 齐全，浏览器开 `/` 并点登录 | 302 Glue → 登录授权 → 回跳 `/api/auth/oidc/callback` → 302 `/` 并进入首页；`docker logs` 中无 secret / id_token / access_token |
 | **C** | 越权与停用 | ① `systems='ci,monitor'` 账号登录；② `status=0` 账号登录；③ 登录后在 Glue 停用该账号，等 > 60s 再操作 | ① → `/login?error=errors.no_cd_access`；② → `errors.user_disabled`；③ 下一次请求 401、回登录页，且 `cd_sessions` 行已被删 |
 | **D** | 降权即时生效 | 登录后在 Glue 改角色 / 去掉 `cd.deploy.approve`，等 > 60s | `/api/me` 反映新角色与新权限；对应操作按钮消失，且后端 `require_perm` 拒绝（403） |
@@ -493,16 +496,16 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 | 期 | 内容 | 风险 |
 |---|---|---|
-| **L1a**（已落地） | 配置项 + `oidc.py` + `glue_identity.py` + `routers/oidc.py` + 前端登录页 + 测试；`AUTH_MODE=oidc` 为默认档 | 可回退（`AUTH_MODE=local` + 重启），后端 313 例全绿 |
+| **L1a**（已落地） | 配置项 + `oidc.py` + `glue_identity.py` + `routers/oidc.py` + 前端登录页 + 测试；`AUTH_MODE=oidc` 为默认档 | 可回退（`AUTH_MODE=local` + 重启），后端 314 例全绿 |
 | **L1b** | **本地已验**（2026-10-12，真 Glue `release/2.9.0` + 真 rbac，见文首取证）；**预发切档**：先做**联调第 0 项**（discovery 的 `issuer` / `jwks_uri` 均为对外地址）→ 推送并部署含 P0 的 Glue 构建 → 填根 `.env` 三项 → `app.env` 切 `oidc` → 走 A–G，观察 60s 复核与软失败窗口 | 仅预发，可随时切回 |
 | **L1c** | 生产切档：`docker compose up -d --build` + 清 `cd_sessions` + 观察 30 分钟 | 有回退开关（§6.4），无 schema 变更 |
 | **L2** | 清理与增强（§14） | 单独版本 |
 
-> **提交注意（L1a）**：**7 个**新文件当前仍为 untracked —— `backend/oidc.py`、`backend/services/glue_identity.py`、`backend/routers/oidc.py`、
+> **提交清单（L1a，已随 `3718d19` 落地）**：**7 个**新文件 —— `backend/oidc.py`、`backend/services/glue_identity.py`、`backend/routers/oidc.py`、
 > `backend/access_log.py`（访问日志脱敏过滤器）、`backend/tests/test_oidc_login.py`、`backend/tests/test_oidc_client.py`、`backend/tests/test_access_log.py`；
 > 且本仓库**跟踪** `static/` 构建产物（旧 `static/assets/*.js` 已被新构建替换、`static/index.html` 同步更新）即 提交时 `git add -A`
 > 必须同时覆盖这两处，否则部署后仍是旧登录页（无 SSO 按钮）且 OIDC 路由缺失；更糟的是新 `static/index.html` 指向新 bundle，
-> 若新 `static/assets/*` 未入库会直接白屏。`config/app.env` 是**被跟踪**文件，提交时必须保持 `AUTH_MODE=local`（改它 = 所有 `env_file` 部署默认切档）。
+> 若新 `static/assets/*` 未入库会直接白屏。`config/app.env` 是**被跟踪**文件，其 `AUTH_MODE=oidc` 即所有 `env_file` 部署的默认档（改它 = 全局默认切档）。
 
 **观测点**：启动日志的 `AUTH_MODE` 行；`GET /api/info` 的 `auth_mode`；复核失败/软失败日志行；401/403 计数（登录页 `error` query 参数分布）。
 
@@ -525,7 +528,7 @@ CD 就会把「查不到」当成「没有任何权限」——结果是**静默
 
 | 变量 | 默认 | 位置 | 说明 |
 |---|---|---|---|
-| `AUTH_MODE` | `local` | `config/app.env` | `local` \| `oidc`；唯一总开关 |
+| `AUTH_MODE` | `oidc` | `config/app.env` | `local` \| `oidc`；唯一总开关（留空亦落回 `oidc`，拼错则启动即报错） |
 | `OIDC_ISSUER` | 空 | `config/app.env` | Glue **对外**地址；须与 discovery 的 `issuer` 完全一致 |
 | `OIDC_REVALIDATE_SECONDS` | `60` | `config/app.env` | 惰性复核窗口（放权/停用生效上限） |
 | `OIDC_STALE_GRACE_SECONDS` | `600` | `config/app.env` | Glue 不可达时的软失败窗口；`0` = 立即 fail-closed |

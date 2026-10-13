@@ -99,9 +99,10 @@ class Settings(BaseSettings):
         """AUTH_MODE 白名单校验:拼错的模式名立刻报错,不静默退化成 local.
 
         静默退化比启动失败危险:运维以为切到了 SSO,实际每个请求仍在读共享表.
-        带空格的写法('oidc ')按可用处理,故先 strip + lower.
+        带空格的写法('oidc ')按可用处理,故先 strip + lower;空值按未配置落回
+        默认 oidc(compose 透传 AUTH_MODE=${AUTH_MODE:-oidc},根 .env 写空亦然).
         """
-        mode = (v or "").strip().lower()
+        mode = (v or "").strip().lower() or "oidc"
         if mode not in ("local", "oidc"):
             raise ValueError(f"AUTH_MODE 只支持 local / oidc，当前为 {v!r} / AUTH_MODE must be local or oidc")
         return mode

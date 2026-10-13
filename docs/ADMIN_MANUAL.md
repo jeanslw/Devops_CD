@@ -89,6 +89,14 @@ SECRET_KEY=
 # ── Trusted reverse-proxy hops: 0=direct (default, ignore X-Forwarded-For); 1 behind nginx, increase per extra layer ──
 TRUSTED_PROXY_HOPS=0
 
+# ── Authentication mode (default: oidc = Devops-Glue single sign-on; set local + restart to roll back) ──
+# oidc requires the three keys below; miss any and the compose precheck aborts / bare-metal startup logs an ERROR
+# (see docs/SSO_OIDC.md §6)
+AUTH_MODE=oidc
+OIDC_ISSUER=http://glue.example.com        # public Glue URL; must equal the discovery issuer exactly
+CD_OIDC_SECRET=                            # must match Glue oauth_clients['cd']['secret']
+CD_OIDC_REDIRECT_URI=http://cd.example.com/api/auth/oidc/callback   # exact match with the value registered in Glue
+
 # ── Listen address / timezone (docker-compose injects 0.0.0.0:8081 and TZ) ──
 # HOST=0.0.0.0
 # PORT=8081
@@ -98,6 +106,7 @@ TRUSTED_PROXY_HOPS=0
 ### 2.2 Application parameters: `config/app.env` (shipped in the image, usually no change)
 
 ```env
+AUTH_MODE=oidc              # the single auth master switch: oidc (default track, Devops-Glue SSO) | local (password login, rollback track)
 AUTH_TOKEN_TTL_HOURS=24     # login token TTL (hours)
 SUPER_ADMIN_ROLE=super_admin
 DB_POOL_MAX=10
@@ -480,10 +489,20 @@ All other roles (e.g. `deployer`, `viewer`, or any custom role defined in CI) ge
 
 ### Authentication
 
-- Login: POST `/api/login` with username + password → returns an opaque random session token (also set as the `cd_token` HttpOnly cookie; only its SHA-256 digest is stored server-side in `cd_sessions`)
+The default track is **Devops-Glue single sign-on (`AUTH_MODE=oidc`)**:
+
+- Login: open `/login` and click "Sign in with Devops-Glue" → full-page redirect to `/api/auth/oidc/start` → Glue consent page → back to `/api/auth/oidc/callback`; identity and permissions come from Glue's HTTP API, and the request path never reads the shared tables
+- Session: identical to local mode once logged in — an opaque random session token (also set as the `cd_token` HttpOnly cookie; only its SHA-256 digest is stored server-side in `cd_sessions`)
 - Logout: POST `/api/logout` revokes the session server-side — the token becomes invalid immediately
 - Protected endpoints accept either the `Authorization: Bearer <token>` header or the HttpOnly cookie
+- Demotion / disable takes effect within 60 s (lazy revalidation); while Glue is unreachable the last-known-good identity is honoured for 10 minutes, then it fails closed with 503
+
+The rollback track `AUTH_MODE=local` (password login + reading `admin_users` / `roles` / `role_permissions` on every request):
+
+- Login: POST `/api/login` with username + password
 - Failed logins are rate-limited: 5 consecutive failures (per IP+username) lock login for 15 minutes
+
+Switching either way is just **changing `AUTH_MODE` + restarting** (zero DDL, no CD data loss); the cut-over steps and the fail-closed contract are in `docs/SSO_OIDC.md` §6.
 
 ## 8. CI Build Management Integration (optional)
 

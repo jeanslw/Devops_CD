@@ -31,9 +31,9 @@ services:
       DB_USER: ${DB_USER:-}
       DB_PASS: ${DB_PASS:-}
       SECRET_KEY: ${SECRET_KEY:-}
-      # SSO / OIDC 预检输入:AUTH_MODE 与 OIDC_ISSUER 默认来自镜像内 config/app.env(下方读文件),
-      # 这里透传是为了让根 .env / compose environment 能临时覆盖,优先级与运行时一致.
-      AUTH_MODE: ${AUTH_MODE:-}
+      # SSO / OIDC 预检输入:这里的默认值与镜像内 config/app.env 一致(oidc),
+      # 透传是为了让根 .env / compose environment 能覆盖(如 AUTH_MODE=local).
+      AUTH_MODE: ${AUTH_MODE:-oidc}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       CD_OIDC_SECRET: ${CD_OIDC_SECRET:-}
       CD_OIDC_REDIRECT_URI: ${CD_OIDC_REDIRECT_URI:-}
@@ -89,7 +89,7 @@ services:
         if setting('AUTH_MODE', 'oidc').lower() == 'oidc':
             need = [n for n in ('OIDC_ISSUER', 'CD_OIDC_SECRET', 'CD_OIDC_REDIRECT_URI') if not setting(n)]
             if need:
-                print('[启动中止] AUTH_MODE=oidc（默认登录方式）必须配置：' + '、'.join(need))
+                print('[启动中止] AUTH_MODE=oidc(默认登录方式)必须配置：' + ','.join(need))
                 print('[ABORT] AUTH_MODE=oidc (default login mode) requires: ' + ', '.join(need))
                 print('         OIDC_ISSUER 写 Glue 对外地址（须与 discovery 的 issuer 一致）；其余两项在根 .env。')
                 print('         OIDC_ISSUER is Glue\'s public base URL (must match discovery issuer); the other two live in the root .env.')
@@ -120,8 +120,10 @@ services:
       # ── CI API 集成(和 PHP Devops-Glue 搭配时启用)──
       #CI_API_URL: http://devops-glue
       #CI_API_TOKEN: dg_xxx   # API token(dg_ 前缀,服务账号 / 第三方)推荐
-      # ── SSO / OIDC(AUTH_MODE=oidc 为默认;必填项缺失时 env-check 会中止启动)──
+      # ── SSO / OIDC(默认登录方式;必填项缺失时 env-check 会中止启动)──
+      # 默认档在这里写实(与镜像内 config/app.env 一致):根 .env 写 AUTH_MODE=local 即可回退.
       # 密钥只在根 .env 里维护,这里显式透传以表明契约(联合部署时 Glue 侧 compose 段同样需要).
+      AUTH_MODE: ${AUTH_MODE:-oidc}
       CD_OIDC_SECRET: ${CD_OIDC_SECRET:-}
       CD_OIDC_REDIRECT_URI: ${CD_OIDC_REDIRECT_URI:-}
     ports:

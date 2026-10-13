@@ -10,7 +10,7 @@
 > Failure paths exercised: `systems` without `cd` → 401 `errors.no_cd_access` (session row deleted immediately);
 > unknown account → 401 `errors.identity_unavailable`; forged token and all four verification negatives
 > (`nonce` / `iss` / `aud` / `exp`) rejected; runtime logs carry no secret / id_token / access_token.
-> Full backend suite: 313 passed (215-test baseline). Branch and commit history lives in the review record, not here.
+> Full backend suite: 314 passed (215-test baseline). Branch and commit history lives in the review record, not here.
 > **Upstream**: Devops-Glue as the OAuth2 / OIDC provider (Glue `docs/单点登录.md`; design doc v1.0.4).
 > **See also**: [`ARCHITECTURE.md`](ARCHITECTURE.md) (deploy gate and CD table list), [`ADMIN_MANUAL.md`](ADMIN_MANUAL.md) (config, switch and rollback), [`FAQ.md`](FAQ.md) (login troubleshooting).
 > **Browser-side (SPA) fix**: the OIDC round-trip is a **full page navigation** with an empty `sessionStorage` local flag => a
@@ -244,6 +244,10 @@ CD_OIDC_REDIRECT_URI=              # must match the value registered in Glue cha
 
 ### 6.3 Missing required settings (fail-closed)
 
+The default track for `AUTH_MODE` is `oidc`, written out in three places: `config/app.env` (`AUTH_MODE=oidc`),
+compose (`AUTH_MODE: ${AUTH_MODE:-oidc}` on both services) and the `backend/config.py` field default.
+An empty value is treated as not configured and falls back to `oidc`; a misspelt mode (e.g. `basic`) fails at startup instead of degrading silently.
+
 If `AUTH_MODE=oidc` and any of `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` is empty, three places report the same list:
 
 | Where | Behaviour |
@@ -298,7 +302,7 @@ The rationale matches Glue's client filter: a half-configured OIDC setup means r
 | `main.py` | `:206-235` `/api/info` | add `"auth_mode": settings.auth_mode` (**mode only, never any secret**) so the login page can pick its rendering |
 | `config/app.env` | after `:38` (`SUPER_ADMIN_ROLE`) | add the five non-secret keys of §6.1 with comments |
 | `.env.example` | after `:65` (`CI_API_TOKEN`) | add `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` plus the "empty = disabled" note |
-| `docker-compose.yml` | `:45-62` startup script, `:79-90` env | (1) `AUTH_MODE=oidc` with missing OIDC keys → **abort startup** (bilingual, same shape as the `SECRET_KEY` check); (2) pass through `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` |
+| `docker-compose.yml` | `:45-62` startup script, `:79-90` env | (1) `AUTH_MODE=oidc` with missing OIDC keys → **abort startup** (bilingual, same shape as the `SECRET_KEY` check); (2) pass through `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`; (3) both services spell out the default track as `AUTH_MODE: ${AUTH_MODE:-oidc}` (a root `.env` with `AUTH_MODE=local` overrides it) |
 | `frontend/src/views/LoginView.vue` | template + `onMounted` | card shape follows the mode: `oidc` renders "Sign in with Devops-Glue" (`<a href="/api/auth/oidc/start">`, full page navigation) and collapses the local form; `local` renders the password form. On mount it reads `route.query.error` (plus the `missing` list when required settings are absent) and renders it via the `te(key)/t(key)` strategy with interpolation, then clears the query; while the mode is unknown (`settled=false`) neither shape is rendered; the error box sits outside both shapes and is shared. Every backend failure key lands in this box |
 | `frontend/src/views/LandingView.vue` + `frontend/src/composables/useAppInfo.js` | `useAppInfo` exposes `authMode` (reads `/api/info.auth_mode`, silent on failure) and `settled` (whether the probe has finished) | landing navbar login button is a fixed `router-link to="/login"`: a single entry point, the shape is decided by the login page (`authMode` only serves the login page) |
 | `main.py` | after app creation | `install_access_log_filter()`: uvicorn access-log masking (§10) |
@@ -512,7 +516,7 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 
 | # | Scenario | Steps | Expected |
 |---|---|---|---|
-| **A** | Rollback to local mode | set `AUTH_MODE=local` + restart | password login, `/api/me`, deploys, audit and WebShell behave exactly as in v1.6.0; `/api/auth/oidc/start` → 404; the 313-case backend suite is green |
+| **A** | Rollback to local mode | set `AUTH_MODE=local` + restart | password login, `/api/me`, deploys, audit and WebShell behave exactly as in v1.6.0; `/api/auth/oidc/start` → 404; the 314-case backend suite is green |
 | **B** | SSO round-trip (default track) | `AUTH_MODE=oidc` with `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` in place; open `/` in a browser and click login | 302 to Glue → consent → back to `/api/auth/oidc/callback` → 302 `/` and into the app; no secret / id_token / access_token in `docker logs` |
 | **C** | No access & disable | (1) log in with `systems='ci,monitor'`; (2) log in with `status=0`; (3) after a successful login disable the account in Glue, wait > 60 s, then use CD | (1) → `/login?error=errors.no_cd_access`; (2) → `errors.user_disabled`; (3) next request → 401, back to the login page, and the `cd_sessions` row is gone |
 | **D** | Demotion takes effect | after login change the role in Glue / remove `cd.deploy.approve`, wait > 60 s | `/api/me` shows the new role and permissions; the corresponding buttons disappear and `require_perm` rejects the call (403) |
@@ -525,16 +529,16 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 
 | Phase | Content | Risk |
 |---|---|---|
-| **L1a** (landed) | config keys + `oidc.py` + `glue_identity.py` + `routers/oidc.py` + frontend login page + tests; `AUTH_MODE=oidc` is the default track | rollback available (`AUTH_MODE=local` + restart); the 313-case backend suite is green |
+| **L1a** (landed) | config keys + `oidc.py` + `glue_identity.py` + `routers/oidc.py` + frontend login page + tests; `AUTH_MODE=oidc` is the default track | rollback available (`AUTH_MODE=local` + restart); the 314-case backend suite is green |
 | **L1b** | **verified locally** (2026-10-12, real Glue `release/2.9.0` + real rbac; see the evidence block at the top); **staging cutover**: run **joint-debugging step 0** first (discovery `issuer` / `jwks_uri` both public) → push & deploy a Glue build containing P0 → fill the three root `.env` values → switch `app.env` to `oidc` → run A–G, watch the 60 s revalidation and the soft-fail window | staging only, switch back any time |
 | **L1c** | production cutover: `docker compose up -d --build` + clear `cd_sessions` + watch for 30 minutes | rollback switch available (§6.4), no schema change |
 | **L2** | cleanup and enhancements (§14) | separate version |
 
-> **Commit note**: the new backend files (`backend/oidc.py`, `backend/services/glue_identity.py`, `backend/routers/oidc.py`,
+> **Commit note (landed as `3718d19`)**: the new backend files (`backend/oidc.py`, `backend/services/glue_identity.py`, `backend/routers/oidc.py`,
 > `backend/access_log.py`, `backend/tests/test_oidc_login.py`, `backend/tests/test_oidc_client.py`, `backend/tests/test_access_log.py`) plus this repo's
 > **tracked** `static/` build output must go in together: use `git add -A`, otherwise stale `static/assets/*` bundles stay behind
 > while the new `static/index.html` points at files that are not committed (blank page). `config/app.env` **is tracked** and now carries
-> `AUTH_MODE=oidc` — the default track for every `env_file` deployment.
+> `AUTH_MODE=oidc` — the default track for every `env_file` deployment, now spelled out as `AUTH_MODE: ${AUTH_MODE:-oidc}` on both compose services.
 
 **Observability**: the `AUTH_MODE` startup log line; `auth_mode` in `GET /api/info`; revalidation-failure / soft-fail log lines;
 401/403 counts (the distribution of the login page's `error` query parameter).
@@ -558,7 +562,7 @@ Also note `role` is passed through **verbatim** (Glue's `rolePermissions:297` on
 
 | Variable | Default | Location | Notes |
 |---|---|---|---|
-| `AUTH_MODE` | `local` | `config/app.env` | `local` \| `oidc`; the single master switch |
+| `AUTH_MODE` | `oidc` | `config/app.env` | `local` \| `oidc`; the single master switch (an empty value also falls back to `oidc`, a misspelt one fails at startup) |
 | `OIDC_ISSUER` | empty | `config/app.env` | **public** Glue URL; must equal the discovery `issuer` |
 | `OIDC_REVALIDATE_SECONDS` | `60` | `config/app.env` | lazy revalidation window (upper bound on demotion/disable latency) |
 | `OIDC_STALE_GRACE_SECONDS` | `600` | `config/app.env` | soft-fail window while Glue is unreachable; `0` = fail-closed immediately |

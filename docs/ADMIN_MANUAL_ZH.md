@@ -86,6 +86,13 @@ SECRET_KEY=
 # ── 可信反向代理跳数：0=直连（默认，忽略 X-Forwarded-For）；前置 nginx 设 1，多层递增 ──
 TRUSTED_PROXY_HOPS=0
 
+# ── 认证模式（默认档 oidc = Devops-Glue 单点登录；改 local + 重启即回退本地密码登录）──
+# oidc 必填以下三项，缺任一项时 compose 预检中止启动、裸机启动日志记 ERROR（见 docs/SSO_OIDC_ZH.md §6）
+AUTH_MODE=oidc
+OIDC_ISSUER=http://glue.example.com        # Glue 对外地址，须与 discovery 的 issuer 完全一致
+CD_OIDC_SECRET=                            # 与 Glue oauth_clients['cd']['secret'] 完全一致
+CD_OIDC_REDIRECT_URI=http://cd.example.com/api/auth/oidc/callback   # 与 Glue 登记值逐字符一致
+
 # ── 监听地址 / 时区（docker-compose 已注入 0.0.0.0:8081 与 TZ）──
 # HOST=0.0.0.0
 # PORT=8081
@@ -95,6 +102,7 @@ TRUSTED_PROXY_HOPS=0
 ### 2.2 业务参数：`config/app.env`（随镜像发布，通常无需修改）
 
 ```env
+AUTH_MODE=oidc              # 唯一认证总开关：oidc（默认档，Devops-Glue 单点登录）| local（本地密码登录，回退档）
 AUTH_TOKEN_TTL_HOURS=24     # 登录 token 有效期（小时）
 SUPER_ADMIN_ROLE=super_admin
 DB_POOL_MAX=10
@@ -477,10 +485,20 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 ### 认证
 
-- 登录：POST `/api/login`，用户名 + 密码 → 返回不透明随机会话 Token（同时写入 `cd_token` HttpOnly cookie；服务端 `cd_sessions` 表只存其 SHA-256 摘要）
+默认档为 **Devops-Glue 单点登录（`AUTH_MODE=oidc`）**：
+
+- 登录：浏览器访问 `/login` 点「使用 Devops-Glue 登录」→ 整页跳转 `/api/auth/oidc/start` → Glue 授权页 → 回跳 `/api/auth/oidc/callback`；身份与权限经 Glue HTTP API 获取，请求路径不读共享表
+- 会话：登录成功后与本地模式一致 —— 不透明随机会话 Token（同时写入 `cd_token` HttpOnly cookie；服务端 `cd_sessions` 表只存其 SHA-256 摘要）
 - 登出：POST `/api/logout` 服务端吊销会话 —— Token 立即失效
 - 受保护端点支持 `Authorization: Bearer <token>` 请求头或 HttpOnly cookie 两种方式
+- 放权 / 停用生效上限 60 秒（惰性复核）；Glue 不可达时 10 分钟内按 last-known-good 放行，超过即 503 fail-closed
+
+回退档 `AUTH_MODE=local`（本地密码登录 + 每请求直读 `admin_users` / `roles` / `role_permissions`）：
+
+- 登录：POST `/api/login`，用户名 + 密码
 - 登录失败限流：同一 IP+用户名连续失败 5 次锁定 15 分钟
+
+两档切换只需**改 `AUTH_MODE` + 重启**（零 DDL，CD 数据无损）；切换步骤与 fail-closed 口径见 `docs/SSO_OIDC_ZH.md` §6。
 
 ## 8. CI 构建管理集成（可选）
 

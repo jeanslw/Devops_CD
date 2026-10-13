@@ -1,10 +1,10 @@
-"""访问日志脱敏（backend/access_log.py）：一次性 code / state / token 不进日志（§10）。
+"""访问日志脱敏(backend/access_log.py):一次性 code / state / token 不进日志(§10).
 
-uvicorn 的访问日志会打印完整请求行；SSO 回调 URL 里带着一次性授权码与 CSRF state，
-旧客户端的 WS 回退写法把会话 token 放在 query 里 —— 这些都属"凭据不落盘"。
-本用例锁住三件事：敏感值被替换、路径与其余参数保留（排障信息不丢）、非 SSO 路由完全不受影响。
+uvicorn 的访问日志会打印完整请求行;SSO 回调 URL 里带着一次性授权码与 CSRF state,
+旧客户端的 WS 回退写法把会话 token 放在 query 里 -- 这些都属"凭据不落盘".
+本用例锁住三件事:敏感值被替换,路径与其余参数保留(排障信息不丢),非 SSO 路由完全不受影响.
 
-运行（项目根）:
+运行(项目根):
     python -m pytest backend/tests/test_access_log.py -q
 """
 
@@ -23,7 +23,7 @@ from backend.access_log import (
     mask_query,
 )
 
-# uvicorn.access 的记录格式：(client_addr, method, full_path, http_version, status_code)
+# uvicorn.access 的记录格式:(client_addr, method, full_path, http_version, status_code)
 _HTTP_ARGS = ("127.0.0.1:52344", "GET", "/api/auth/oidc/callback?code=SECRETCODE&state=SECRETSTATE", "1.1", 302)
 
 
@@ -34,14 +34,14 @@ def _record(args: object) -> logging.LogRecord:
 
 
 class TestMaskQuery(unittest.TestCase):
-    """只替换敏感参数的值，路径与其余参数逐字符保留。"""
+    """只替换敏感参数的值,路径与其余参数逐字符保留."""
 
     def test_callback_code_and_state_are_masked(self):
         masked = mask_query("/api/auth/oidc/callback?code=SECRETCODE&state=SECRETSTATE")
         self.assertEqual(masked, f"/api/auth/oidc/callback?code={MASK}&state={MASK}")
 
     def test_non_sensitive_params_survive(self):
-        # retry 是流程调试信息（"是否已静默重试过"），不该被抹掉
+        # retry 是流程调试信息("是否已静默重试过"),不该被抹掉
         self.assertEqual(mask_query("/api/auth/oidc/start?retry=1"), "/api/auth/oidc/start?retry=1")
 
     def test_ws_token_fallback_is_masked(self):
@@ -51,7 +51,7 @@ class TestMaskQuery(unittest.TestCase):
         self.assertEqual(mask_query("/api/auth/oidc/start"), "/api/auth/oidc/start")
 
     def test_other_routes_are_not_rewritten(self):
-        # 业务路由的 query 一律不动（避免误伤业务参数：分页、筛选、导入参数…）
+        # 业务路由的 query 一律不动(避免误伤业务参数:分页,筛选,导入参数...)
         self.assertEqual(mask_query("/api/servers?page=2&state=whatever"), "/api/servers?page=2&state=whatever")
 
 
@@ -87,7 +87,7 @@ class TestFilterOnRecords(unittest.TestCase):
 
 
 class TestInstall(unittest.TestCase):
-    """安装到 logger 上之后，真正打出来的一整行也不含凭据。"""
+    """安装到 logger 上之后,真正打出来的一整行也不含凭据."""
 
     LOGGER = "cd.tests.access-log"
 
@@ -107,7 +107,7 @@ class TestInstall(unittest.TestCase):
         logger.addHandler(handler)
 
         install_access_log_filter(self.LOGGER)
-        install_access_log_filter(self.LOGGER)  # 幂等：不重复叠加（否则 record 被改写两次也无害，但要防止）
+        install_access_log_filter(self.LOGGER)  # 幂等:不重复叠加(否则 record 被改写两次也无害,但要防止)
         self.assertEqual(len([f for f in logger.filters if isinstance(f, MaskCredentialQueryFilter)]), 1)
 
         logger.info('%s - "%s %s HTTP/%s" %d', *_HTTP_ARGS)
