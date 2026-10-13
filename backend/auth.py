@@ -17,7 +17,7 @@ security = HTTPBearer(auto_error=False)
 CD_SYSTEM = "cd"
 # 通配权限:Glue 对 super_admin 返回 ["*"](该角色权限由代码授予,不落 role_permissions 表),
 # CD 侧必须认这个通配 -- 只靠角色名判断会在两种情况下失能:运维把 SUPER_ADMIN_ROLE 改名,
-# 或 Glue 侧角色改名(见 docs/SSO_OIDC_ZH.md §7.2).local 模式的权限永不含 "*",对既有行为零影响.
+# 或 Glue 侧角色改名.local 模式的权限永不含 "*",对既有行为零影响.
 WILDCARD_PERM = "*"
 # 两种拒绝措辞必须分开:先说"没启用"(去 CI 后台开开关),再说"表没建全"(按 provision 补表)
 CD_NOT_ENABLED_MSG = "CD 服务未启用：请在 Devops-Glue 后台「API集成服务」中启用 Devops-CD"
@@ -153,7 +153,7 @@ def cd_deploy_gate(db: Database) -> None:
 
 # ── OIDC 模式(AUTH_MODE=oidc):会话校验 + 惰性 Glue 复核,全程不读共享表 ──
 # 两种模式共用 cd_sessions(CD 自有表),同一套不透明 token 与 401 语义:切模式不需要迁移
-# 任何数据,回滚也只是把 AUTH_MODE 改回 local(见 docs/SSO_OIDC_ZH.md §4.2).
+# 任何数据,回滚也只是把 AUTH_MODE 改回 local.
 
 
 def _oidc_session(db: Database, token: str) -> dict:
@@ -464,8 +464,30 @@ def load_user_context(db: Database, username: str) -> dict:
     用于审批单 / 回滚后台执行时重建执行身份(无 token 场景).角色与权限同 get_current_user,
     执行时仍做部署权限二次校验(防御深度).账号已停用(status=0)抛 AppException(403):
     手动执行路径登录即被拦,后台 / 定时执行路径由此处拦截,保证停用账号的已批准定时单不会被执行.
+
+    OIDC 模式身份/权限来自 Glue(get_identity,与请求路径同源、同缓存、同 fail-closed 语义),
+    不再读共享 admin_users / roles / role_permissions;停用 / systems 不含 cd 一律 403
+    (本路径不删会话:下一次请求复核自会 401 清会话);local 模式保留直读.
     """
     from backend.exceptions import AppException
+
+    if settings.auth_mode == "oidc":
+        ident = glue_identity.get_identity(username)
+        if _identity_disabled(ident):
+            raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
+        # 与请求路径 _oidc_identity 同判据(防御深度):Glue 侧 systems 去掉 cd 即拒绝执行,
+        # 不依赖下一次请求的兜底 401;此处不删会话,故用 403(措辞与 authenticate 同口径)
+        if not _has_system(ident.get("systems"), CD_SYSTEM):
+            raise AppException(
+                "该账号无 CD 访问权限，请联系管理员",
+                status_code=403,
+                error_key="errors.no_cd_access",
+            )
+        return {
+            "username": ident.get("username") or username,
+            "role": ident.get("role") or "",
+            "permissions": ident.get("permissions") or [],
+        }
 
     with db.conn() as conn:
         row = conn.execute("SELECT role, status FROM admin_users WHERE username=?", (username,)).fetchone()

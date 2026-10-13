@@ -273,8 +273,8 @@ _MYSQL_TABLE_DDL: dict[str, str] = {
 }
 
 # auto 模式下的 MySQL 索引清单,元组含义 = (索引名, 表名, 列清单, 是否唯一);幂等:
-# 重复建索引报 1061,由 suppress 吞掉.只建 CD 自有表的索引 -- init_mysql.sql 里对
-# ci_pipeline_artifacts / ci_job_git_map 的索引调用是运维脚本的历史遗留,CD 运行期不触碰共享表.
+# 重复建索引报 1061,由 suppress 吞掉.只建 CD 自有表的索引 -- CD 运行期不触碰共享表;
+# ci_pipeline_artifacts / ci_job_git_map 的索引由 Devops-Glue 建库脚本(database/mysql_init.sql)负责.
 _MYSQL_INDEXES: tuple[tuple[str, str, str, bool], ...] = (
     ("idx_cds_type", "cd_servers", "type", False),
     ("idx_cdl_project", "cd_deploy_logs", "project", False),
@@ -450,7 +450,9 @@ class Database:
     manual 时**零 DDL**,enabled + auto 时建全 CD_REQUIRED_TABLES + 补缺失列 + 索引 + 契约视图
     (MySQL / SQLite 各自实现,见下方 _ensure_*;全部幂等).
     共享表(admin_users / roles / ci_* 等)schema 归 Glue,CD 任何模式下都不得改动;连接走 DBUtils
-    连接池.启动时校验 ci_pipeline_artifacts 表是否存在,不存在即报错(库指向错误).
+    连接池.是否指向 Glue 共享库不再用 CI 数据表(ci_pipeline_artifacts)做探针,而由集成服务
+    契约表(integrated_services)本身判定:契约表缺失即视为"未启用 / 库指向错误",统一
+    503 errors.cd_not_enabled(fail-closed,见 _read_integration_state).
     """
 
     DRIVERS = ("sqlite", "mysql")
@@ -467,7 +469,6 @@ class Database:
         if self._driver not in self.DRIVERS:
             raise RuntimeError(f"DB_DRIVER 必须设为 sqlite 或 mysql，当前: {self._driver or '未设置'}")
         self._path = Path(db_path or settings.db_path)
-        self._validate_shared_db()
 
     def _init_pool(self):
         """延迟初始化 MySQL 连接池(避免 import 时连接失败阻塞启动)"""
@@ -495,44 +496,6 @@ class Database:
         except ImportError as e:
             raise RuntimeError("MySQL 模式需要安装 dbutils: pip install dbutils") from e
 
-    def _validate_shared_db(self):
-        """校验数据库是否为 php_api 的共享数据库."""
-        try:
-            if self._driver == "mysql":
-                import pymysql
-
-                raw = pymysql.connect(
-                    host=settings.db_host,
-                    port=settings.db_port,
-                    user=settings.db_user,
-                    password=settings.db_pass,
-                    database=settings.db_name,
-                    charset="utf8mb4",
-                )
-                cur = raw.cursor()
-                cur.execute("SHOW TABLES LIKE 'ci_pipeline_artifacts'")
-                exists = cur.fetchone() is not None
-                cur.close()
-                raw.close()
-            else:
-                conn = sqlite3.connect(str(self._path))
-                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ci_pipeline_artifacts'")
-                exists = cur.fetchone() is not None
-                conn.close()
-        except Exception as e:
-            # 连不上/取不到元数据 = 库当前不可用(503 errors.db_unavailable),不是 500 程序错误
-            raise DatabaseUnavailableError(
-                f"数据库连接失败，请确保和 Devops-Glue API使用同一数据库实例。当前驱动: {self._driver}，错误: {e}",
-                self._driver,
-                str(e),
-            ) from e
-        if not exists:
-            raise DatabaseUnavailableError(
-                f"未找到 ci_pipeline_artifacts 表。cd_service 无独立数据库，必须和 Devops-Glue共用同一数据库实例。"
-                f"请检查 DB_DRIVER（当前: {self._driver}）和连接配置是否与 Devops-Glue 一致。",
-                self._driver,
-            )
-
     # ── 集成服务契约(闸门第一道判据)──
 
     _CONTRACT_SQL = f"SELECT enabled, provision FROM {INTEGRATED_SERVICES_TABLE} WHERE service_name=?"
@@ -546,7 +509,8 @@ class Database:
             row = conn.execute(self._CONTRACT_SQL, (CD_SERVICE_NAME,)).fetchone()
         except Exception as e:
             if _is_missing_table_error(e):
-                # 契约表本身不存在(CI 侧尚未启用集成服务 / 尚未升级):按未启用处理
+                # 契约表本身不存在(CI 侧尚未启用集成服务 / 尚未升级 / DB 指错未共用 Glue 库):
+                # 一律按未启用处理(fail-closed),不再用 ci_pipeline_artifacts 探针区分"库指错"
                 return CdIntegrationState(False, PROVISION_AUTO, False)
             raise  # 连接 / 权限 / 锁等运行环境故障:交给上层转 503 errors.db_unavailable
         if row is None:

@@ -36,7 +36,7 @@ def login(req: LoginRequest, request: Request, response: Response, db: Database 
     cd_deploy_gate(db)
     # ── 模式守卫:OIDC 模式下本地密码登录关闭 ──
     # 须排在登录失败限流之前(模式类拒绝属于另一类,不该计入共享失败锁).回退到 local 即立即恢复
-    # (代码保留),见 docs/SSO_OIDC_ZH.md §6.3 / §7.1.
+
     if settings.auth_mode == "oidc":
         raise AppException(
             "本地密码登录已停用，请使用 Devops-Glue 单点登录",

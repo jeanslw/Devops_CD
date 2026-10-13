@@ -47,13 +47,13 @@ from backend.services.registry_service import RegistryService, start_background_
 async def lifespan(app: FastAPI):
     """启动时:定时同步 + 告警检查 + 审批崩溃恢复"""
     db = Database()
-    # 认证模式:唯一总开关(见 docs/SSO_OIDC_ZH.md §6).启动日志必打,便于切档后确认(观测点见 §10).
+    # 认证模式:唯一总开关.启动日志必打,便于切档后确认(观测点见 §10).
     logging.getLogger(__name__).info("认证模式：AUTH_MODE=%s", settings.auth_mode)
     if not settings.oidc_ready():
         # 缺配置不阻断启动,但必须提示缺少项(compose 的 env-check 会在启动前中止,两者同清单).
         logging.getLogger(__name__).error(
             "AUTH_MODE=oidc 缺少必填项：%s，SSO 登录会失败。OIDC_ISSUER 在 config/app.env 或根 .env 配置，"
-            "CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI 在根 .env 配置（见 docs/SSO_OIDC_ZH.md §6.1）",
+            "CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI 在根 .env 配置",
             "、".join(settings.oidc_missing_settings()),
         )
     # 启用 / 部署状态提示(三态,不阻断启动):/health,/api/info 与 /metrics 仍可用,便于探活排障.
@@ -243,7 +243,7 @@ def api_info():
         "db_connected": db_ok,
         "uptime_seconds": uptime_seconds,
         # 认证模式(前端登录页据此渲染 SSO 按钮 / 本地表单):只暴露模式名,
-        # 不暴露 issuer / secret / redirect_uri(信息面见 docs/SSO_OIDC_ZH.md §10).
+        # 不暴露 issuer / secret / redirect_uri.
         "auth_mode": settings.auth_mode,
     }
 

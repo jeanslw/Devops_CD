@@ -150,14 +150,15 @@ class TestAuthModeConfig(unittest.TestCase):
         self.assertEqual(s.oidc_missing_settings(), ["OIDC_ISSUER", "CD_OIDC_SECRET", "CD_OIDC_REDIRECT_URI"])
 
     def test_oidc_ready_true_when_configured(self):
-        s = Settings(**{"auth_mode": "oidc", "oidc_issuer": _ISSUER, "CD_OIDC_SECRET": "s", "CD_OIDC_REDIRECT_URI": _REDIRECT})
+        s = Settings(
+            **{"auth_mode": "oidc", "oidc_issuer": _ISSUER, "CD_OIDC_SECRET": "s", "CD_OIDC_REDIRECT_URI": _REDIRECT}
+        )
         self.assertTrue(s.oidc_ready())
         self.assertEqual(s.oidc_missing_settings(), [])
 
     def test_local_mode_is_ready_regardless(self):
         s = Settings(**{"auth_mode": "local", "oidc_issuer": "", "CD_OIDC_SECRET": "", "CD_OIDC_REDIRECT_URI": ""})
         self.assertTrue(s.oidc_ready())  # local 模式下这些项与它无关
-
 
 
 class TestIdTokenVerification(_OidcSettingsMixin, unittest.TestCase):
@@ -243,7 +244,6 @@ class TestIdTokenVerification(_OidcSettingsMixin, unittest.TestCase):
 
     def test_b64url_decode_without_padding(self):
         self.assertEqual(oidc._b64url_decode("YWJj"), b"abc")
-
 
 
 class TestAuthorizeAndTokenExchange(_OidcSettingsMixin, unittest.TestCase):

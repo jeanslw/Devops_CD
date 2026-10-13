@@ -69,17 +69,6 @@ ROOT = Path(__file__).resolve().parents[2]
 _CONTRACT_DDL = CONTRACT_DDL  # 契约表 DDL 只有一份(backend/tests/cd_contract.py)
 
 
-def _create_marker(path):
-    """Database 启动校验要求与 Devops-Glue 共享库(ci_pipeline_artifacts 为标记表)."""
-    conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts "
-        "(id INTEGER PRIMARY KEY AUTOINCREMENT, project_key VARCHAR(255))"
-    )
-    conn.commit()
-    conn.close()
-
-
 def _write_contract(path, enabled=1, provision="auto", with_row=True, create_table=True):
     """模拟 CI 后台的启用 / 关闭动作:写集成服务契约行(service_name='cd')."""
     set_cd_contract(path, enabled=enabled, provision=provision, with_row=with_row, create_table=create_table)
@@ -166,7 +155,7 @@ class _SqlRecorder:
 
 
 def _mysql_db(tmpdir) -> Database:
-    """构造'驱动是 mysql 但不连真库'的 Database(__init__ 会真连 MySQL,故绕过)."""
+    """构造'驱动是 mysql 但不连真库'的 Database(用 __new__ 绕过 __init__ 以强制 mysql 驱动)."""
     db = Database.__new__(Database)
     db._driver = "mysql"
     db._path = Path(tmpdir)
@@ -197,7 +186,6 @@ class TestIntegrationStateReadsContract(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_contract.db")
-        _create_marker(self.db_path)
         Database._tables_ensured = False
 
     def tearDown(self):
@@ -429,7 +417,6 @@ class TestCdMissingTablesCompleteness(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_gate.db")
-        _create_marker(self.db_path)
         _write_contract(self.db_path, enabled=1, provision="auto")
         Database._tables_ensured = False
 
@@ -495,7 +482,6 @@ class TestRequestGateBlocksOperations(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_gate_req.db")
-        _create_marker(self.db_path)
         # 已启用 + auto,但打掉自动建表:模拟"表还没建出来"的窗口(auto 重启前 / manual 未导入)
         _write_contract(self.db_path, enabled=1, provision="auto")
         Database._tables_ensured = False
@@ -593,7 +579,6 @@ class TestDatabaseUnavailableIs503(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_gate_dbunavail.db")
-        _create_marker(self.db_path)
         _write_contract(self.db_path, enabled=1, provision="auto")  # 已启用:只有这样才会走建表路径
         Database._tables_ensured = False
 
@@ -622,13 +607,6 @@ class TestDatabaseUnavailableIs503(unittest.TestCase):
         with patch.object(Database, "_connect_sqlite", side_effect=boom):
             with self.assertRaises(AppException) as ctx:
                 cd_deploy_gate(db)
-        self.assertEqual(ctx.exception.status_code, 503)
-        self.assertEqual(ctx.exception.error_key, "errors.db_unavailable")
-
-    def test_shared_db_probe_failure_is_503(self):
-        """构造期校验失败(没和 Devops-Glue 共用同一库)→ 503 而非 500."""
-        with self.assertRaises(AppException) as ctx:
-            Database(os.path.join(self._tmp.name, "not_glue.db"))
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.error_key, "errors.db_unavailable")
 

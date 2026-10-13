@@ -148,8 +148,6 @@ def _req(cookies: dict | None = None, accept: str = "*/*") -> Request:
 NAV_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
 
-
-
 class TestGlueIdentityCache(_OidcSettingsMixin, unittest.TestCase):
     """身份/权限的进程内缓存与惰性复核(§3.2):稳定态每窗口 1 次调用,role 变化才 +1."""
 
@@ -510,7 +508,9 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         self.assertEqual(resp.headers["location"], "/login?error=errors.identity_unavailable")
 
     def test_upstream_failure_is_502_and_clears_state_cookie(self):
-        with patch.object(oidc_router.oidc, "exchange_code", side_effect=oidc_router.oidc.OidcError("token 端点不可达")):
+        with patch.object(
+            oidc_router.oidc, "exchange_code", side_effect=oidc_router.oidc.OidcError("token 端点不可达")
+        ):
             resp = self._callback(code="c1", state="st-1")
         self.assertEqual(resp.status_code, 502)
         self.assertIn("cd_oidc_state=", resp.headers["set-cookie"])  # 失败也要清一次性 cookie
@@ -550,9 +550,7 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_deployed")
 
     def test_navigation_discovery_failure_redirects_to_login(self):
-        with patch.object(
-            oidc_router.oidc, "authorize_url", side_effect=oidc_router.oidc.OidcError("issuer 不一致")
-        ):
+        with patch.object(oidc_router.oidc, "authorize_url", side_effect=oidc_router.oidc.OidcError("issuer 不一致")):
             resp = oidc_router.start(self._nav(), db=self.db)
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.headers["location"], "/login?error=errors.sso_unavailable")
@@ -608,8 +606,12 @@ class TestAuthDualTrack(_OidcSettingsMixin, unittest.TestCase):
     def test_verify_token_oidc_mode_never_reads_shared_tables(self):
         db = _fake_db()
         with (
-            patch("backend.auth._query_user_with_systems", side_effect=AssertionError("OIDC 模式不得读共享 admin_users")),
-            patch("backend.auth._query_permissions", side_effect=AssertionError("OIDC 模式不得读共享 role_permissions")),
+            patch(
+                "backend.auth._query_user_with_systems", side_effect=AssertionError("OIDC 模式不得读共享 admin_users")
+            ),
+            patch(
+                "backend.auth._query_permissions", side_effect=AssertionError("OIDC 模式不得读共享 role_permissions")
+            ),
             self._stub_identity(),
         ):
             username = verify_token(_req({"cd_token": "tok-1"}), None, db=db)
@@ -618,7 +620,9 @@ class TestAuthDualTrack(_OidcSettingsMixin, unittest.TestCase):
     def test_get_current_user_returns_glue_permissions(self):
         db = _fake_db()
         with (
-            patch("backend.auth._query_user_with_systems", side_effect=AssertionError("OIDC 模式不得读共享 admin_users")),
+            patch(
+                "backend.auth._query_user_with_systems", side_effect=AssertionError("OIDC 模式不得读共享 admin_users")
+            ),
             self._stub_identity(_ident(role="ops", systems="cd,monitor", permissions=["cd.deploy.k8s"])),
         ):
             user = get_current_user(_req({"cd_token": "tok-1"}), None, db=db)

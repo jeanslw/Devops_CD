@@ -66,11 +66,6 @@ class GlueViewContractTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_contract.db")
-        # Database 启动校验要求与 Devops-Glue 共享库(ci_pipeline_artifacts 为标记表)
-        raw = sqlite3.connect(self.db_path)
-        raw.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
-        raw.commit()
-        raw.close()
         # 启用 CD:1.6.0 起未启用时闸门 503 且零 DDL,契约视图用例需要走真实建表路径
         enable_cd(self.db_path)
 

@@ -1,4 +1,4 @@
-"""Glue 身份与权限客户端 + 进程内 TTL 缓存 + 惰性复核 - 见 docs/SSO_OIDC_ZH.md §3.2 / §8.3-§8.4
+"""Glue 身份与权限客户端 + 进程内 TTL 缓存 + 惰性复核
 
 OIDC 模式下 CD 在请求路径上**不再读任何共享表**:
   · 身份(role / systems / status)来自 GET /api/rbac/users/{username}

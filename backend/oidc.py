@@ -1,4 +1,4 @@
-"""OIDC 客户端(BFF 机密客户端)- 见 docs/SSO_OIDC_ZH.md §3.1 / §8.1-§8.5
+"""OIDC 客户端(BFF 机密客户端)
 
 职责只有四件事:discovery,JWKS,authorize URL 组装,token 兑换 + id_token 验签.
 身份与权限**不在这里**(那是 backend/services/glue_identity.py 的职责):
@@ -254,9 +254,7 @@ def exchange_code(code: str) -> dict:
         # 授权码已用/已超时(Glue 60s)或 redirect_uri 不匹配 即 由路由静默重走 start
         raise OidcError("授权码无效或已过期（invalid_grant）", status_code=400, invalid_grant=True)
     if resp.status_code in (400, 401):
-        raise OidcError(
-            f"token 端点拒绝兑换（HTTP {resp.status_code}）：请核对 CD_OIDC_SECRET 与 CD_OIDC_REDIRECT_URI"
-        )
+        raise OidcError(f"token 端点拒绝兑换（HTTP {resp.status_code}）：请核对 CD_OIDC_SECRET 与 CD_OIDC_REDIRECT_URI")
     raise OidcError(f"token 端点返回 HTTP {resp.status_code}")
 
 
@@ -339,4 +337,3 @@ def verify_id_token(id_token: str, nonce: str) -> str:
     signing_input = f"{header_b64}.{payload_b64}".encode()
     _verify_signature(header, signature, signing_input)
     return _verify_claims(claims, nonce)
-

@@ -64,8 +64,6 @@ class RegistrySyncTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_registry.db")
-        # Database 启动校验要求与 Devops-Glue 共享库(ci_pipeline_artifacts 为标记表)
-        self._create_marker(self.db_path)
         # 启用 CD(= 运维在 CI 后台点集成服务开关):auto 模式下首次连库自动建表,闸门随之放行
         enable_cd(self.db_path)
         Database._tables_ensured = False
@@ -77,13 +75,6 @@ class RegistrySyncTestCase(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
-
-    @staticmethod
-    def _create_marker(path):
-        raw = sqlite3.connect(path)
-        raw.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
-        raw.commit()
-        raw.close()
 
     def _patch_unreachable_harbor(self):
         """让 svc._harbor 访问即抛 HarborUnavailableError(等价于地址错/网络不通/服务未启动)"""

@@ -54,8 +54,6 @@ class ApprovalFlowTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "test_approval.db")
-        # Database 启动校验要求与 Devops-Glue 共享库(ci_pipeline_artifacts 为标记表)
-        self._create_marker(self.db_path)
         # 启用 CD(= 运维在 CI 后台点集成服务开关):auto 模式下首次连库自动建表,闸门随之放行
         enable_cd(self.db_path)
         # 每个临时库都是"全新库",强制重新建表(类变量在测试间共享)
@@ -64,13 +62,6 @@ class ApprovalFlowTestCase(unittest.TestCase):
         with self.db.conn() as conn:
             conn.execute("SELECT 1")
         Database._tables_ensured = True
-
-    @staticmethod
-    def _create_marker(path):
-        raw = sqlite3.connect(path)
-        raw.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
-        raw.commit()
-        raw.close()
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -170,6 +161,19 @@ class TestApproveReleasesOnly(ApprovalFlowTestCase):
         # 单据未被改动
         self.assertEqual(self.get_approval(aid)["status"], svc.PENDING)
 
+    def test_wildcard_perm_holder_can_approve(self):
+        # OIDC 下 Glue 只给 super_admin 通配 "*"(角色名可改):require_perm 放行接口后,
+        # 业务层必须同口径,否则出现"接口放行、svc 403"的两套判据
+        aid = self.add_approval(status=svc.PENDING, requester="alice")
+        with patch.object(svc, "notify_approval"):
+            result = svc.approve(self.db, aid, make_user("root", role="renamed_super", perms=["*"]))
+        self.assertTrue(result["success"])
+        row = self.get_approval(aid)
+        self.assertEqual(row["status"], svc.APPROVED)
+        self.assertEqual(row["approver"], "root")
+        # can_approve 是列表页 can_approve 标记与待办计数的同一判据,一并覆盖
+        self.assertTrue(svc.can_approve(dict(row), {}, make_user("root", role="renamed_super", perms=["*"])))
+
 
 # ─────────────────────────────────────────────────────────────
 # 撤销
@@ -187,6 +191,11 @@ class TestCancel(ApprovalFlowTestCase):
     def test_super_admin_can_cancel_others_request(self):
         aid = self.add_approval(status=svc.PENDING, requester="alice")
         self.assertTrue(svc.cancel(self.db, aid, make_user("root", role="super_admin"))["success"])
+
+    def test_wildcard_perm_holder_can_cancel_others_request(self):
+        aid = self.add_approval(status=svc.PENDING, requester="alice")
+        self.assertTrue(svc.cancel(self.db, aid, make_user("root", role="renamed_super", perms=["*"]))["success"])
+        self.assertEqual(self.get_approval(aid)["status"], svc.CANCELLED)
 
     def test_other_user_cannot_cancel(self):
         aid = self.add_approval(status=svc.PENDING)
@@ -290,6 +299,15 @@ class TestExecutePermission(ApprovalFlowTestCase):
             approval, exec_user = svc.claim_for_execution(self.db, aid, make_user("alice"))
             self.assertEqual(approval["status"], svc.DEPLOYING)
             self.assertEqual(exec_user["username"], "alice")
+
+    def test_claim_rechecks_rollback_accepts_wildcard_perm(self):
+        # OIDC 下 Glue 给超管的是通配 "*"(角色名可被运维改),与 cd.deploy-manage 同级放行:
+        # 否则"角色能审批却不能执行回滚"的口径不一致
+        aid = self.add_approval(status=svc.APPROVED, params={"_rollback": True})
+        with patch.object(svc, "load_user_context", return_value=make_user("alice", role="renamed_super", perms=["*"])):
+            approval, exec_user = svc.claim_for_execution(self.db, aid, make_user("alice"))
+        self.assertEqual(approval["status"], svc.DEPLOYING)
+        self.assertEqual(exec_user["username"], "alice")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -549,11 +567,6 @@ class TestLegacyMigration(ApprovalFlowTestCase):
         )
         raw.commit()
         raw.close()
-        # 共享库标记表(启动校验)
-        marker = sqlite3.connect(path)
-        marker.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
-        marker.commit()
-        marker.close()
         # 旧库也要"已启用 CD":否则闸门按未启用拒绝,迁移路径根本走不到
         enable_cd(path)
 
@@ -938,6 +951,16 @@ class TestMineFilter(ApprovalFlowTestCase):
         self.assertEqual(me["total"], 1)
         self.assertEqual(me["items"][0]["requester"], "alice")
 
+    def test_wildcard_holder_counts_as_manager(self):
+        from backend.routers.approvals import list_approvals
+
+        # OIDC 下 Glue 给超管的是通配 "*"(角色名可被改):不认通配则超管在列表里被当普通用户,
+        # 只能看到自己发起的单,与"接口已放行"自相矛盾
+        self.add_approval(status=svc.PENDING, requester="alice", project="proj-a")
+        self.add_approval(status=svc.APPROVED, requester="bob", project="proj-a")
+        root = make_user("root", role="renamed_super", perms=["*"])
+        self.assertEqual(list_approvals(db=self.db, user=root, active=1)["total"], 2)
+
 
 # ─────────────────────────────────────────────────────────────
 # 同步 execute_approval 异常兜底(v1.5.3)
@@ -1048,6 +1071,10 @@ class TestResolveTargetEnvs(ApprovalFlowTestCase):
 class TestValidateRule(ApprovalFlowTestCase):
     def setUp(self):
         super().setUp()
+        # 直读共享表的本地校验路径:固定 local 模式(OIDC 模式走 Glue API,见 TestValidateRuleOidc)
+        self._auth_mode_patch = patch.object(settings, "auth_mode", "local")
+        self._auth_mode_patch.start()
+        self.addCleanup(self._auth_mode_patch.stop)
         # 测试用最小共享表副本(真实 schema 由 Glue 管理)
         with self.db.conn() as conn:
             conn.execute("CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)")
@@ -1098,6 +1125,180 @@ class TestValidateRule(ApprovalFlowTestCase):
             _validate_rule(self.db, "  ", self._req())
 
 
+class TestValidateRuleOidc(ApprovalFlowTestCase):
+    """OIDC 模式:规则校验走 Glue RBAC 只读接口,不直读共享 roles / admin_users 表."""
+
+    def setUp(self):
+        super().setUp()
+        self._auth_mode_patch = patch.object(settings, "auth_mode", "oidc")
+        self._auth_mode_patch.start()
+        self.addCleanup(self._auth_mode_patch.stop)
+
+    @staticmethod
+    def _req(**kw):
+        from backend.routers.approvals import ApprovalRuleRequest
+
+        return ApprovalRuleRequest(**kw)
+
+    def test_dangling_role_rejected_via_glue(self):
+        from backend.routers.approvals import _validate_rule
+
+        class Fake:
+            def list_roles(self):
+                return [{"name": "cd_ops"}]
+
+            def list_users(self):
+                return [{"username": "bob"}]
+
+        with patch("backend.routers.approvals.get_ci_client", return_value=Fake()):
+            with self.assertRaises(ValidationError) as ctx:
+                _validate_rule(self.db, "proj-a", self._req(approver_role="ghost"))
+        self.assertEqual(ctx.exception.error_key, "errors.rule_role_not_found")
+
+    def test_missing_approver_rejected_via_glue(self):
+        from backend.routers.approvals import _validate_rule
+
+        class Fake:
+            def list_roles(self):
+                return [{"name": "cd_ops"}]
+
+            def list_users(self):
+                return [{"username": "bob"}]
+
+        with patch("backend.routers.approvals.get_ci_client", return_value=Fake()):
+            with self.assertRaises(ValidationError) as ctx:
+                _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="bob,ghost"))
+        self.assertEqual(ctx.exception.error_key, "errors.rule_approver_not_found")
+
+    def test_valid_rule_passes_via_glue(self):
+        from backend.routers.approvals import _validate_rule
+
+        class Fake:
+            def list_roles(self):
+                return [{"name": "cd_ops"}]
+
+            def list_users(self):
+                return [{"username": "bob"}]
+
+        with patch("backend.routers.approvals.get_ci_client", return_value=Fake()):
+            # 不抛异常即通过(用户名大小写不敏感,与 local 同口径)
+            _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="Bob"))
+
+    def test_glue_unavailable_skips_validation(self):
+        from backend.routers.approvals import _validate_rule
+
+        class Down:
+            def list_roles(self):
+                raise RuntimeError("Glue down")
+
+            def list_users(self):
+                raise RuntimeError("Glue down")
+
+        with patch("backend.routers.approvals.get_ci_client", return_value=Down()):
+            # fail-open:Glue 不可达时跳过校验,不阻断规则写入
+            _validate_rule(self.db, "proj-a", self._req(approver_role="ghost", approvers="ghost-user"))
+
+    def test_empty_lists_are_authoritative_not_fail_open(self):
+        from backend.routers.approvals import _validate_rule
+
+        class Empty:
+            def list_roles(self):
+                return []
+
+            def list_users(self):
+                return []
+
+        with patch("backend.routers.approvals.get_ci_client", return_value=Empty()):
+            # Glue 可达但返回空列表 = 权威空(fail-open 只针对不可达):悬空引用照常被拒
+            with self.assertRaises(ValidationError) as ctx:
+                _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops"))
+            self.assertEqual(ctx.exception.error_key, "errors.rule_role_not_found")
+            with self.assertRaises(ValidationError) as ctx2:
+                _validate_rule(self.db, "proj-a", self._req(approvers="bob"))
+            self.assertEqual(ctx2.exception.error_key, "errors.rule_approver_not_found")
+
+    def test_null_username_row_does_not_break_check(self):
+        from backend.routers.approvals import _validate_rule
+
+        class Dirty:
+            def list_roles(self):
+                return [{"name": "cd_ops"}]
+
+            def list_users(self):
+                return [{"username": None}, {"username": "bob"}]
+
+        with patch("backend.routers.approvals.get_ci_client", return_value=Dirty()):
+            # 一行 username 为 null 的脏数据既不能让校验 500,也不能让 bob 被误判为不存在
+            _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="bob"))
+
+
+class TestLoadUserContextOidc(ApprovalFlowTestCase):
+    """OIDC 模式:执行上下文重建走 Glue 身份源,不读共享 admin_users / roles / role_permissions."""
+
+    def setUp(self):
+        super().setUp()
+        self._auth_mode_patch = patch.object(settings, "auth_mode", "oidc")
+        self._auth_mode_patch.start()
+        self.addCleanup(self._auth_mode_patch.stop)
+
+    def test_load_user_context_from_glue_identity(self):
+        from backend.auth import load_user_context
+
+        ident = {
+            "username": "alice",
+            "role": "deployer",
+            "systems": "ci,cd",
+            "status": 1,
+            "permissions": ["cd.deploy.single"],
+            "usable": True,
+            "checked_at": 0.0,
+            "last_ok_at": 0.0,
+        }
+        with patch("backend.services.glue_identity.get_identity", return_value=ident):
+            ctx = load_user_context(self.db, "alice")
+        self.assertEqual(ctx, {"username": "alice", "role": "deployer", "permissions": ["cd.deploy.single"]})
+
+    def test_load_user_context_disabled_rejected(self):
+        from backend.auth import load_user_context
+
+        ident = {"username": "alice", "role": "deployer", "status": 0, "permissions": []}
+        with patch("backend.services.glue_identity.get_identity", return_value=ident):
+            with self.assertRaises(AppException) as ctx:
+                load_user_context(self.db, "alice")
+        self.assertEqual(ctx.exception.error_key, "errors.user_disabled")
+
+    def test_load_user_context_no_cd_system_rejected(self):
+        from backend.auth import load_user_context
+
+        # systems 已不含 cd:后台 / 定时执行路径必须当场拒绝,不能给空权限放行
+        ident = {"username": "alice", "role": "deployer", "systems": "ci", "permissions": []}
+        with patch("backend.services.glue_identity.get_identity", return_value=ident):
+            with self.assertRaises(AppException) as ctx:
+                load_user_context(self.db, "alice")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.error_key, "errors.no_cd_access")
+
+    def test_load_user_context_identity_error_fails_closed(self):
+        from backend.auth import load_user_context
+        from backend.services.glue_identity import GlueIdentityError
+
+        err = GlueIdentityError("角色悬空", status_code=401, error_key="errors.identity_unavailable")
+        with patch("backend.services.glue_identity.get_identity", side_effect=err):
+            # 身份不可用原样透传(fail-closed),不得降级成"空权限继续跑"
+            with self.assertRaises(GlueIdentityError) as ctx:
+                load_user_context(self.db, "alice")
+        self.assertEqual(ctx.exception.error_key, "errors.identity_unavailable")
+
+    def test_load_user_context_username_falls_back(self):
+        from backend.auth import load_user_context
+
+        # Glue 未回 username 时回退到入参,免得上游字段缺失导致下游身份为空
+        ident = {"role": "deployer", "systems": "cd", "permissions": ["cd.deploy.single"]}
+        with patch("backend.services.glue_identity.get_identity", return_value=ident):
+            ctx = load_user_context(self.db, "alice")
+        self.assertEqual(ctx["username"], "alice")
+
+
 # ─────────────────────────────────────────────────────────────
 # 撤销保留原审批人 + 撤销通知(v1.5.3)
 # ─────────────────────────────────────────────────────────────
@@ -1122,7 +1323,14 @@ class TestCancelNotify(ApprovalFlowTestCase):
 
 
 class TestRuleWriteWithoutSharedTables(ApprovalFlowTestCase):
-    """共享表不可达(测试临时库)时校验优雅跳过,规则写入不被阻断."""
+    """local 模式下共享表不可达(测试临时库)时校验优雅跳过,规则写入不被阻断."""
+
+    def setUp(self):
+        super().setUp()
+        # 该用例验证的是 local 直读共享表路径的表缺失 → 跳过(OIDC 模式走 Glue API,见 TestValidateRuleOidc)
+        self._auth_mode_patch = patch.object(settings, "auth_mode", "local")
+        self._auth_mode_patch.start()
+        self.addCleanup(self._auth_mode_patch.stop)
 
     def test_rule_write_succeeds_without_shared_tables(self):
         from backend.routers.approvals import ApprovalRuleRequest, upsert_rule

@@ -120,7 +120,6 @@ def _python_mysql_final_columns(table: str, python_tables: dict[str, list[str]])
 def _sqlite_created_columns(path: str) -> dict[str, list[str]]:
     """真跑一遍 SQLite 自动建表(契约行 enabled=1 + auto),再反射每张表的列."""
     raw = sqlite3.connect(path)
-    raw.execute("CREATE TABLE IF NOT EXISTS ci_pipeline_artifacts (id INTEGER PRIMARY KEY)")
     raw.execute(
         "CREATE TABLE IF NOT EXISTS integrated_services ("
         "service_name TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 0, "
@@ -234,6 +233,12 @@ class IndexContractTestCase(unittest.TestCase):
             self.assertIn(table, CD_REQUIRED_TABLES)
         for name, (table, _cols, _unique) in self.python_inline_indexes.items():
             self.assertTrue(table.startswith("cd_"), name)
+
+    def test_mysql_script_never_bootstraps_shared_tables(self):
+        """manual 脚本不许对共享表(ci_* / admin_users / roles ...)建索引 —— 那些归 Devops-Glue."""
+        text = MYSQL_SCRIPT.read_text(encoding="utf-8")
+        for m in re.finditer(r"CALL __add_(?:unique_)?index\('([^']+)'", text):
+            self.assertTrue(m.group(1).startswith("cd_"), f"init_mysql.sql 对共享表建索引：{m.group(0)}")
 
 
 if __name__ == "__main__":

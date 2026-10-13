@@ -282,7 +282,7 @@ def _try_float(s: str) -> float | None:
 
 
 def _json_get(obj: dict, path: str):
-    """简易 JSON path 取值, 支持 'a.b.c' """
+    """简易 JSON path 取值, 支持 'a.b.c'"""
     cur = obj
     for seg in path.split("."):
         if isinstance(cur, dict) and seg in cur:

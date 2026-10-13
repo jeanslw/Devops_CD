@@ -1,4 +1,4 @@
-"""访问日志脱敏 -- SSO 回跳 URL 里的 code / state 不进日志(见 docs/SSO_OIDC_ZH.md §10).
+"""访问日志脱敏 -- SSO 回跳 URL 里的 code / state 不进日志.
 
 uvicorn 的 access log 会打印完整请求行,其中三类 URL 自带凭据:
   · `/api/auth/oidc/callback?code=...&state=...`:code 是 Glue 发的一次性授权码(60s 失效,只能兑换一次),

@@ -168,8 +168,7 @@ _heartbeat_stop = threading.Event()
 def _heartbeat_loop():
     """为本进程正在执行的部署续写心跳(每 _HEARTBEAT_INTERVAL 秒).
 
-    Database 惰性单例:Database.__init__ 每次构造都会跑 _validate_shared_db
-    (额外开一条原始连接执行 SHOW TABLES),不能每个心跳周期新建一次;
+    Database 惰性单例:连接池/包装器复用同一实例,不每个心跳周期重建;
     构造失败(DB 短暂不可用)时置 None,下一周期自动重试.
     """
     db_holder: list = [None]

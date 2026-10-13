@@ -1,4 +1,4 @@
-"""OIDC 登录路由(BFF 机密客户端)- 见 docs/SSO_OIDC_ZH.md §3.1 / §7.1
+"""OIDC 登录路由(BFF 机密客户端)
 
    GET /api/auth/oidc/start     → 302 到 Glue /oauth/authorize(state/nonce 落单次 cookie)
    GET /api/auth/oidc/callback  → 校验 state → 兑 code → 验 id_token → 准入 → 建会话 → 302 /
@@ -99,7 +99,7 @@ def _require_oidc_config(request: Request) -> RedirectResponse | None:
     missing = settings.oidc_missing_settings()
     if not missing:
         return None
-    logger.error("%s 缺少必填配置：%s（配置位置见 docs/SSO_OIDC_ZH.md §6.1）", _LABEL, ", ".join(missing))
+    logger.error("%s 缺少必填配置：%s", _LABEL, ", ".join(missing))
     if _is_browser_navigation(request):
         return _login_redirect("errors.oidc_not_configured", missing)
     return None
@@ -243,7 +243,9 @@ def callback(
     if error:
         # Glue 授权页明确拒绝(如 access_denied / 会话失效):交互失败,不重试
         logger.warning("%s 授权被拒绝：error=%s", _LABEL, error)
-        return _json_error(request, 400, "SSO 授权未完成（Glue 返回 error），请重新发起登录", nav_key="errors.sso_denied")
+        return _json_error(
+            request, 400, "SSO 授权未完成（Glue 返回 error），请重新发起登录", nav_key="errors.sso_denied"
+        )
     if not code or not state:
         return _json_error(request, 400, "OIDC 回调缺少 code / state 参数", nav_key="errors.sso_state_invalid")
     # state 逐字符比对(constant-time):cookie 缺失 = 未发起 / 已消费;不匹配 = 可能 CSRF
@@ -279,9 +281,7 @@ def callback(
             logger.warning("%s 身份不可用（%s）：%s", _LABEL, username, exc.message)
             return _login_redirect(exc.error_key or "errors.identity_unavailable")
         logger.warning("%s 身份查询失败（%s）：%s", _LABEL, username, exc.message)
-        return _json_error(
-            request, 502, exc.message, nav_key=exc.error_key or "errors.sso_unavailable"
-        )
+        return _json_error(request, 502, exc.message, nav_key=exc.error_key or "errors.sso_unavailable")
 
     if _identity_disabled(ident):
         return _login_redirect("errors.user_disabled")

@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # 严格环境设 false 即 deny-by-default(空 systems 无 CD 权限).
     allow_empty_systems: bool = True
 
-    # ── 认证模式:唯一总开关(见 docs/SSO_OIDC_ZH.md §6)──
+    # ── 认证模式:唯一总开关──
     # oidc(默认)= Devops-Glue 单点登录(BFF 机密客户端):身份 / 权限经 Glue HTTP API
     #             获取,请求路径不读共享表.
     # local = 本地密码登录 + 每请求直读共享表(admin_users / roles / role_permissions).
@@ -91,7 +91,7 @@ class Settings(BaseSettings):
                 return v[len(prefix) :]
         return v
 
-    # ── 认证模式校验与自检(fail-closed,见 docs/SSO_OIDC_ZH.md §6.3)──
+    # ── 认证模式校验与自检──
 
     @field_validator("auth_mode", mode="after")
     @classmethod

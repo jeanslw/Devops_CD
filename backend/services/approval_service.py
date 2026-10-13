@@ -22,7 +22,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
-from backend.auth import enforce_deploy_perm, load_user_context
+from backend.auth import WILDCARD_PERM, enforce_deploy_perm, load_user_context
 from backend.config import settings
 from backend.deploy_run import (
     create_pending_deploy_record,
@@ -281,11 +281,25 @@ def list_approvals(
 # ── 授权 ──
 
 
+def _is_super(user: dict) -> bool:
+    """超管判定:角色名命中 settings.super_admin_role,或持通配 "*".
+
+    OIDC 下 Glue 只给 super_admin 通配(其权限由代码授予),CD 必须认这个通配 —— 否则运维把
+    SUPER_ADMIN_ROLE 改名、或 Glue 侧角色改名,超管在业务层就失能了(接口层 require_perm 已认通配,
+    两处判据必须一致).local 模式的权限永不含 "*",对既有行为零影响.
+    """
+    return (user.get("role") or "") == settings.super_admin_role or WILDCARD_PERM in (user.get("permissions") or [])
+
+
 def can_approve(approval: dict, rule: dict, user: dict) -> bool:
-    """审批权限:super_admin 或持 cd.deploy.approve 或 ∈ approvers 或 role == approver_role."""
+    """审批权限:super_admin(含通配 "*",见 _is_super)或持 cd.deploy.approve 或 ∈ approvers 或 role == approver_role.
+
+    通配与 cd.deploy.approve 同级放行:接口层 require_perm 已据此放行,业务层必须同口径,
+    否则会出现"接口放行、业务层 403"两套判据.
+    """
     role = user.get("role") or ""
     username = user.get("username") or ""
-    if role == settings.super_admin_role:
+    if _is_super(user):
         return True
     if _APPROVE_PERM in (user.get("permissions") or []):
         return True
@@ -297,9 +311,8 @@ def can_approve(approval: dict, rule: dict, user: dict) -> bool:
 
 
 def can_cancel(approval: dict, user: dict) -> bool:
-    """撤销权限:super_admin 或申请人本人;仅 pending/approved(执行前)可撤销."""
-    role = user.get("role") or ""
-    if role != settings.super_admin_role and (user.get("username") or "") != (approval.get("requester") or ""):
+    """撤销权限:super_admin(含通配 "*",见 _is_super)或申请人本人;仅 pending/approved(执行前)可撤销."""
+    if not _is_super(user) and (user.get("username") or "") != (approval.get("requester") or ""):
         return False
     return approval.get("status") in (PENDING, APPROVED)
 
@@ -384,7 +397,7 @@ def cancel(db, approval_id, user: dict) -> dict:
     if not approval:
         raise NotFoundError("审批单不存在", error_key="errors.approval_not_found")
     is_owner = (user.get("username") or "") == (approval.get("requester") or "")
-    is_super = (user.get("role") or "") == settings.super_admin_role
+    is_super = _is_super(user)
     if not is_owner and not is_super:
         raise AppException(
             "仅申请人本人或超级管理员可撤销",
@@ -477,12 +490,13 @@ def _resolve_display_image(db, project: str, tag: str) -> str:
 def _enforce_execute_perm(params: dict, user: dict) -> None:
     """按审批单快照复核执行人当前权限(防御深度:账号权限可能已被收回).
 
-    回滚快照要求 cd.deploy-manage;普通部署按 deploy_type 映射子权限
-    (enforce_deploy_perm 同时允许 cd.deploy-manage blanket 与 super_admin).
+    回滚快照要求 cd.deploy-manage(与普通部署同口径:super_admin / 通配 "*" / blanket 权限均放行);
+    普通部署按 deploy_type 映射子权限(enforce_deploy_perm 同时允许 cd.deploy-manage blanket 与 super_admin).
     """
     if bool(params.get("_rollback")):
-        role = user.get("role") or ""
-        if role == settings.super_admin_role or "cd.deploy-manage" in (user.get("permissions") or []):
+        # 超管(含通配 "*",见 _is_super)与 cd.deploy-manage 同级放行:与 enforce_deploy_perm 判定对齐,
+        # 避免 Glue 侧角色改名后回滚单被误拒
+        if _is_super(user) or "cd.deploy-manage" in (user.get("permissions") or []):
             return
         raise AppException(
             "无回滚执行权限（需要 cd.deploy-manage）",

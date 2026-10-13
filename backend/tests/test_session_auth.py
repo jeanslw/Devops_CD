@@ -43,14 +43,6 @@ from backend.database import Database  # noqa: E402
 from cd_contract import enable_cd  # noqa: E402
 
 
-def _create_marker(path):
-    """Database 启动校验要求与 Devops-Glue 共享库(ci_pipeline_artifacts 为标记表)."""
-    conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE ci_pipeline_artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, project_key VARCHAR(255))")
-    conn.commit()
-    conn.close()
-
-
 class SessionAuthTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -58,7 +50,6 @@ class SessionAuthTestCase(unittest.TestCase):
         # 本类验的是本地密码登录 / 会话路径:认证模式固定 local,不依赖 config/app.env 的默认档(oidc)
         self._saved_auth_mode = settings.auth_mode
         settings.auth_mode = "local"
-        _create_marker(self.db_path)
         # 会话生命周期用例都建在"已启用 CD"的库上(未启用时登录会被闸门 503,另一组用例专门验它)
         enable_cd(self.db_path)
         # 每个临时库都是"全新库",强制重新建表(类变量在测试间共享)

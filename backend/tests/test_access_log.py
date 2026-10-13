@@ -29,7 +29,13 @@ _HTTP_ARGS = ("127.0.0.1:52344", "GET", "/api/auth/oidc/callback?code=SECRETCODE
 
 def _record(args: object) -> logging.LogRecord:
     return logging.LogRecord(
-        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', args, None  # type: ignore[arg-type]
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        args,  # type: ignore[arg-type]
+        None,
     )
 
 
@@ -103,7 +109,7 @@ class TestInstall(unittest.TestCase):
         logger.propagate = False
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
-        handler.setFormatter(logging.Formatter('%(message)s'))
+        handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
 
         install_access_log_filter(self.LOGGER)
