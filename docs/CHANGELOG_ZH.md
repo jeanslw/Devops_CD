@@ -2,6 +2,8 @@
 
 ## v1.6.0 (2026-10-14) — 本地登录 → OIDC 单点登录、契约读改走 HTTP
 
+> **⚠️ 重大更新 —— 破坏性变更**：v1.6.0 与 v1.5.x 及更早版本**不兼容**。本地登录移除、改为 OIDC 单点登录，部署日志共享视图改为 HTTP 契约；升级须配套对应版本的 Devops-Glue（CI），版本对应关系见管理员手册。
+
 ### 升级注意:破坏性变更
 
 - **本地登录 → OIDC 单点登录**：本地密码登录已移除，登录唯一入口改为 Devops-Glue OIDC 单点登录（`/api/auth/oidc/start` → `/api/auth/oidc/callback`）。升级前须在根 `.env` 配置 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`。

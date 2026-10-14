@@ -2,6 +2,8 @@
 
 > For system administrators: requirements, configuration, deployment, and operations.
 
+> **Version correspondence (CD ↔ CI)**: CD v1.6.0 requires Devops-Glue (CI) ≥ 2.9.0. This is a breaking release — local login is removed and the deploy-log shared view is replaced by an HTTP contract — so an older Glue (< 2.9.0) is incompatible. Upgrade Glue first, then CD.
+
 ## 1. Prerequisites
 
 ### Python Dependencies

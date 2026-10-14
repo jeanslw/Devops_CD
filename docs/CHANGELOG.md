@@ -2,6 +2,8 @@
 
 ## v1.6.0 (2026-10-14) — Local login → OIDC single sign-on, contract read over HTTP
 
+> **⚠️ Major release — breaking change**: v1.6.0 is **not backward-compatible** with v1.5.x and earlier. Local login is removed in favour of OIDC single sign-on, and the deploy-log shared view is replaced by an HTTP contract; upgrading requires a matching Devops-Glue (CI) version. See the version correspondence in the Administrator Manual.
+
 ### Upgrade Notes: Breaking changes
 
 - **Local login → OIDC single sign-on**: local password login is removed; the only way in is now Devops-Glue OIDC single sign-on (`/api/auth/oidc/start` → `/api/auth/oidc/callback`). Before upgrading, configure `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` in the root `.env`.
