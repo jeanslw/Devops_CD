@@ -134,7 +134,7 @@ The **Build Management** menu proxies requests to Devops-Glue (CI) HTTP API, ena
 
 1. Open **Build Management** from the sidebar.
 2. Pick a project from the list — latest build status is shown at a glance.
-3. Click **Trigger Build**: select branch/tag, optionally pass custom build variables, and submit.
+3. Click **Trigger Build**: select a branch/tag (the dropdown is grouped into "Branches" and "Tags" — a branch and a tag may share a name, so the groups keep it unambiguous), optionally pass custom build variables, and submit. If the list is empty or the CI/Git link is broken, check CI connectivity (`GET /api/ci/health`).
 4. Builds appear in the history list. Click the log icon to view real-time console output (streaming from CI API).
 
 ### 6.3 Notes
@@ -223,7 +223,7 @@ cd_service/
 | GET | `/health` | — | Health check |
 | GET | `/api/info` | — | Public info (version, DB type/status, uptime) |
 | GET | `/metrics` | — | Prometheus metrics (uptime, version, deploy counts by status; aggregates only) |
-| POST | `/api/login` | — | Login → opaque session token + `cd_token` HttpOnly cookie (5 failed attempts → 15 min lock) |
+| GET | `/api/auth/oidc/start` | — | Start Devops-Glue single sign-on (302 to the Glue consent page) |
 | POST | `/api/logout` | ✅ | Revoke current session (immediately invalid, idempotent) and clear cookie |
 | GET | `/api/me` | ✅ | Current user info |
 | **Projects & Tags** | | | |
@@ -240,7 +240,8 @@ cd_service/
 | POST | `/api/ci/projects/{pid}/builds/{bid}/retry` | 🔑 | Retry build (`ci.trigger`) |
 | POST | `/api/ci/projects/{pid}/builds/{bid}/cancel` | 🔑 | Cancel build (`ci.trigger`) |
 | GET | `/api/ci/projects/{pid}/variables` | 🔑 | CI project build variables |
-| GET | `/api/ci/projects/{pid}/branches` | 🔑 | Git branch/tag list |
+| GET | `/api/ci/projects/{pid}/branches` | 🔑 | Git branch list (branches only; kept for compatibility / fallback) |
+| GET | `/api/ci/projects/{pid}/refs` | 🔑 | Ref candidates: branches + tags (returns the `branches` and `tags` arrays; tags is empty on the older-Glue fallback) |
 | GET | `/api/ci/health` | 🔑 | CI API connectivity check |
 | **Servers** | | | |
 | GET | `/api/servers` | ✅ | Server list |

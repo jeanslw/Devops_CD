@@ -1,19 +1,21 @@
-"""CD 部署闸门回归:Devops-Glue 的集成服务开关(enabled + provision)决定 CD 能否建表与放行.
+"""CD 部署闸门回归:Devops-Glue 的集成服务契约(enabled + provision)决定 CD 能否建表与放行.
 
-契约(CI 是 integrated_services 的唯一写入方;语义见 Devops-Glue 的 ADMIN_MANUAL §16):
-  - 契约表 / 契约行缺失,或 enabled<>1 → CD **未启用**:零 DDL,入口统一 503 errors.cd_not_enabled;
+契约只经 Glue 的窄只读端点读取(CI 是契约的唯一写入方;读法见 backend/database.py 顶部注释):
+  - 端点无答复(无契约行)或 enabled<>1 → CD **未启用**:零 DDL,入口统一 503 errors.cd_not_enabled;
+  - 端点问不到(网络 / 鉴权 / 未配 CI)→ 按契约不可达 fail-closed:503 errors.ci_contract_unreachable;
   - enabled=1 + provision='auto'   → **授权 CD 自动建表**(MySQL / SQLite 同理),缺表 503 cd_not_deployed;
   - enabled=1 + provision='manual' → CD **零 DDL**,只认运维预建表(MySQL 导入 database/init_mysql.sql).
 
 覆盖:
-  - 未启用(契约表缺失 / 契约行缺失 / enabled=0 三种来源)一律 503 errors.cd_not_enabled 且零 DDL;
-  - 启用后**无需重启**即生效(CI 一写契约行,下一个请求就建表/放行);
-  - auto 模式 MySQL 会下发 CREATE TABLE 覆盖清单全集,且不触碰 ci_* / admin_users 等共享表;
+  - 未启用(端点答复未启用:契约行缺失 / enabled=0)一律 503 errors.cd_not_enabled 且零 DDL;
+  - 端点不可达一律 503 errors.ci_contract_unreachable(fail-closed,不误报"未启用");
+  - 启用后**无需重启**即生效(CI 一改契约,下一个请求就建表/放行);
+  - auto 模式 MySQL 会下发 CREATE TABLE 覆盖清单全集,且不触碰 ci_* / ci_admin_users 等共享表;
   - manual 模式 MySQL 零 DDL(连 ALTER 都不发):不越权改共享库结构;
   - 表必须建全:少任何一张 → 503 errors.cd_not_deployed + 缺表明细,探测/闸门不顺手补建;
   - 补表动作按 provision 说实话(auto:重启自愈;manual:MySQL 导入脚本 / SQLite 交运维);
   - 数据库故障(非缺表)一律 503 errors.db_unavailable,清单自检的 RuntimeError 不被掩盖;
-  - 未启用 / 未建全时:authenticate,verify_token,get_current_user,Webhook 接收,WebShell 握手
+  - 未启用 / 未建全时:verify_token,get_current_user,Webhook 接收,WebShell 握手
     全部被拒(分别是 cd_not_enabled / cd_not_deployed,而不是缺表 500).
 
 清单与 DDL 的'源码一致性'(CD_REQUIRED_TABLES ↔ init_mysql.sql ↔ _MYSQL_TABLE_DDL ↔ SQLite 建表)
@@ -30,6 +32,7 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -41,12 +44,13 @@ from backend.config import settings
 
 settings.db_driver = "sqlite"
 
+import backend.database as database  # noqa: E402
+
 from fastapi import HTTPException, Request  # noqa: E402
 from fastapi.security import HTTPAuthorizationCredentials  # noqa: E402
 
 from backend.auth import (  # noqa: E402
     CD_NOT_ENABLED_MSG,
-    authenticate,
     cd_deploy_gate,
     get_current_user,
     verify_token,
@@ -54,7 +58,10 @@ from backend.auth import (  # noqa: E402
 from backend.database import (  # noqa: E402
     CD_REQUIRED_TABLES,
     CdIntegrationState,
+    ContractUnavailableError,
     Database,
+    DatabaseUnavailableError,
+    PROVISION_AUTO,
     _is_missing_table_error,
     cd_deploy_hint,
     cd_not_enabled_hint,
@@ -70,15 +77,8 @@ _CONTRACT_DDL = CONTRACT_DDL  # 契约表 DDL 只有一份(backend/tests/cd_cont
 
 
 def _write_contract(path, enabled=1, provision="auto", with_row=True, create_table=True):
-    """模拟 CI 后台的启用 / 关闭动作:写集成服务契约行(service_name='cd')."""
+    """模拟 CI 后台的启用 / 关闭动作:驱动契约替身返回对应答复(并同步假库里的契约行)."""
     set_cd_contract(path, enabled=enabled, provision=provision, with_row=with_row, create_table=create_table)
-
-
-class _FakeMysqlNoTable(Exception):
-    """模拟 MySQL 1146:契约表不存在(CI 侧还没建 integrated_services)."""
-
-    def __init__(self):
-        super().__init__(1146, "Table 'devops_glue.integrated_services' doesn't exist")
 
 
 class _FakeCursor:
@@ -116,13 +116,29 @@ class _RecordedCursor:
 
 
 class _SqlRecorder:
-    """记录实际下发的 SQL -- 用来断言'auto 建表'与'manual / 未启用时零 DDL'."""
+    """记录实际下发的 SQL -- 用来断言'auto 建表'与'manual / 未启用时零 DDL'.
 
-    def __init__(self, contract_row=None, contract_table_missing=False):
+    契约状态不走 SQL(CD 不读表):_run_conn 会把 _fetch_contract_http 换成按本记录器
+    contract_row / contract_endpoint_down 字段生成答复的替身.
+    """
+
+    def __init__(self, contract_row=None, contract_endpoint_down=False):
         self.statements: list[str] = []
-        self.contract_row = contract_row  # None = 契约行不存在
-        self.contract_table_missing = contract_table_missing  # True = 契约表不存在(MySQL 1146)
+        self.contract_row = contract_row  # None = 端点答复"未启用"(无契约行)
+        self.contract_endpoint_down = contract_endpoint_down  # True = 契约端点不可达(网络/鉴权/未配 CI)
         self.created_tables: set[str] = set()
+
+    def contract_state(self):
+        """按记录器字段生成契约端点答复(供 _run_conn 打桩)."""
+        if self.contract_endpoint_down:
+            raise ContractUnavailableError("契约端点请求失败：模拟网络故障")
+        if self.contract_row is None:
+            return CdIntegrationState(False, PROVISION_AUTO, False)
+        return CdIntegrationState(
+            bool(self.contract_row.get("enabled")),
+            self.contract_row.get("provision") or PROVISION_AUTO,
+            True,
+        )
 
     def cursor(self):
         """raw 连接接口(_MysqlWrapper 会调用它)."""
@@ -132,10 +148,6 @@ class _SqlRecorder:
         flat = " ".join(sql.split())
         self.statements.append(flat)
         upper = flat.upper()
-        if upper.startswith("SELECT") and "INTEGRATED_SERVICES" in upper:
-            if self.contract_table_missing:
-                raise _FakeMysqlNoTable()
-            return _FakeCursor([self.contract_row] if self.contract_row else [])
         if upper.startswith("CREATE TABLE IF NOT EXISTS"):
             name = flat.split("CREATE TABLE IF NOT EXISTS", 1)[1].strip().split("(")[0].strip()
             self.created_tables.add(name)
@@ -181,7 +193,7 @@ def _creds(token: str = "any-token") -> HTTPAuthorizationCredentials:
 
 
 class TestIntegrationStateReadsContract(unittest.TestCase):
-    """契约直读语义:读不到行就是未启用(不种子,不回退),且不越权建表."""
+    """契约读语义:端点答复'未启用'就是未启用(不种子,不回退),且不越权建表."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -196,10 +208,13 @@ class TestIntegrationStateReadsContract(unittest.TestCase):
         return Database(self.db_path)
 
     def _tables(self) -> set[str]:
-        with sqlite3.connect(self.db_path) as conn:
+        # closing 包裹:sqlite3 连接的 with 只管事务不关连接,Windows 上句柄会锁住库文件
+        # 导致 tearDown 清理临时目录报 NotADirectoryError
+        with closing(sqlite3.connect(self.db_path)) as conn:
             return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
-    def test_missing_contract_table_means_disabled_without_ddl(self):
+    def test_no_contract_answer_means_disabled_without_ddl(self):
+        """端点答复未启用(替身默认 = 无契约行)→ 未启用,零 DDL:CD 表不许凭空出现."""
         db = self._db()
         state = db.cd_integration_state()
         self.assertFalse(state.enabled)
@@ -255,11 +270,23 @@ class TestIntegrationStateReadsContract(unittest.TestCase):
         self.assertEqual(db.cd_missing_tables(), [], "auto 模式下应已自动建全")
         self.assertTrue(Database._tables_ensured)
 
-    def test_authenticate_blocked_when_not_enabled(self):
-        """未启用时连登录都拒(503 cd_not_enabled),而不是伪装成'账号密码错误'."""
+    def test_login_route_blocked_when_not_enabled(self):
+        """未启用时 SSO 登录入口(start)也在闸门处被拒:503 cd_not_enabled,凭据流程不会开始."""
+        from backend.routers.oidc import start as oidc_start
+
         db = self._db()
-        with self.assertRaises(AppException) as ctx:
-            authenticate("alice", "secret", db)
+        # XHR / 脚本请求(非整页导航):闸门抛 AppException,而不是 302 回登录页
+        req = cast(
+            Request,
+            types.SimpleNamespace(cookies={}, headers=types.SimpleNamespace(get=lambda k, d="": "application/json")),
+        )
+        with (
+            patch.object(settings, "oidc_issuer", "https://glue.example.com"),
+            patch.object(settings, "oidc_client_secret", "s"),
+            patch.object(settings, "oidc_redirect_uri", "https://cd.example.com/api/auth/oidc/callback"),
+            self.assertRaises(AppException) as ctx,
+        ):
+            oidc_start(req, db)
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.error_key, "errors.cd_not_enabled")
 
@@ -291,7 +318,9 @@ class TestMysqlProvisionMatrix(unittest.TestCase):
     def _run_conn(self, rec: _SqlRecorder) -> _SqlRecorder:
         """在'假 MySQL 连接'上跑一次 conn()(触发建表闸门),返回 SQL 记录."""
         db = _mysql_db(self._tmp.name)
-        patches = _serve_recorder(rec)
+        patches = _serve_recorder(rec) + [
+            patch.object(database, "_fetch_contract_http", lambda service="cd": rec.contract_state()),
+        ]
         for p in patches:
             p.start()
         try:
@@ -318,12 +347,11 @@ class TestMysqlProvisionMatrix(unittest.TestCase):
             self.assertNotIn(shared, joined)
         self.assertNotIn("DROP ", joined.upper())  # 关闭集成服务也不许 DROP(数据必须留住)
 
-    def test_auto_also_runs_indexes_migrations_and_contract_view(self):
+    def test_auto_also_runs_indexes_and_migrations(self):
         rec = self._run_conn(_SqlRecorder(contract_row={"enabled": 1, "provision": "auto"}))
         joined = " ".join(rec.statements)
         self.assertIn("CREATE INDEX idx_cdl_project ON cd_deploy_logs(project)", joined)
         self.assertIn("ALTER TABLE cd_deploy_logs ADD COLUMN lock_key", joined)
-        self.assertIn("CREATE OR REPLACE VIEW v_glue_deploy_logs", joined)
 
     def test_manual_sends_no_ddl_at_all(self):
         """manual:一条 CREATE / ALTER / DROP 都不许发(结构归 DBA,CD 只读)."""
@@ -341,10 +369,29 @@ class TestMysqlProvisionMatrix(unittest.TestCase):
         self.assertEqual(self._ddl(rec), [])
         self.assertFalse(Database._tables_ensured)
 
-    def test_contract_table_missing_sends_no_ddl(self):
-        """契约表不存在(MySQL 1146)= 从未启用:按未启用处理,不许建表."""
-        rec = self._run_conn(_SqlRecorder(contract_table_missing=True))
-        self.assertEqual(self._ddl(rec), [])
+    def test_contract_endpoint_unreachable_raises_contract_unreachable(self):
+        """契约端点不可达(网络/鉴权/未配 CI)= 契约不可达:conn() 直接 503 fail-closed.
+
+        与旧行为的分界:直读回退时代"问不到 → 当未启用 → 零 DDL 静默放行失败";
+        现在问不到就是环境故障,把 503 ci_contract_unreachable 抛给调用方,不误判成未启用.
+        """
+        db = _mysql_db(self._tmp.name)
+        rec = _SqlRecorder(contract_endpoint_down=True)
+        patches = _serve_recorder(rec) + [
+            patch.object(database, "_fetch_contract_http", lambda service="cd": rec.contract_state()),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            with self.assertRaises(ContractUnavailableError) as ctx:
+                with db.conn() as conn:
+                    conn.execute("SELECT 1")
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.error_key, "errors.ci_contract_unreachable")
+        self.assertEqual(self._ddl(rec), [], "问不到契约就不许下发任何 DDL")
         self.assertFalse(Database._tables_ensured)
 
 
@@ -430,7 +477,7 @@ class TestCdMissingTablesCompleteness(unittest.TestCase):
             pass  # 触发 auto 自动建表
         self.assertEqual(db.cd_missing_tables(), [])
         self.assertTrue(db.cd_deployed())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_sessions'").fetchone()
         self.assertIsNotNone(row)
 
@@ -441,7 +488,7 @@ class TestCdMissingTablesCompleteness(unittest.TestCase):
             conn.execute("DROP TABLE cd_approvals")
         self.assertEqual(db.cd_missing_tables(), ["cd_approvals"])
         self.assertFalse(db.cd_deployed())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_approvals'").fetchone()
         self.assertIsNone(row, "探测未部署状态时绝不允许顺手建表")
 
@@ -451,7 +498,7 @@ class TestCdMissingTablesCompleteness(unittest.TestCase):
         with patch.object(Database, "_ensure_cd_tables", lambda self, conn: None):
             self.assertEqual(db.cd_missing_tables(), list(CD_REQUIRED_TABLES))
             self.assertFalse(db.cd_deployed())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cd_sessions'").fetchone()
         self.assertIsNone(row, "探测未部署状态时绝不允许顺手建表")
 

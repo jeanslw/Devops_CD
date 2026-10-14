@@ -17,16 +17,13 @@
     由登录页在卡片下方提示,不让浏览器把 JSON 错误体当页面渲染;
   · XHR / fetch / 脚本(`Accept: */*` 或 application/json)→ 保持 400/502/503 + JSON
     (含 `error_key`,前端 useError 据此翻译).
-
-local 模式下这两个端点不存在(§6.2):XHR / 脚本 404;整页导航 302 回 `/login`
-(本地模式下登录页就是可用的密码表单).
 """
 
 import logging
 import secrets
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from backend import oidc
@@ -45,30 +42,19 @@ _STATE_TTL = 600  # 授权页停留时限(秒):超时即让 state 失效,重新�
 _LABEL = "OIDC 登录"
 
 
-def _require_oidc_mode(request: Request) -> RedirectResponse | None:
-    """local 模式下这两条路由不存在:路由可用性由模式判定(§6.2).
-
-    · XHR / 脚本 → 404(FastAPI 默认 JSON,语义不变);
-    · 整页导航 → 302 `/login`(不带 error key:local 模式下登录页就是可用的密码表单,
-      不能弹'本地登录已停用'这种与模式相反的文案).旧书签 / 历史记录 / 回退按钮也不会
-      把裸 JSON 404 呈现给用户.
-    """
-    if settings.auth_mode == "oidc":
-        return None
-    if _is_browser_navigation(request):
-        logger.info("%s 在 AUTH_MODE=%s 下被整页访问：回登录页", _LABEL, settings.auth_mode)
-        return RedirectResponse("/login", status_code=302)
-    raise HTTPException(404, "Not Found")
-
-
-def _login_redirect(error_key: str, missing: list[str] | None = None) -> RedirectResponse:
+def _login_redirect(
+    error_key: str, missing: list[str] | None = None, params: dict | None = None
+) -> RedirectResponse:
     """业务性失败:回登录页并带上 i18n key(并清掉一次性 state cookie).
 
     missing 非空时附带缺失的配置项名,登录页把它渲染成 errors.oidc_not_configured 的 {items}.
+    params 为其余 i18n 插值参数(reason / tables / driver 等),逐项并入 query,登录页按 key 翻译.
     """
     query = f"error={error_key}"
     if missing:
         query += f"&missing={quote(','.join(missing), safe='')}"
+    for k, v in (params or {}).items():
+        query += f"&{quote(str(k), safe='')}={quote(str(v), safe='')}"
     resp = RedirectResponse(f"/login?{query}", status_code=302)
     resp.delete_cookie(_STATE_COOKIE, path="/")
     return resp
@@ -116,28 +102,28 @@ def _raise_not_configured() -> None:
     )
 
 
-def _nav_fail(request: Request, error_key: str) -> RedirectResponse | None:
+def _nav_fail(request: Request, error_key: str, params: dict | None = None) -> RedirectResponse | None:
     """浏览器导航下的失败统一收口:302 回登录页 + i18n key(登录页在卡片下方提示).
 
     非导航返回 None:调用方按各自原语义继续(抛 AppException / 返回 JSON).
     """
     if _is_browser_navigation(request):
         logger.info("%s 失败 → 回登录页提示 %s", _LABEL, error_key)
-        return _login_redirect(error_key)
+        return _login_redirect(error_key, params=params)
     return None
 
 
 def _gate(request: Request, db: Database) -> RedirectResponse | None:
-    """部署闸门:与 /api/login 同口径 - CD 未启用 / 未部署 / 库不可用时,不进入登录流程.
+    """部署闸门:CD 未启用 / 未部署 / 契约不可达 / 库不可用时,不进入登录流程.
 
-    导航下直接回登录页(errors.cd_not_enabled / cd_not_deployed / db_unavailable 都有中英文案,
-    提示'去 Glue 后台启用'这类可操作动作);XHR / 脚本保持抛 AppException,由全局 handler
-    输出带 error_key 的 503 JSON.
+    导航下直接回登录页(errors.cd_not_enabled / cd_not_deployed / ci_contract_unreachable /
+    db_unavailable 都有中英文案,提示'去 Glue 后台启用'这类可操作动作);XHR / 脚本保持抛
+    AppException,由全局 handler 输出带 error_key 的 503 JSON.
     """
     try:
         cd_deploy_gate(db)
     except AppException as exc:
-        nav = _nav_fail(request, exc.error_key or "errors.service_unavailable")
+        nav = _nav_fail(request, exc.error_key or "errors.service_unavailable", exc.error_params)
         if nav is not None:
             return nav
         raise
@@ -150,16 +136,13 @@ def start(request: Request, db: Database = Depends(get_db)):
 
     登录按钮的目标地址(落地页 / 登录页都是整页跳转),因此失败必须以'302 回登录页'收尾.
     """
-    nav = _require_oidc_mode(request)
-    if nav is not None:
-        return nav
     # 必填项缺失先于部署闸门报出:这是配置问题,且要提示缺少的项目.
     nav = _require_oidc_config(request)
     if nav is not None:
         return nav
     if not settings.oidc_ready():
         _raise_not_configured()
-    # 部署闸门:与 /api/login 同口径 - CD 未启用 / 表没建全 / 库不可用时,不进入登录流程.
+    # 部署闸门:CD 未启用 / 表没建全 / 库不可用时,不进入登录流程.
     nav = _gate(request, db)
     if nav is not None:
         return nav
@@ -223,9 +206,6 @@ def callback(
     retry: str = "",
 ):
     """Glue 回跳入口:校验 state → 兑 code → 验 id_token → 准入 → 建会话 → 302 /."""
-    nav = _require_oidc_mode(request)
-    if nav is not None:
-        return nav
     # 必填项缺失时的回调(历史书签 / 手工构造的回跳):按配置问题提示,不报成上游故障.
     nav = _require_oidc_config(request)
     if nav is not None:
@@ -294,7 +274,7 @@ def callback(
 
     logger.info("%s 成功：%s", _LABEL, ident["username"])
     resp = RedirectResponse("/", status_code=302)
-    # 会话 cookie 与 /api/login 完全一致(HttpOnly + SameSite=Lax + Path=/,§6.2).
+    # 会话 cookie(HttpOnly + SameSite=Lax + Path=/,§6.2).
     # OIDC 是整页跳转回 SPA,sessionStorage 的本地登录标志不保留,故前端启动需自举一次
     # (useAuth.bootstrap → GET /api/me)还原登录态,见 §7.2 末行.
     resp.set_cookie(

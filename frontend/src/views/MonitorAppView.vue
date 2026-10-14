@@ -16,10 +16,10 @@
               <td>{{ s.host }}:{{ s.port }}</td>
               <td>{{ typeLabel(s) }}</td>
               <td v-html="capHtml(s)"></td>
-              <td><span class="badge" :class="s.status==='available'?'badge-ok':s.status==='unavailable'?'badge-pend':'badge-err'">{{ s.status === 'available' ? $t('monitor.available') : s.status === 'unavailable' ? $t('monitor.unavailable') : $t('monitor.error') }}</span></td>
+              <td><span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span></td>
               <td>
                 <button v-if="s.status==='available'" class="btn btn-blue btn-sm" @click="viewDetail(s)">{{ $t('monitor.viewApp') }}</button>
-                <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ $t('monitor.unavailable') }}</button>
+                <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ s.status === 'unknown' ? $t('monitor.checking') : $t('monitor.unavailable') }}</button>
               </td>
             </tr>
           </tbody>
@@ -141,6 +141,8 @@ const detailName = ref('')
 const currentType = ref('')
 
 const TYPE_LABELS = { k8s: '☸️ K8S', docker: '🐳 Docker', ssh: '🖥️ Linux' }
+// 单台探测的并发上限:列表一次拉回后并行探测,避免同时开太多 SSH
+const PROBE_CONCURRENCY = 4
 
 // K8S
 const nodesLoading = ref(false)
@@ -167,6 +169,7 @@ function typeLabel(s) { return TYPE_LABELS[s.monitor_type || 'ssh'] || s.type }
 
 function capHtml(s) {
   const mt = s.monitor_type || 'unknown'
+  if (s.status === 'unknown') return `<span style="color:#888;font-size:12px">${t('monitor.checking')}</span>`
   if (mt === 'k8s') {
     const parts = []
     if (s.has_metrics_server) parts.push(t('monitor.metricsServer'))
@@ -181,6 +184,20 @@ function capHtml(s) {
     return `<span style="color:#e57373;font-size:12px">${t('monitor.dockerUnavailable')}</span>`
   }
   return `<span style="color:#667;font-size:12px">${t('monitor.seeSystemResources')}</span>`
+}
+
+// 状态 → 文案/徽章样式:'unknown' 表示尚未探测(列表只读库,不等 SSH)
+function statusText(s) {
+  if (s.status === 'available') return t('monitor.available')
+  if (s.status === 'unavailable') return t('monitor.unavailable')
+  if (s.status === 'unknown') return t('monitor.checking')
+  return t('monitor.error')
+}
+
+function statusClass(s) {
+  if (s.status === 'available') return 'badge-ok'
+  if (s.status === 'unknown' || s.status === 'unavailable') return 'badge-pend'
+  return 'badge-err'
 }
 
 async function checkEnabled() {
@@ -205,15 +222,44 @@ async function loadServers() {
     if (!ct.includes('application/json')) { console.error('monitor/servers 返回非 JSON'); return }
     const d = await r.json()
     servers.value = Array.isArray(d.servers) ? d.servers : []
-    // Auto-select if coming from K8s deploy
-    if (route.query.clusterId && servers.value.length) {
-      const sid = parseInt(route.query.clusterId)
-      const server = servers.value.find(s => s.id === sid)
-      if (server && server.status === 'available') {
-        setTimeout(() => viewDetail(server), 500)
-      }
-    }
   } catch (e) {} finally { loading.value = false }
+}
+
+// 逐台探测:列表先渲染,单台结果回来就回填该行;某台不可达只影响自己那一行,
+// 不再让整页等所有主机返回.并发上限避免同时开太多 SSH.
+async function probeAll() {
+  const ids = servers.value.map(s => s.id)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(PROBE_CONCURRENCY, ids.length) }, async () => {
+    while (cursor < ids.length) await probeOne(ids[cursor++])
+  })
+  await Promise.all(workers)
+}
+
+async function probeOne(id) {
+  try {
+    const r = await fetch(`/api/monitor/servers/${id}/probe`, { headers: auth.A() })
+    if (auth.handle401(r)) return
+    const ct = r.headers.get('content-type') || ''
+    if (!ct.includes('application/json')) { applyProbe(id, { status: 'error' }); return }
+    const d = await r.json()
+    applyProbe(id, d && d.server ? d.server : { status: 'error' })
+  } catch (e) {
+    applyProbe(id, { status: 'error' })
+  }
+}
+
+function applyProbe(id, patch) {
+  const i = servers.value.findIndex(s => s.id === id)
+  if (i >= 0) servers.value[i] = { ...servers.value[i], ...patch }
+}
+
+// ?clusterId= 来自 K8s 部署页跳转:探测完成且该集群可用时自动打开详情
+function openClusterFromQuery() {
+  if (!route.query.clusterId) return
+  const sid = parseInt(route.query.clusterId)
+  const server = servers.value.find(s => s.id === sid)
+  if (server && server.status === 'available') viewDetail(server)
 }
 
 function viewDetail(s) {
@@ -296,8 +342,8 @@ async function showPodDetail(p) {
 
 onMounted(async () => {
   const enabled = await checkEnabled()
-  if (enabled) {
-    loadServers()
-  }
+  if (!enabled) return
+  await loadServers()
+  probeAll().then(openClusterFromQuery)  // 不 await:先渲染,再看是否要按 ?clusterId 自动打开详情
 })
 </script>

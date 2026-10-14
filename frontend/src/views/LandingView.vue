@@ -1,7 +1,7 @@
 <template>
   <div class="landing">
     <!-- 粒子背景 -->
-    <div class="landing-bg"><canvas ref="canvasRef"></canvas></div>
+    <ParticleBackground />
 
     <!-- 导航栏 -->
     <nav class="landing-nav">
@@ -15,7 +15,7 @@
           <button :class="{ active: locale === 'zh' }" @click="setLang('zh')">中文</button>
           <button :class="{ active: locale === 'en' }" @click="setLang('en')">EN</button>
         </div>
-        <!-- 登录入口固定指向 /login:由登录页按 AUTH_MODE 决定展示 SSO 按钮还是本地表单. -->
+        <!-- 登录入口固定指向 /login(Devops-Glue 单点登录). -->
         <router-link to="/login" class="nav-btn">🔐 {{ $t('landing.nav.login') }}</router-link>
       </div>
     </nav>
@@ -27,9 +27,13 @@
         &nbsp;→&nbsp;
         <span class="glow">{{ $t('landing.hero.text2') }}</span>
       </h1>
-      <div class="hero-status">
+      <div class="hero-status" :class="statusInfo.cls">
         <span class="status-dot"></span>
-        <span class="status-text">{{ $t('landing.running') }}</span>
+        <span class="status-text">{{ statusInfo.label }}</span>
+        <template v-if="statusInfo.detail">
+          <span class="status-sep">·</span>
+          <span class="status-detail">{{ statusInfo.detail }}</span>
+        </template>
       </div>
     </section>
 
@@ -60,13 +64,16 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLang } from '@/locales'
 import { useAppInfo } from '@/composables/useAppInfo'
+import { useStatus } from '@/composables/useStatus'
+import ParticleBackground from '@/components/ParticleBackground.vue'
 
 const { t, locale } = useI18n()
 const { version } = useAppInfo()
+const { status, refresh } = useStatus()
 
 const logoUrl = '/static/logo.png'
 
@@ -79,80 +86,34 @@ const cards = computed(() => [
   { key: 'notify',   icon: '🔔', title: t('landing.cards.notify.title'),   desc: t('landing.cards.notify.desc') },
 ])
 
-// 粒子动画
-const canvasRef = ref(null)
-let animId = null
-let particles = []
-let W, H
+// 落地页"运行中"徽标:真实状态来自 GET /api/status(无需认证),每 30s 刷新一次.
+const STATUS_POLL_MS = 30000
 
-function resize() {
-  const c = canvasRef.value
-  if (!c) return
-  W = c.width = window.innerWidth
-  H = c.height = window.innerHeight
-}
-
-function initParticles() {
-  particles = []
-  for (let i = 0; i < 60; i++) {
-    particles.push({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      r: Math.random() * 1.5 + 0.5,
-      vx: (Math.random() - 0.5) * 0.3,
-      vy: (Math.random() - 0.5) * 0.3,
-      c: `rgba(0,${180 + Math.random() * 75},${120 + Math.random() * 136},${0.15 + Math.random() * 0.25})`,
-    })
+const statusInfo = computed(() => {
+  const s = status.value
+  if (!s) {
+    return { cls: 'st-checking', label: t('landing.status.checking'), detail: '' }
   }
-}
+  const label = t(`landing.status.${s.status}`)
+  const detailKey = `landing.status.detail.${s.status_detail}`
+  let detail = ''
+  if (s.status_detail === 'oidc') {
+    detail = t(detailKey, { items: (s.oidc_missing || []).join(' / ') })
+  } else if (s.status_detail === 'not_deployed') {
+    detail = t(detailKey, { tables: (s.tables_missing || []).length })
+  } else {
+    detail = t(detailKey)
+  }
+  return { cls: `st-${s.status}`, label, detail }
+})
 
-function draw() {
-  const c = canvasRef.value
-  if (!c) return
-  const ctx = c.getContext('2d')
-  ctx.clearRect(0, 0, W, H)
-  particles.forEach((p) => {
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
-    ctx.fillStyle = p.c
-    ctx.fill()
-    p.x += p.vx
-    p.y += p.vy
-    if (p.x < 0) p.x = W
-    if (p.x > W) p.x = 0
-    if (p.y < 0) p.y = H
-    if (p.y > H) p.y = 0
-  })
-  animId = requestAnimationFrame(draw)
-}
-
+let pollId = null
 onMounted(() => {
-  resize()
-  initParticles()
-  draw()
-  window.addEventListener('resize', onResize)
-  document.addEventListener('visibilitychange', onVisibility)
+  pollId = setInterval(refresh, STATUS_POLL_MS)
 })
-
 onUnmounted(() => {
-  cancelAnimationFrame(animId)
-  window.removeEventListener('resize', onResize)
-  document.removeEventListener('visibilitychange', onVisibility)
+  if (pollId) clearInterval(pollId)
 })
-
-function onResize() {
-  resize()
-  initParticles()
-}
-
-function onVisibility() {
-  if (document.hidden) {
-    cancelAnimationFrame(animId)
-    animId = null
-  } else if (!animId) {
-    draw()
-  }
-}
 </script>
 
 <style scoped>
@@ -175,14 +136,34 @@ function onVisibility() {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
   animation: status-pulse 1.8s infinite;
 }
+.hero-status .status-sep { opacity: 0.5; }
+.hero-status .status-detail { font-weight: 400; opacity: 0.85; }
+.hero-status.st-checking {
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.45);
+  color: #93c5fd;
+}
+.hero-status.st-stopped,
+.hero-status.st-not_deployed,
+.hero-status.st-misconfigured {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+}
+.hero-status.st-unreachable,
+.hero-status.st-db_error {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #f87171;
+}
 @keyframes status-pulse {
-  0%   { box-shadow: 0 0 0 0    rgba(16, 185, 129, 0.7); }
-  70%  { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);   }
-  100% { box-shadow: 0 0 0 0    rgba(16, 185, 129, 0);   }
+  0%   { box-shadow: 0 0 0 0    currentColor; }
+  70%  { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0    transparent; }
 }
 .landing-footer {
   color: #cbd5e1;

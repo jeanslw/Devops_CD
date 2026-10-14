@@ -59,7 +59,7 @@ export function useAuth() {
     state.initialized = false
   }
 
-  // OIDC(AUTH_MODE=oidc)登录成功后是"整页跳转"回到 SPA(Glue → 302 /api/auth/oidc/callback → /),
+  // SSO 登录成功后是"整页跳转"回到 SPA(Glue → 302 /api/auth/oidc/callback → /),
   // 新文档里 sessionStorage 为空 即 仅凭本地标志会把已登录用户误判成未登录.
   // 这里用一次 /api/me 让服务端 cookie 会话自证:200 即 直接进入已登录态(同时补上本地标志);
   // 401(local 模式无 cookie 时同样如此)即 维持未登录渲染,行为不变.

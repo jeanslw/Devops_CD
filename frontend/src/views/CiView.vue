@@ -113,6 +113,15 @@ async function togglePipeline(p) {
   }
   p._showPipeline = true
   if (p._pipelineTag) return
+  // 列表接口(/api/projects → Glue /api/build/projects)已带回 latest_tag / latest_pipeline /
+  // tag_time,展开时直接复用即可,不必再打一次 /api/projects/{job}/pipeline(同一份数据;
+  // 且每次联网都会重建上游连接的请求路径最容易吃到等待)
+  if (p.latest_tag) {
+    p._pipelineTag = p.latest_tag
+    p._pipelineIid = p.latest_pipeline || ''
+    p._pipelineCreated = p.tag_time || ''
+    return
+  }
   p._pipelineLoading = true
   try {
     const r = await fetch(`/api/projects/${encodeURIComponent(p.job_name)}/pipeline`, { headers: auth.A() })

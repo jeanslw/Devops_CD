@@ -82,8 +82,14 @@
         <div v-if="selectedProjectProvider !== 'jenkins'" class="form-group">
           <label>{{ $t('ciBuild.branch') }} <span class="required">*</span></label>
           <select v-model="triggerRef" class="field">
-            <option value="">{{ branches.length ? $t('ciBuild.pleaseSelect') : $t('ciBuild.loadingBranch') }}</option>
-            <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+            <option value="">{{ hasRefs ? $t('ciBuild.pleaseSelect') : $t('ciBuild.loadingBranch') }}</option>
+            <!-- 分支 / Tag 名称可能重名(如 v1.5.0),分组后才能分清选的是哪一个 -->
+            <optgroup v-if="refs.branches.length" :label="$t('ciBuild.branchGroup')">
+              <option v-for="b in refs.branches" :key="'br-' + b" :value="b">{{ b }}</option>
+            </optgroup>
+            <optgroup v-if="refs.tags.length" :label="$t('ciBuild.tagGroup')">
+              <option v-for="g in refs.tags" :key="'tag-' + g" :value="g">{{ g }}</option>
+            </optgroup>
           </select>
         </div>
         <div class="form-group">
@@ -102,10 +108,15 @@
                 <option value="">{{ $t('ciBuild.pleaseSelect') }}</option>
                 <option v-for="c in p.choices" :key="c" :value="c">{{ c }}</option>
               </select>
-              <!-- git → 分支下拉 -->
+              <!-- git → 分支 / Tag 下拉(与顶部 ref 选择器同源,分组渲染) -->
               <select v-else-if="p.type === 'git'" v-model="p.value" class="field" style="flex:2">
                 <option value="">{{ $t('ciBuild.pleaseSelect') }}</option>
-                <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+                <optgroup v-if="refs.branches.length" :label="$t('ciBuild.branchGroup')">
+                  <option v-for="b in refs.branches" :key="'br-' + b" :value="b">{{ b }}</option>
+                </optgroup>
+                <optgroup v-if="refs.tags.length" :label="$t('ciBuild.tagGroup')">
+                  <option v-for="g in refs.tags" :key="'tag-' + g" :value="g">{{ g }}</option>
+                </optgroup>
               </select>
               <!-- boolean → 复选框 -->
               <label v-else-if="p.type === 'boolean'" class="field checkbox-label" style="flex:2">
@@ -188,7 +199,9 @@ const showTrigger = ref(false)
 const triggerRef = ref('')
 const triggerVars = reactive([])
 const triggering = ref(false)
-const branches = ref([])
+// ref 候选值:分支 + Tag 两组(来源 Glue GET /api/git/{path}/refs;名称可能重名,故分组渲染)
+const refs = reactive({ branches: [], tags: [] })
+const hasRefs = computed(() => refs.branches.length > 0 || refs.tags.length > 0)
 const loadingParams = ref(true)  // 初始为 true,避免弹窗首帧闪现"未定义参数"
 // 当前项目的 CI 提供商(jenkins / gitlab_ci / custom_push)
 const selectedProjectProvider = computed(() => {
@@ -265,20 +278,22 @@ watch(showTrigger, async (val) => {
   if (val && selectedProject.value) {
     triggerRef.value = ''
     triggerVars.splice(0, triggerVars.length)
-    branches.value = []
+    refs.branches = []
+    refs.tags = []
 
-    // 并行加载分支和参数(先标 loading,避免瞬时闪现"未定义参数")
+    // 并行加载 ref 候选值和参数(先标 loading,避免瞬时闪现"未定义参数")
     loadingParams.value = true
     const proj = encodeURIComponent(selectedProject.value)
-    const [branchR, paramR] = await Promise.allSettled([
-      fetch(`/api/ci/projects/${proj}/branches`, { headers: auth.A() }),
+    const [refR, paramR] = await Promise.allSettled([
+      fetch(`/api/ci/projects/${proj}/refs`, { headers: auth.A() }),
       fetch(`/api/ci/projects/${proj}/variables`, { headers: auth.A() }),
     ])
 
-    // 分支
-    if (branchR.status === 'fulfilled' && branchR.value.ok) {
-      branches.value = await branchR.value.json()
-      // CI 返回 ["main", "master", ...]
+    // ref 候选值:Glue 返回 {branches: [...], tags: [...]}(老 Glue 回退到 /branches 时 tags 为空)
+    if (refR.status === 'fulfilled' && refR.value.ok) {
+      const data = await refR.value.json()
+      refs.branches = Array.isArray(data?.branches) ? data.branches : []
+      refs.tags = Array.isArray(data?.tags) ? data.tags : []
     }
 
     // 参数(预设 CI 定义的变量,含 type/choices/defaultValue/description)

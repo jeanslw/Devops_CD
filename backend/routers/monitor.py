@@ -1,4 +1,8 @@
-"""资源监控路由 - 统一 K8S / Docker / SSH 服务器资源查看"""
+"""资源监控路由 - 统一 K8S / Docker / SSH 服务器资源查看
+
+服务器列表分两步:GET /servers 只读库(不做 SSH,页面立即渲染),
+GET /servers/{id}/probe 单台探测(前端并发调用,逐行回填状态).
+"""
 
 import logging
 import shlex
@@ -31,18 +35,33 @@ def monitor_status():
     return {"enabled": settings.monitoring_enabled}
 
 
+def _guess_monitor_type(srv) -> str:
+    """按 type 优先、tags 兜底的顺序推断监控类型(不连服务器)"""
+    srv_type = (srv.get("type") or "").lower()
+    if srv_type in ("k8s", "argocd", "fluxcd"):
+        return "k8s"
+    if srv_type == "docker":
+        return "docker"
+    if srv_type == "ssh":
+        return "ssh"
+    tags = [t.strip().lower() for t in (srv.get("tags") or "").split(",") if t.strip()]
+    if any(t in ("k8s", "kubernetes") for t in tags):
+        return "k8s"
+    return "docker" if "docker" in tags else "ssh"
+
+
 @router.get("/servers")
 def list_monitor_servers(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.resource-monitor")),
 ):
-    """返回所有服务器的监控状态(按类型区分)"""
+    """返回所有服务器的监控状态(按类型区分).
+
+    只读库 + 合并已缓存的单台探测结果,不做 SSH 探测:探测过的服务器直接带状态,
+    其余为 "unknown",由前端并行调 /servers/{id}/probe 逐台回填(页面不再等所有主机).
+    """
     if not settings.monitoring_enabled:
         return {"enabled": False, "servers": []}
-
-    cached = _cache_get("servers:all")
-    if cached is not None:
-        return cached
 
     with db.conn() as conn:
         servers = conn.execute("SELECT * FROM cd_servers ORDER BY type, name").fetchall()
@@ -50,96 +69,116 @@ def list_monitor_servers(
     result = []
     for srv in servers:
         entry = dict(srv)
-        entry["status"] = "unchecked"
-        entry["monitor_type"] = "unknown"
-        # K8S 专用
+        entry["status"] = "unknown"
+        entry["monitor_type"] = _guess_monitor_type(srv)
         entry["has_prometheus"] = False
         entry["has_metrics_server"] = False
-
-        ssh = None
-        try:
-            target = _make_target(srv)
-            ssh = ssh_connect(target, settings.ssh_timeout)
-
-            srv_type = (srv.get("type") or "").lower()
-            tag_list = [t.strip().lower() for t in (srv.get("tags") or "").split(",") if t.strip()]
-
-            # type 优先;type 不明确时才用 tags 推断
-            if srv_type in ("k8s", "argocd", "fluxcd"):
-                is_k8s, is_docker = True, False
-            elif srv_type == "docker":
-                is_k8s, is_docker = False, True
-            elif srv_type == "ssh":
-                is_k8s, is_docker = False, False
-            else:
-                is_k8s = any(t in ("k8s", "kubernetes") for t in tag_list)
-                is_docker = "docker" in tag_list
-
-            if is_k8s:
-                entry["monitor_type"] = "k8s"
-
-                # 检测 Prometheus
-                prom_out = _ssh_cmd(
-                    ssh,
-                    "kubectl get pods -A --no-headers 2>/dev/null | grep -i prometheus | grep -i running | head -1",
-                )
-                entry["has_prometheus"] = bool(prom_out)
-
-                # 检测 metrics-server
-                ms_out = _ssh_cmd(
-                    ssh,
-                    "kubectl top nodes --no-headers 2>/dev/null | head -1",
-                )
-                entry["has_metrics_server"] = bool(ms_out.strip())
-                if not entry["has_metrics_server"] and not entry["has_prometheus"]:
-                    entry["status"] = "unavailable"
-                    entry["hint"] = "未安装 metrics-server 或 Prometheus"
-                else:
-                    entry["status"] = "available"
-
-            elif is_docker:
-                entry["monitor_type"] = "docker"
-                entry["status"] = "available"
-                # 快速检测 docker 是否可用
-                docker_test = _ssh_cmd(ssh, "docker ps --format 'ok' 2>/dev/null | head -1")
-                if not docker_test:
-                    entry["status"] = "unavailable"
-                    entry["hint"] = "Docker 不可用或权限不足"
-
-            else:  # ssh / 其他
-                entry["monitor_type"] = "ssh"
-                entry["status"] = "available"
-                # 检测是否有支持的监控命令
-                has_top = _ssh_cmd(ssh, "which top 2>/dev/null")
-                if not has_top:
-                    entry["status"] = "unavailable"
-                    entry["hint"] = "SSH 连接正常但缺少基础命令"
-
-        except (TimeoutError, ConnectionRefusedError, OSError) as e:
-            logger.warning("Server %s:%s unreachable: %s", entry.get("host"), entry.get("port"), e)
-            entry["status"] = "error"
-            entry["error"] = "服务器不可达，请检查地址/端口/网络"
-        except paramiko.AuthenticationException:
-            logger.warning("Server %s auth failed", entry.get("host"))
-            entry["status"] = "error"
-            entry["error"] = "认证失败，请检查用户名/密码/密钥"
-        except paramiko.SSHException as e:
-            logger.warning("Server %s SSH error: %s", entry.get("host"), e)
-            entry["status"] = "error"
-            entry["error"] = "SSH 协议错误，请检查服务端配置"
-        except Exception as e:
-            logger.error("Server monitor failed", exc_info=e)
-            entry["status"] = "error"
-            entry["error"] = "服务器连接失败，请联系管理员"
-        finally:
-            if ssh:
-                ssh.close()
-
+        cached = _cache_get(f"servers:{srv['id']}")
+        if cached is not None:
+            entry.update(cached)
         result.append(entry)
 
-    resp = {"enabled": True, "servers": result}
-    _cache_set("servers:all", resp)
-    return resp
+    return {"enabled": True, "servers": result}
+
+
+@router.get("/servers/{server_id}/probe")
+def probe_monitor_server(
+    server_id: int,
+    db: Database = Depends(get_db),
+    _user: dict = Depends(require_perm("cd.resource-monitor")),
+):
+    """探测单台服务器的监控能力(SSH),结果缓存 monitor_cache_servers 秒.
+
+    失败也返回 200 + status=error:单台不可达不该让整页报错,前端按行显示.
+    """
+    if not settings.monitoring_enabled:
+        raise ValidationError("监控功能未启用", error_key="errors.monitoring_disabled")
+
+    cache_key = f"servers:{server_id}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return {"success": True, "cached": True, "server": cached}
+
+    with db.conn() as conn:
+        srv = conn.execute("SELECT * FROM cd_servers WHERE id=?", (server_id,)).fetchone()
+    if not srv:
+        raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
+
+    entry = _probe_server(srv)
+    _cache_set(cache_key, entry)
+    return {"success": True, "cached": False, "server": entry}
+
+
+def _probe_server(srv) -> dict:
+    """SSH 探测单台服务器的监控能力,返回可合并进列表项的字段
+    (status / monitor_type / has_prometheus / has_metrics_server / hint / error)"""
+    entry = {
+        "status": "error",
+        "monitor_type": _guess_monitor_type(srv),
+        "has_prometheus": False,
+        "has_metrics_server": False,
+    }
+    ssh = None
+    try:
+        target = _make_target(srv)
+        ssh = ssh_connect(target, settings.ssh_timeout)
+        monitor_type = entry["monitor_type"]
+
+        if monitor_type == "k8s":
+            # 检测 Prometheus
+            prom_out = _ssh_cmd(
+                ssh,
+                "kubectl get pods -A --no-headers 2>/dev/null | grep -i prometheus | grep -i running | head -1",
+            )
+            entry["has_prometheus"] = bool(prom_out)
+
+            # 检测 metrics-server
+            ms_out = _ssh_cmd(
+                ssh,
+                "kubectl top nodes --no-headers 2>/dev/null | head -1",
+            )
+            entry["has_metrics_server"] = bool(ms_out.strip())
+            if not entry["has_metrics_server"] and not entry["has_prometheus"]:
+                entry["status"] = "unavailable"
+                entry["hint"] = "未安装 metrics-server 或 Prometheus"
+            else:
+                entry["status"] = "available"
+
+        elif monitor_type == "docker":
+            entry["status"] = "available"
+            # 快速检测 docker 是否可用
+            if not _ssh_cmd(ssh, "docker ps --format 'ok' 2>/dev/null | head -1"):
+                entry["status"] = "unavailable"
+                entry["hint"] = "Docker 不可用或权限不足"
+
+        else:  # ssh / 其他
+            entry["status"] = "available"
+            # 检测是否有支持的监控命令
+            if not _ssh_cmd(ssh, "which top 2>/dev/null"):
+                entry["status"] = "unavailable"
+                entry["hint"] = "SSH 连接正常但缺少基础命令"
+
+    except (TimeoutError, ConnectionRefusedError, OSError) as e:
+        logger.warning("Server %s:%s unreachable: %s", srv.get("host"), srv.get("port"), e)
+        entry["status"] = "error"
+        entry["error"] = "服务器不可达，请检查地址/端口/网络"
+    except paramiko.AuthenticationException:
+        logger.warning("Server %s auth failed", srv.get("host"))
+        entry["status"] = "error"
+        entry["error"] = "认证失败，请检查用户名/密码/密钥"
+    except paramiko.SSHException as e:
+        logger.warning("Server %s SSH error: %s", srv.get("host"), e)
+        entry["status"] = "error"
+        entry["error"] = "SSH 协议错误，请检查服务端配置"
+    except Exception as e:
+        logger.error("Server monitor failed", exc_info=e)
+        entry["status"] = "error"
+        entry["error"] = "服务器连接失败，请联系管理员"
+    finally:
+        if ssh:
+            ssh.close()
+
+    return entry
 
 
 # ── K8S ──

@@ -1,12 +1,56 @@
 """CI 数据查询服务 - 映射/tag/pipeline 经 CI HTTP API,不直读 ci_ 表"""
 
 import logging
+import threading
 import time
 
 from backend.database import Database
 from backend.services.ci_client import CiClientError, get_ci_client
 
 logger = logging.getLogger(__name__)
+
+# 进程内短 TTL 缓存:Glue 的项目聚合(每项目最新 tag / pipeline)一次要几十到上百毫秒,
+# 首页 / 部署页 / 审批页会在同一时间窗内反复拉取完全相同的内容.
+# 缓存放在**模块级**:路由每请求都 new CiService()(见 routers/projects.py),实例级缓存
+# 永远命中不了 —— 等于没有缓存(2026-10 首页变慢排查中发现:改之前每次请求都要额外等
+# Glue 的 100~200ms;这跟本机"被拒连接要 2s"是两回事,别混为一谈).
+_PROJECTS_TTL = 30  # 秒
+_projects_lock = threading.Lock()
+_projects_cache: list[dict] | None = None
+_projects_cache_at: float = 0.0
+
+
+def _load_projects() -> list[dict]:
+    """经 Glue GET /api/build/projects 拉取活跃映射 + 每项目最新 tag(最多 30s 复用一次).
+
+    失败(上游不可达 / 解析异常)**不写缓存**,只返回空列表:否则一次瞬时故障会让首页
+    空 30s;不缓存则表示"下一个请求立刻再试".
+    """
+    global _projects_cache, _projects_cache_at
+    now = time.time()
+    with _projects_lock:
+        if _projects_cache is not None and now - _projects_cache_at < _PROJECTS_TTL:
+            return _projects_cache
+    try:
+        data = list(get_ci_client().get_projects() or [])
+    except CiClientError as e:
+        logger.warning("CI projects 拉取失败: %s", e)
+        return []
+    except Exception as e:  # noqa: BLE001 - 上游返回结构异常同样降级为空列表
+        logger.warning("CI projects 解析失败: %s", e)
+        return []
+    with _projects_lock:
+        _projects_cache = data
+        _projects_cache_at = now
+    return data
+
+
+def invalidate_projects_cache() -> None:
+    """丢弃项目列表缓存:触发 / 重试 / 取消构建后调用,让首页立刻看到新 tag 与状态."""
+    global _projects_cache, _projects_cache_at
+    with _projects_lock:
+        _projects_cache = None
+        _projects_cache_at = 0.0
 
 
 class CiService:
@@ -15,27 +59,10 @@ class CiService:
     def __init__(self, db: Database | None = None):
         # db 参数保留以兼容既有调用方(deploy/k8s/approval 等仍传 db),本服务已不再直读 DB
         self._db = db
-        self._jobs_cache: list[dict] | None = None
-        self._jobs_cache_at: float = 0.0
 
     def _projects_via_api(self) -> list[dict]:
-        """经 Glue GET /api/build/projects 拉取活跃映射 + 每项目最新 tag.
-
-        短 TTL 缓存:同一实例内多次查询只打一次 HTTP;最多 30s 复用.
-        """
-        now = time.time()
-        if self._jobs_cache is not None and now - self._jobs_cache_at < 30:
-            return self._jobs_cache
-        try:
-            self._jobs_cache = list(get_ci_client().get_projects() or [])
-        except CiClientError as e:
-            logger.warning("CI projects 拉取失败: %s", e)
-            self._jobs_cache = []
-        except Exception as e:
-            logger.warning("CI projects 解析失败: %s", e)
-            self._jobs_cache = []
-        self._jobs_cache_at = now
-        return self._jobs_cache
+        """经 Glue GET /api/build/projects 拉取活跃映射 + 每项目最新 tag(模块级 30s 缓存)."""
+        return _load_projects()
 
     def _find_job(self, project: str) -> dict | None:
         """按 job_name / current_path 匹配映射条目."""

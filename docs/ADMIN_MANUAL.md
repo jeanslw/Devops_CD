@@ -89,9 +89,8 @@ SECRET_KEY=
 # ── Trusted reverse-proxy hops: 0=direct (default, ignore X-Forwarded-For); 1 behind nginx, increase per extra layer ──
 TRUSTED_PROXY_HOPS=0
 
-# ── Authentication mode (default: oidc = Devops-Glue single sign-on; set local + restart to roll back) ──
-# oidc requires the three keys below; miss any and the compose precheck aborts / bare-metal startup logs an ERROR
-AUTH_MODE=oidc
+# ── Login method (Devops-Glue single sign-on, the only way in) ──
+# The three keys below are required; miss any and the compose precheck aborts / bare-metal startup logs an ERROR
 OIDC_ISSUER=http://glue.example.com        # public Glue URL; must equal the discovery issuer exactly
 CD_OIDC_SECRET=                            # must match Glue oauth_clients['cd']['secret']
 CD_OIDC_REDIRECT_URI=http://cd.example.com/api/auth/oidc/callback   # exact match with the value registered in Glue
@@ -105,7 +104,7 @@ CD_OIDC_REDIRECT_URI=http://cd.example.com/api/auth/oidc/callback   # exact matc
 ### 2.2 Application parameters: `config/app.env` (shipped in the image, usually no change)
 
 ```env
-AUTH_MODE=oidc              # the single auth master switch: oidc (default track, Devops-Glue SSO) | local (password login, rollback track)
+OIDC_REVALIDATE_SECONDS=60  # lazy revalidation window: upper bound for demotion / disable to take effect (s)
 AUTH_TOKEN_TTL_HOURS=24     # login token TTL (hours)
 SUPER_ADMIN_ROLE=super_admin
 DB_POOL_MAX=10
@@ -134,7 +133,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ## 3. Database
 
-> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API. It reads only the `integrated_services` contract table from the shared DB (it no longer probes `ci_pipeline_artifacts`); if that table/row is missing, CD fails closed as "not enabled".
+> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API (CD's own `cd_*` tables live in that shared database too). It reads the enablement state only through Devops-Glue's contract endpoint `GET /api/integration/services/cd` (it no longer probes `ci_pipeline_artifacts` and never reads the contract table directly); when the endpoint cannot be reached, CD fails closed as "database unavailable" — see "How the contract is read" below.
 
 | Driver | Use Case | Notes |
 |--------|----------|-------|
@@ -143,17 +142,18 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ### Who Creates the CD Tables (Integrated-Service Switch = Deployment Gate)
 
-Whether "CD is enabled" is decided by **Devops-Glue's integration-service contract table `integrated_services`** (CI is the only writer; see the "Integrated Services" section of the Devops-Glue admin manual): the row with `service_name='cd'` carries two switches — `enabled` and `provision` — and CD **reads that row directly** at the gate instead of guessing from "does the table exist".
+Whether "CD is enabled" is decided by **Devops-Glue's integration-service contract table `integrated_services`** (CI is the only writer; see the "Integrated Services" section of the Devops-Glue admin manual): the row with `service_name='cd'` carries two switches — `enabled` and `provision` — and CD reads them through Glue's contract endpoint `GET /api/integration/services/cd` instead of guessing from "does the table exist".
 
 | Contract row state | What CD does | When it is not satisfied |
 |--------------------|--------------|--------------------------|
 | contract table missing / row missing / `enabled<>1` | **zero DDL**: no table, no column, no index | login and every request carrying a session get 503 `errors.cd_not_enabled` (points you to the CI console) |
-| `enabled=1` + `provision='auto'` | **CD creates its tables automatically** (MySQL and SQLite alike): on first connect it creates every table in `CD_REQUIRED_TABLES` (14 today) + adds missing columns + indexes + the contract view | incomplete tables (creation failed, someone DROPped one, …) → 503 `errors.cd_not_deployed` (restart CD to self-heal) |
+| `enabled=1` + `provision='auto'` | **CD creates its tables automatically** (MySQL and SQLite alike): on first connect it creates every table in `CD_REQUIRED_TABLES` (14 today) + adds missing columns + indexes | incomplete tables (creation failed, someone DROPped one, …) → 503 `errors.cd_not_deployed` (restart CD to self-heal) |
 | `enabled=1` + `provision='manual'` | **zero DDL**: only pre-created tables are accepted (MySQL: an administrator imports `database/init_mysql.sql`) | any table missing → 503 `errors.cd_not_deployed` (import the DDL script) |
 
 Key points:
 
 - **Enabling happens only in the CI console** (Devops-Glue → "API Integration Services → Enable" → turn on Devops-CD): CD offers no self-service entry, seeds nothing, and **never lets you in just because the tables happen to exist**;
+- **How the contract is read**: the only channel is Glue's contract endpoint `GET /api/integration/services/cd` (the existing service token's `build.read` scope is enough — no new token). When it cannot be reached (older Glue → 404/405, network/auth failure, `CI_API_URL` unset), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — it never reads the shared table and never treats it as "not enabled". The HTTP channel is cached for a window: `CI_CONTRACT_TTL` (30s by default, `0` = ask every request), so **a switch flipped in the console takes effect within one window**. A response without the `enabled` field is treated as "could not ask" — CD is never silently switched off;
 - `provision` is written by CI **at the moment of enabling**, following its own migration mode: `DB_AUTO_MIGRATE` on → `auto` (CD may create tables), off → `manual` (the DBA owns the schema). CD only reads this value;
 - **Disabling only freezes admission**: the CD tables and their data stay exactly as they are — nothing is `DROP`ped or wiped; after re-enabling, historical data is still there (CI merely re-points the token reference on the contract row);
 - the gate covers: login (before the rate-limit counter), every request carrying a session, the public webhook receiver and WebShell (WebSocket handshake) — "even if login were possible, no operation is allowed". Such a 503 is a **deployment state**, not a credential failure, so it is **not counted** in the login-failure lock shared with Devops-Glue; the unauthenticated liveness endpoints (`/health`, `/api/info`, `/metrics`) stay available for troubleshooting.
@@ -183,13 +183,13 @@ The script is idempotent (`CREATE TABLE IF NOT EXISTS` plus `INFORMATION_SCHEMA`
 | `cd_approvals` | Deployment approval tickets (status machine: pending → approved → deploying → deployed/failed, plus rejected/cancelled; `scheduled_at` for scheduled publish) |
 | `cd_approval_rules` | Per-project approval rules (approver users / roles) |
 
-The script also creates:
-
-- View `v_glue_deploy_logs`: read-only deployment-record contract view for Devops-Glue (audit fields only, excludes large columns such as `output`).
+CI reads deployment records over HTTP rather than a shared view: `GET /api/integration/deploy-logs` (inbound static token `CD_API_TOKEN`, `Authorization: Bearer`, constant-time comparison) returns the 10 audit columns with `project` (LIKE) / `status` / `deploy_type` (exact) / `date_from` / `date_to` (inclusive) filters and `page` / `per_page` (≤100) pagination; availability is carried by status codes (200 available, 401 token, 503+error_key CD unavailable). The shared `v_glue_deploy_logs` view is removed.
 
 **Structural parity with `provision='auto'`**: in auto mode CD creates its MySQL tables from the DDL embedded in the code (`backend/database.py::_MYSQL_TABLE_DDL`, with the index and missing-column migration lists right next to it). Its **table set, per-table column set and index list** are locked item by item against `database/init_mysql.sql` by `backend/tests/test_cd_schema_sources.py` — both modes (auto-create vs. manual import) must yield the same schema, so one database never ends up with two structures.
 
 **Gate behaviour in SQLite mode** (dev / single instance): with `provision='auto'` the CD tables are created together with the DB file, so the gate is normally open and development stays frictionless. If someone manually `DROP TABLE`s one at runtime (e.g. to reproduce an issue), the gate immediately answers 503 for login and every operation (it only reports — it never silently repairs), and **restarting the service re-creates the tables and heals it**. If the CI side runs in `manual` mode (`DB_AUTO_MIGRATE=false`) while CD uses SQLite, CD also performs **zero DDL** and the hint tells you to have an operator create the tables or to switch CI back to auto-migrate and re-enable — the message always follows `provision` and never points you at the wrong fix.
+
+**Another 503: contract unreachable (distinct from the above)** — when the contract endpoint cannot be asked (`CI_API_URL` / CI API token unset, older Glue → 404/405, network/auth failure, response without `enabled`), login and the endpoints return 503 `errors.ci_contract_unreachable` (`error_params` carries `reason`). That means **check Glue / `CI_API_URL` / the CI API token** — it is neither "not enabled" nor "the database is broken".
 
 **The other 503: database unavailable (distinct from the above)** — when the SQLite file is read-only / the disk is full / the file is locked, when the DB file cannot be opened, or when MySQL hands out no connection, login and the endpoints return 503 `errors.db_unavailable` (`error_params` carries the driver and the underlying cause). That is an **environment** problem: check connectivity/configuration, the data directory's write permission and free disk space — do **not** re-run the DDL script (it cannot fix it and you would be looking in the wrong place). In SQLite mode make sure the data directory is writable and the disk is not full.
 
@@ -488,20 +488,15 @@ All other roles (e.g. `deployer`, `viewer`, or any custom role defined in CI) ge
 
 ### Authentication
 
-The default track is **Devops-Glue single sign-on (`AUTH_MODE=oidc`)**:
+There is exactly one way in: **Devops-Glue single sign-on**.
 
-- Login: open `/login` and click "Sign in with Devops-Glue" → full-page redirect to `/api/auth/oidc/start` → Glue consent page → back to `/api/auth/oidc/callback`; identity and permissions come from Glue's HTTP API, and the request path never reads the shared tables
-- Session: identical to local mode once logged in — an opaque random session token (also set as the `cd_token` HttpOnly cookie; only its SHA-256 digest is stored server-side in `cd_sessions`)
+- Login: open `/login` and click "Login" → full-page redirect to `/api/auth/oidc/start` → Glue consent page → back to `/api/auth/oidc/callback`; identity and permissions come from Glue's HTTP API, and the request path never reads the shared tables
+- Session: an opaque random session token (also set as the `cd_token` HttpOnly cookie; only its SHA-256 digest is stored server-side in `cd_sessions`)
 - Logout: POST `/api/logout` revokes the session server-side — the token becomes invalid immediately
 - Protected endpoints accept either the `Authorization: Bearer <token>` header or the HttpOnly cookie
 - Demotion / disable takes effect within 60 s (lazy revalidation); while Glue is unreachable the last-known-good identity is honoured for 10 minutes, then it fails closed with 503
 
-The rollback track `AUTH_MODE=local` (password login + reading `admin_users` / `roles` / `role_permissions` on every request):
-
-- Login: POST `/api/login` with username + password
-- Failed logins are rate-limited: 5 consecutive failures (per IP+username) lock login for 15 minutes
-
-Switching either way is just **changing `AUTH_MODE` + restarting** (zero DDL, no CD data loss); 
+- Password login and the `AUTH_MODE` switch are gone (CD no longer reads `admin_users.password_hash`); a missing `integrated_services` contract row or missing required keys is still rejected by the startup precheck and the deploy gate
 
 ## 8. CI Build Management Integration (optional)
 

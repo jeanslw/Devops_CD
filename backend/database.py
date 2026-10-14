@@ -3,14 +3,20 @@
 - SQLite: 写入自动 commit,读取自动 close,WAL 模式
 """
 
+import logging
 import re
 import sqlite3
+import threading
+import time
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from backend.config import settings
 from backend.exceptions import AppException
+from backend.services.ci_client import CiClientError, get_ci_client
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseUnavailableError(AppException):
@@ -34,6 +40,22 @@ class DatabaseUnavailableError(AppException):
         self.driver = driver
 
 
+class ContractUnavailableError(AppException):
+    """集成服务契约端点问不到(未配置 / Glue 过旧 / 网络 / 鉴权失败 / 响应形状不符) —— fail-closed.
+
+    与"数据库不可用"(errors.db_unavailable)严格区分:契约端点问不到 ≠ 库坏了。把它报成库不可用
+    会把运维指向错误动作(查连接 / 磁盘,而非查 Glue / CI_API_URL / CI API token)。
+    """
+
+    def __init__(self, message: str):
+        super().__init__(
+            message,
+            status_code=503,
+            error_key="errors.ci_contract_unreachable",
+            error_params={"reason": message[:300]},
+        )
+
+
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 
 # ── CD 部署闸门:集成服务契约 × 唯一表清单 ──────────────────────────────────────
@@ -46,6 +68,12 @@ _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 #     连库建全清单 + 补齐既有表的缺失列;
 #   - enabled=1 且 provision='manual' → CD **不建表**,只认运维预建的清单表(MySQL 由管理员
 #     导入 database/init_mysql.sql);后两种缺表时统一 503 errors.cd_not_deployed.
+# 启用状态怎么读:唯一通道是 Glue 的契约端点 GET /api/integration/services/cd(Glue ≥ 2.9.0,CD 现有
+# 服务 token 的 build.read scope 即可)。端点问不到(Glue 版本过旧 404/405、网络 / 鉴权失败、未配
+# CI_API_URL)按"契约不可达"fail-closed(503 errors.ci_contract_unreachable)——绝不等于"未启用"
+# (端点的状态码语义见 Glue ServiceContractController 的类注释,读法细节见 _fetch_contract_http).
+# 契约仍归 CI 写入,CD 只经这一个 HTTP 接口消费:不把 CD 绑死在共享库的表名 / 列名 / 驱动上,
+# Glue 改库结构(v2.9.0 表名收口)或将来拆库独立部署都不影响闸门.
 # 少任何一张表都当作未部署(半套 schema 放行只会让登录后功能到处 500,甚至写坏数据),故抢在
 # 入口整体拒绝,见 backend.auth.cd_deploy_gate.
 #
@@ -73,7 +101,7 @@ CD_REQUIRED_TABLES: tuple[str, ...] = (
 )
 
 # 列出现存基础表:MySQL 走 information_schema(DATABASE() = 当前共享库),SQLite 走 sqlite_master.
-# 视图 v_glue_deploy_logs 是给 Glue 的契约视图,非 CD 自身表,不参与闸门(故 MySQL 侧限定 BASE TABLE,两驱动语义一致).
+# 视图不算 CD 自身表,不参与闸门(故 MySQL 侧限定 BASE TABLE,两驱动语义一致).
 _CD_TABLE_LIST_SQL = {
     "mysql": (
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
@@ -81,11 +109,10 @@ _CD_TABLE_LIST_SQL = {
     "sqlite": "SELECT name FROM sqlite_master WHERE type = 'table'",
 }
 
-# ── 集成服务契约(Devops-Glue 侧 integrated_services 表;CI 是唯一写入方)────────────
+# ── 集成服务契约(Devops-Glue 侧 ci_integrated_services 表;CI 是唯一写入方)────────────
 # "CD 是否启用 / 能否建表"的唯一开关:CI 的启用向导把 enabled + provision + 配套服务 token
-# 写进这一行,CD 进闸门时直读它,不再用"表在不在"猜启用状态;重新启用时 CI 只换行上的 token
+# 写进这一行,CD 进闸门时经 Glue 的窄只读契约端点消费该状态;重新启用时 CI 只换行上的 token
 # 引用,历史数据继续可用(三种组合的动作见上).
-INTEGRATED_SERVICES_TABLE = "integrated_services"
 CD_SERVICE_NAME = "cd"
 PROVISION_AUTO = "auto"  # CI 自动迁移模式(DB_AUTO_MIGRATE 开启)→ 授权 CD 自动建表 / 补列
 PROVISION_MANUAL = "manual"  # CI 手动建库模式 → CD 不建表,只认运维预建的 CD 表
@@ -101,6 +128,107 @@ class CdIntegrationState(NamedTuple):
     enabled: bool
     provision: str
     row_exists: bool
+
+
+# ── 契约读:仅 HTTP 通道 + 窗口缓存(逻辑解耦:CD 不读共享库的任何 CI 表)──────────────
+# 唯一通道:Glue 的窄只读端点 GET /api/integration/services/cd(Glue ≥ 2.9.0;契约仍归 CI 写入,
+# 消费方只读一个 HTTP 接口,CD 与共享库的表名 / 列名 / 驱动彻底解耦,Glue 改库结构或拆库独立部署
+# 都不影响闸门). 端点问不到(Glue 版本过旧 404/405、网络 / 鉴权失败、CI 未配置)按"契约不可达"处理:
+# 抛 ContractUnavailableError → 503 errors.ci_contract_unreachable(fail-closed),绝不当作"未启用"——
+# 端点不可用只说明"问不到",不代表 CI 关过开关(见 Glue ServiceContractController 的状态码语义).
+# 窗口缓存:CD 每请求都过闸门,不能每请求都打一次 Glue(窗口 = CI_CONTRACT_TTL).
+_contract_lock = threading.Lock()
+# {service_name: (状态, 取到时的单调时钟)}:契约读的窗口缓存(窗口 = CI_CONTRACT_TTL).
+_contract_cache: dict[str, tuple[CdIntegrationState, float]] = {}
+# 契约端点"已知不可用"的截止时间戳(单调时钟):Glue 宕机 / 版本过旧 / token 失效时,窗口内
+# 不再重试(否则每个请求都要白等一次 connect 超时),直接按契约不可达快速失败(503).
+_contract_http_down_until = 0.0
+_contract_last_warn = 0.0
+_CONTRACT_WARN_INTERVAL = 60.0  # 不可用 WARN 的限流窗口(秒)
+
+
+def _contract_now() -> float:
+    """契约缓存的时钟:单调时钟,不受系统时间跳变影响(单测可打桩 backend.database._contract_now)."""
+    return time.monotonic()
+
+
+def invalidate_contract_cache() -> None:
+    """立刻作废契约读缓存:下一个请求重新问 Glue(排障与单测用).
+
+    窗口内复用结果是刻意的(闸门每请求都跑,不能每请求都打 Glue);运维刚在 CI 后台改完开关
+    想让 CD 立刻跟着变时,可调本函数,或把 CI_CONTRACT_TTL 设为 0(每次请求都问).
+    """
+    global _contract_http_down_until
+    with _contract_lock:
+        _contract_cache.clear()
+        _contract_http_down_until = 0.0
+
+
+def _warn_contract_unreachable(reason: str) -> None:
+    """契约端点问不到时按窗口限流打 WARN:既不能静默(否则"一直 503"无人知晓),也不刷屏."""
+    global _contract_last_warn
+    with _contract_lock:
+        now = _contract_now()
+        if now - _contract_last_warn < _CONTRACT_WARN_INTERVAL:
+            return
+        _contract_last_warn = now
+    logger.warning("集成服务契约端点不可用，本次请求按库不可用处理（503 fail-closed）：%s", reason)
+
+
+def _mark_contract_http_down() -> None:
+    """记下"契约端点现在不可用":窗口(CI_CONTRACT_TTL,为 0 时用 WARN 窗口)内直接按库不可用快速失败."""
+    global _contract_http_down_until
+    ttl = max(0, settings.ci_contract_ttl) or _CONTRACT_WARN_INTERVAL
+    with _contract_lock:
+        _contract_http_down_until = _contract_now() + ttl
+
+
+def _normalize_contract(raw_enabled: Any, raw_provision: Any) -> tuple[bool, str]:
+    """把契约端点答复的 enabled / provision 归一化(单一通道,口径不存在分叉).
+
+    enabled 兼容 int / 字符串 / JSON bool(TINYINT / TEXT / true 都能正确判定真假);
+    provision 只认 CI 写入的 'manual',其余(空值 / 未知值)按 auto -- 与 CI 默认迁移模式一致.
+    """
+    enabled = str(raw_enabled).strip().lower() not in ("", "0", "false", "none")
+    provision = PROVISION_MANUAL if str(raw_provision or "").strip().lower() == PROVISION_MANUAL else PROVISION_AUTO
+    return enabled, provision
+
+
+def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
+    """(内部)经 Glue 的契约端点读启用状态;任何"问不到"都抛 ContractUnavailableError(503 fail-closed).
+
+    问不到的几种情况(**都不当作"未启用"**,统一按契约不可达处理):
+      - 配置层:CI_API_URL / CI_API_TOKEN 未配置(契约通道没有目的地,属部署配置缺失);
+      - 窗口内已知不可用:_mark_contract_http_down 记过账,不再白等一次超时;
+      - HTTP 失败:404(服务名不在 Glue 白名单)/ 405(老 Glue 无此路由,需先升 Glue)/ 401·403
+        (token 被撤销或 scope 不足)/ 5xx / 超时 / 连接失败. token 失效尤其不能当"未启用":
+        Glue 停用集成服务时会一并撤销 CD 的 token,把 401 当"未启用"与真实关闭无法区分;
+      - 响应形状不符(非对象 / 缺 enabled 字段):把缺失字段当 false 会把 CD 静默关掉.
+    端点可用时的窗口缓存由 _resolve_contract_state 负责,本函数只管"这一次问".
+    """
+    if not settings.ci_api_url or not settings.ci_api_token:
+        raise ContractUnavailableError(
+            "未配置 CI_API_URL / CI_API_TOKEN，无法读取集成服务契约（CD 只经契约端点读启用状态）",
+        )
+    if _contract_now() < _contract_http_down_until:
+        raise ContractUnavailableError("集成服务契约端点暂不可用（不可用窗口内快速失败）")
+    try:
+        raw = get_ci_client().get_service_contract(service)
+    except CiClientError as e:
+        _mark_contract_http_down()
+        _warn_contract_unreachable(f"HTTP {e.status_code or 'n/a'}: {e}")
+        raise ContractUnavailableError(f"契约端点请求失败：{e}") from e
+    except Exception as e:  # noqa: BLE001 - 网络 / 解析等任何异常都只说明"问不到",不能改变启用判定
+        _mark_contract_http_down()
+        _warn_contract_unreachable(f"{type(e).__name__}: {e}")
+        raise ContractUnavailableError(f"契约端点请求失败：{type(e).__name__}: {e}") from e
+    if not isinstance(raw, dict) or "enabled" not in raw:
+        _warn_contract_unreachable(f"响应形状不符：{str(raw)[:120]}")
+        raise ContractUnavailableError("契约端点响应形状不符（缺 enabled 字段）")
+    enabled, provision = _normalize_contract(raw.get("enabled"), raw.get("provision"))
+    # token_active 只是契约行绑定凭据的活性(Glue 明确"仅供展示"),不作判据;
+    # row_exists=True:200 说明 Glue 给出了该服务的契约答复(仅影响日志措辞).
+    return CdIntegrationState(enabled, provision, True)
 
 
 # ── auto 模式的 MySQL 建表 DDL(与 database/init_mysql.sql 同构)──────────────────
@@ -346,7 +474,8 @@ def cd_not_enabled_hint() -> str:
     """
     return (
         "请到 Devops-Glue 后台「API集成服务 → 启用」开启 Devops-CD"
-        "（启用动作由 CI 写集成服务契约表并按 DB_AUTO_MIGRATE 决定 provision，CD 侧即时生效，无需改配置、无需重启）"
+        "（启用动作由 CI 写集成服务契约并按 DB_AUTO_MIGRATE 决定 provision：CD 无需改配置、无需重启，"
+        "契约读有缓存窗口，若仍提示未启用请稍候数秒）"
     )
 
 
@@ -446,13 +575,13 @@ class _SqliteWrapper:
 class Database:
     """统一数据库连接 - 无独立数据库,完全跟随 Devops-Glue API.
 
-    建表 / 补列规则:唯一开关 = 集成服务契约表(三种组合的动作见本文件顶部注释),未启用 /
-    manual 时**零 DDL**,enabled + auto 时建全 CD_REQUIRED_TABLES + 补缺失列 + 索引 + 契约视图
+    建表 / 补列规则:唯一开关 = 集成服务契约(三种组合的动作见本文件顶部注释),未启用 /
+    manual 时**零 DDL**,enabled + auto 时建全 CD_REQUIRED_TABLES + 补缺失列 + 索引
     (MySQL / SQLite 各自实现,见下方 _ensure_*;全部幂等).
-    共享表(admin_users / roles / ci_* 等)schema 归 Glue,CD 任何模式下都不得改动;连接走 DBUtils
-    连接池.是否指向 Glue 共享库不再用 CI 数据表(ci_pipeline_artifacts)做探针,而由集成服务
-    契约表(integrated_services)本身判定:契约表缺失即视为"未启用 / 库指向错误",统一
-    503 errors.cd_not_enabled(fail-closed,见 _read_integration_state).
+    共享表(ci_* 等)schema 归 Glue,CD 任何模式下都不得改动,也不读取 -- 启用状态经 Glue 的
+    契约端点(唯一通道,见 cd_integration_state)消费:端点问不到统一 503 errors.ci_contract_unreachable
+    (fail-closed),绝不当作"未启用";契约行缺失 / enabled=0 才是"未启用",统一
+    503 errors.cd_not_enabled.
     """
 
     DRIVERS = ("sqlite", "mysql")
@@ -496,42 +625,59 @@ class Database:
         except ImportError as e:
             raise RuntimeError("MySQL 模式需要安装 dbutils: pip install dbutils") from e
 
-    # ── 集成服务契约(闸门第一道判据)──
+    def probe(self) -> bool:
+        """仅探测数据库连接是否可达(不触发契约闸门 / 建表),供公开探活(/api/status)用.
 
-    _CONTRACT_SQL = f"SELECT enabled, provision FROM {INTEGRATED_SERVICES_TABLE} WHERE service_name=?"
-
-    def _read_integration_state(self, conn) -> CdIntegrationState:
-        """(内部)在给定连接上读契约行 -- 契约表 / 契约行缺失或 enabled<>1 一律'未启用'.
-
-        只读不写:CD 既不自开通,也不种子,更不回退默认启用(启用动作只归 CI 后台开关).
+        conn() 首次连接会顺带读契约建表:契约端点问不到(token 失效 / Glue 宕机 / 未配置)会
+        fail-closed 抛 ContractUnavailableError,把"库本身可用"误报成"契约不可达".探活要的是
+        纯粹连接事实,故只取连接后立即关闭,不走 conn() 的闸门.
         """
         try:
-            row = conn.execute(self._CONTRACT_SQL, (CD_SERVICE_NAME,)).fetchone()
-        except Exception as e:
-            if _is_missing_table_error(e):
-                # 契约表本身不存在(CI 侧尚未启用集成服务 / 尚未升级 / DB 指错未共用 Glue 库):
-                # 一律按未启用处理(fail-closed),不再用 ci_pipeline_artifacts 探针区分"库指错"
-                return CdIntegrationState(False, PROVISION_AUTO, False)
-            raise  # 连接 / 权限 / 锁等运行环境故障:交给上层转 503 errors.db_unavailable
-        if row is None:
-            return CdIntegrationState(False, PROVISION_AUTO, False)
-        raw_enabled = row["enabled"] if isinstance(row, dict) else row[0]
-        raw_provision = row["provision"] if isinstance(row, dict) else row[1]
-        # enabled 兼容 int / 字符串(TINYINT / TEXT 两种建法都能正确判定真假)
-        enabled = str(raw_enabled).strip().lower() not in ("", "0", "false", "none")
-        # provision 只认 CI 写入的 'manual',其余(空值 / 未知值)按 auto -- 与 CI 默认迁移模式一致
-        provision = PROVISION_MANUAL if str(raw_provision or "").strip().lower() == PROVISION_MANUAL else PROVISION_AUTO
-        return CdIntegrationState(enabled, provision, True)
+            if self._driver == "mysql":
+                self._init_pool()
+                if Database._pool is None:
+                    return False
+                raw = Database._pool.connection()
+            else:
+                raw = self._connect_sqlite()
+        except Exception:
+            return False
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return True
+
+    # ── 集成服务契约(闸门第一道判据)──
+
+    def _resolve_contract_state(self) -> CdIntegrationState:
+        """契约状态(闸门第一道判据):问 Glue 的契约端点,带窗口缓存.
+
+        缓存窗口 = CI_CONTRACT_TTL(默认 30s):窗口内复用上次结果,过期后重新问一次;0 = 不缓存
+        (CI 一启用,下一个请求就建表 / 放行). 端点问不到(未配置 / Glue 版本过旧 / 网络 / 鉴权)
+        时抛 ContractUnavailableError(503 errors.ci_contract_unreachable)——按"契约不可达"fail-closed,
+        绝不当作"未启用":问不到只说明"问不到",不代表 CI 关过开关.
+        """
+        ttl = max(0, settings.ci_contract_ttl)
+        if ttl:
+            with _contract_lock:
+                hit = _contract_cache.get(CD_SERVICE_NAME)
+            if hit is not None and _contract_now() - hit[1] < ttl:
+                return hit[0]
+        state = _fetch_contract_http()
+        with _contract_lock:
+            _contract_cache[CD_SERVICE_NAME] = (state, _contract_now())
+        return state
 
     def cd_integration_state(self) -> CdIntegrationState:
-        """直读 Devops-Glue 的集成服务契约表,得到 CD 的启用状态(闸门的第一道判据).
+        """读 CD 的启用状态(闸门的第一道判据):唯一通道是 Glue 的契约端点.
 
-        每次调用只做一次单行查询(WHERE service_name='cd' 命中唯一键),供每请求闸门使用 --
-        因此 CI 后台一关闭开关,运行中的 CD 下一个请求就被拒(无需重启,也无需重连).
-        库不可用时抛 DatabaseUnavailableError(503 errors.db_unavailable),不误报成'未启用'.
+        契约端点 GET /api/integration/services/cd(Glue ≥ 2.9.0)把"CD 是否被授权、以哪种建表方式
+        授权"从共享库搬到 HTTP 上:CD 不读共享库的任何 CI 表,与表名 / 列名 / 驱动彻底解耦,
+        Glue 改库结构(v2.9.0 表名收口)或将来拆库独立部署都不影响闸门.
+        端点问不到时抛 ContractUnavailableError(503 errors.ci_contract_unreachable),不误报成'未启用'.
         """
-        with self.conn() as conn:
-            return self._read_integration_state(conn)
+        return self._resolve_contract_state()
 
     def cd_missing_tables(self) -> list[str]:
         """返回共享库中缺失的 CD 表名(空列表 = 表建全 = CD 已部署).
@@ -590,11 +736,11 @@ class Database:
 
         if not Database._tables_ensured:
             # 建表授权来自契约(见本文件顶部),不是"MySQL 永不建表"的驱动硬规则:未启用 / manual
-            # 零 DDL(表齐不齐由闸门判定),auto 建全清单 + 缺列 + 索引 + 契约视图(见 _ensure_*).
-            # 未启用时不置 _tables_ensured:CI 后台一点"启用",下一个请求就自动建表,无需重启.
-            # 须传 wrapper(MySQL 池化 raw 连接没有 .execute/.commit;共享表 schema 归 Glue).
+            # 零 DDL(表齐不齐由闸门判定),auto 建全清单 + 缺列 + 索引(见 _ensure_*).
+            # 未启用时不置 _tables_ensured:CI 后台一点"启用",最迟一个契约缓存窗口后
+            # 下一个请求就自动建表,无需重启.
             try:
-                state = self._read_integration_state(wrapper)
+                state = self._resolve_contract_state()
                 if state.enabled:
                     if state.provision == PROVISION_AUTO:
                         if self._driver == "mysql":
@@ -651,7 +797,7 @@ class Database:
         """MySQL **auto 模式**(契约行 enabled=1 且 provision='auto')下的自动建表.
 
         与 manual 严格分界:manual 时本方法根本不会被调用(CD 零 DDL,只认运维预建表).
-        顺序:建表 → 索引 → 缺列迁移 → 契约视图,全幂等,可安全重复执行;只操作 cd_* 自有表,
+        顺序:建表 → 索引 → 缺列迁移,全幂等,可安全重复执行;只操作 cd_* 自有表,
         不触碰 Glue 的共享表.跑完做清单自检:_MYSQL_TABLE_DDL 与 CD_REQUIRED_TABLES 漏表即报错
         (宁可启动失败,也不留半套 schema),与 SQLite 侧自检同构.
         """
@@ -663,7 +809,6 @@ class Database:
         conn.commit()
         self._ensure_mysql_indexes(conn)
         self._ensure_mysql_migrations(conn)
-        self._ensure_mysql_view(conn)
 
         existing = {_first_col_value(row) for row in conn.execute(_CD_TABLE_LIST_SQL["mysql"]).fetchall()}
         missing = [t for t in CD_REQUIRED_TABLES if t not in existing]
@@ -685,19 +830,6 @@ class Database:
                 conn.execute(f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table}({cols})")
         conn.commit()
 
-    def _ensure_mysql_view(self, conn):
-        """v_glue_deploy_logs:供 Devops-Glue 只读的部署记录契约视图(列由 test_schema_contract 锁定).
-
-        MySQL 支持 CREATE OR REPLACE VIEW,老库列变化时也能刷新(与 SQLite 侧 DROP+CREATE 等价);
-        只暴露审计字段,不含 output / stage_times 等大字段.
-        """
-        conn.execute(
-            "CREATE OR REPLACE VIEW v_glue_deploy_logs AS "
-            "SELECT id, project, tag, image, deploy_type, target, status, triggered_by, "
-            "deploy_note, created_at FROM cd_deploy_logs"
-        )
-        conn.commit()
-
     def _ensure_mysql_migrations(self, conn):
         """MySQL 缺列迁移:只对**已存在**的表 ADD COLUMN,不建表 / 建索引(DDL 授权在调用方).
 
@@ -715,7 +847,7 @@ class Database:
     # ── SQLite 自动建表(仅 auto 模式)──
 
     def _ensure_cd_tables(self, conn):
-        """SQLite 模式:自动创建 CD 表 + 索引 + 契约视图(仅在 enabled=1 且 provision='auto' 时调用).
+        """SQLite 模式:自动创建 CD 表 + 索引(仅在 enabled=1 且 provision='auto' 时调用).
 
         由 Database.conn() 的建表闸门统一调度:未启用 / manual 时本方法根本不会被调用(CD 零 DDL),
         因此 manual 模式下 SQLite 老库缺列不会自愈 -- 这与 CI 手动建库模式(DB_AUTO_MIGRATE=false
@@ -974,15 +1106,6 @@ class Database:
                 "SELECT a.id FROM cd_approvals a WHERE a.deploy_id=cd_deploy_logs.id"
                 ") WHERE approval_id=0 AND EXISTS ("
                 "SELECT 1 FROM cd_approvals a WHERE a.deploy_id=cd_deploy_logs.id AND a.deploy_id>0)"
-            )
-        # v_glue_deploy_logs:供 Devops-Glue 只读的部署记录契约视图(审计字段,不含 output 等大字段).
-        # SQLite 不支持 OR REPLACE VIEW,用 DROP+CREATE 自愈,保证契约列变化时老库也能刷新.
-        with suppress(Exception):
-            conn.execute("DROP VIEW IF EXISTS v_glue_deploy_logs")
-            conn.execute(
-                "CREATE VIEW v_glue_deploy_logs AS "
-                "SELECT id, project, tag, image, deploy_type, target, status, triggered_by, "
-                "deploy_note, created_at FROM cd_deploy_logs"
             )
         conn.commit()
 

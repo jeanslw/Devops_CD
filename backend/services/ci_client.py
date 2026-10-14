@@ -11,6 +11,13 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger("ci_client")
 
+# Glue 无 /refs 路由(版本过旧)时的负缓存窗口(秒):窗口内不再重试该端点,直接走 /branches.
+# 404 无法区分"路由不存在"(老 Glue)与"仓库映射缺失"(新 Glue 的 git.query_failed),故一律按
+# 前者处理:负缓存避免每次开弹窗都白吃一次 404;真故障时 /branches 会同样失败,错误照旧上抛.
+_REFS_MISSING_TTL = 300.0
+# 契约读(GET /api/integration/services/{service})的超时(秒):在请求路径上,问不到即快速失败.
+_CONTRACT_TIMEOUT = 5.0
+
 # ── CI API 路径(来源:CI 的 /api/openapi.json)──
 API = {
     "login": "/api/admin/login",  # POST {user, password} → {token}
@@ -23,6 +30,8 @@ API = {
     "pipeline_log": "/api/build/{path}/pipelines/{id}/logs",  # GET → text/plain(Gitea 专属:id=run id)
     "variables": "/api/build/{path}/variables",  # GET → {key: options}
     "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
+    "refs": "/api/git/{path}/refs",  # GET → {"branches": [...], "tags": [...]}(Glue ≥ 2.9.0)
+    "service_contract": "/api/integration/services/{service}",  # GET → {service, enabled, provision, token_active, updated_at}
     "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline(仅 GitLab CI)
     "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline(仅 GitLab CI)
     "rbac_users": "/api/rbac/users",  # GET 用户列表(账号写操作在 CI 侧完成)
@@ -69,6 +78,9 @@ class CiClient:
         self._static_token: bool = bool(token)
         self._token_expiry: float = 0
         self._lock = threading.Lock()
+        # 已知该 Glue 没有 /refs 路由时的截止时间戳(秒):窗口内直接走 /branches(见 get_refs).
+        # 只读写一个 float,竞态无害(最坏情况是多发一次 404).
+        self._refs_missing_until: float = 0.0
 
         retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
         self._session = requests.Session()
@@ -119,16 +131,18 @@ class CiClient:
 
     # ── 通用请求 ──
 
-    def _get(self, url: str, params: dict | None = None) -> Any:
+    def _get(self, url: str, params: dict | None = None, timeout: float | None = None) -> Any:
+        """GET + 解析 JSON.timeout 只在个别'请求路径上'的调用点收紧(见 get_service_contract)."""
         self._ensure_token()
+        budget = timeout or self._timeout
         try:
-            resp = self._session.get(url, params=params, headers=self._auth_headers(), timeout=self._timeout)
+            resp = self._session.get(url, params=params, headers=self._auth_headers(), timeout=budget)
             resp.raise_for_status()
             return resp.json()
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 self._force_relogin()
-                resp = self._session.get(url, params=params, headers=self._auth_headers(), timeout=self._timeout)
+                resp = self._session.get(url, params=params, headers=self._auth_headers(), timeout=budget)
                 resp.raise_for_status()
                 return resp.json()
             status = e.response.status_code if e.response is not None else None
@@ -251,6 +265,70 @@ class CiClient:
         result = self._get(self._url(API["branches"], path=project))
         if isinstance(result, dict) and "data" in result:
             return result["data"]
+        return result
+
+    # ── Git ref 候选值(分支 + Tag)──
+
+    def get_refs(self, project: str) -> dict:
+        """GET /api/git/{path}/refs → {"branches": [...], "tags": [...]}(Glue ≥ 2.9.0).
+
+        构建页的 ref 下拉要的是"分支 + Tag"全量候选值(只列分支时无法用 Tag 触发构建),故走 Glue 的
+        合并端点:一次 job→仓库映射解析,两组值来自同一仓库快照. **不加 ?format=json**(Glue 的
+        output() 只在该参数下才把响应包成 {"data": ...}),与 /api/build/* 的调用方式一致.
+
+        回退:Glue 版本过旧(无该路由 → 404/405)时退回 GET /api/build/{path}/branches,响应形状对齐
+        (tags 为空数组),调用方不必分叉. 真实故障(5xx / 鉴权失败 / 网络异常)照旧抛出,不伪装成空表.
+        """
+        if time.time() >= self._refs_missing_until:
+            try:
+                return self._normalize_refs(self._get(self._url(API["refs"], path=project)))
+            except CiClientError as e:
+                if e.status_code not in (404, 405):
+                    raise
+                self._refs_missing_until = time.time() + _REFS_MISSING_TTL
+                logger.warning(
+                    "CI /refs 不可用（HTTP %s），%d 秒内回退 /branches：分支可用但无 Tag 候选"
+                    "（升级 Devops-Glue 后自动恢复）",
+                    e.status_code,
+                    int(_REFS_MISSING_TTL),
+                )
+        return {"branches": self._as_str_list(self.get_branches(project)), "tags": []}
+
+    @staticmethod
+    def _as_str_list(value: Any) -> list[str]:
+        """把上游的分支 / Tag 清单收敛成字符串数组:非列表、空串、非标量一律丢弃(下拉框不留脏值)."""
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip() for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
+
+    @classmethod
+    def _normalize_refs(cls, result: Any) -> dict:
+        """归一化 refs 响应:容忍 {"data": {...}} 包装与字段缺失,恒返回 {"branches": [...], "tags": [...]}."""
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result = result["data"]
+        data = result if isinstance(result, dict) else {}
+        return {
+            "branches": cls._as_str_list(data.get("branches")),
+            "tags": cls._as_str_list(data.get("tags")),
+        }
+
+    def get_service_contract(self, service: str) -> Any:
+        """GET /api/integration/services/{service} → {service, enabled, provision, token_active, updated_at}.
+
+        契约(CD 是否被授权、以哪种建表方式授权)的窄只读端点,Glue ≥ 2.9.0 提供. 硬约束与
+        glue_identity._glue_get 一致:**不加 ?format=json**;**不解析 message 判错**(message 是已翻译
+        文本,不是稳定标识),调用方只看状态码与字段.
+
+        状态码语义:
+          - 200     → enabled / provision 以响应为准;token_active 仅供展示,不作闸门条件;
+          - 404     → 服务名不在 Glue 白名单;
+          - 401/403 → token 被撤销 / scope 不足(Glue 停用集成服务时也会撤销 CD 的 token).
+        本方法不吞异常;调用方(database._fetch_contract_http)把任何失败按"问不到"→ 503 处理.
+        timeout 收紧到 _CONTRACT_TIMEOUT:本调用在请求路径上,快速失败.
+        """
+        result = self._get(self._url(API["service_contract"], service=service), timeout=_CONTRACT_TIMEOUT)
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            return result["data"]  # 防御:万一被包了一层
         return result
 
     def retry_pipeline(self, project: str, build_id: int | str) -> Any:
