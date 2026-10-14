@@ -54,7 +54,6 @@
 		│ 共享数据库 (SQLite / MySQL / MariaDB)│
 		│                                      │
 		│  ci_pipeline_artifacts ← CI 写       │
-		│  v_glue_deploy_logs    ← CI 只读视图 │
 		│  cd_servers            ← CD 维护     │
 		│  cd_deploy_logs        ← CD 写       │
 		│  cd_approvals(_rules)  ← CD 写       │
@@ -72,6 +71,8 @@
 ```
 
 > **数据归属**：除上述共享表外，CD 自行维护其余 `cd_*` 表（webhook、监控、告警、制品缓存、配置、会话、审批）。CI 侧的构建数据（pipeline、映射、构建记录）由 CD 通过 CI 的 HTTP API 获取，不直接读取其他 `ci_*` 表。
+>
+> **构建页的 ref 候选值**同样经 Glue 的 HTTP 端点获取：`GET /api/git/{path}/refs` 一次返回分支 + Tag（`/api/build/{path}/branches` 只给分支），CD 侧透传为 `GET /api/ci/projects/{pid}/refs`，前端分组渲染（分支与 Tag 可能重名）。Glue 版本过旧（无该路由）时自动回退 `/branches`，Tags 为空。
 
 > **数据库选型**：PHP CI 和 CD Service 必须使用同一个数据库实例。
 > - **SQLite**：零配置，适合单机开发/测试。容器部署时必须挂载共享卷，确保两边进程能访问同一个 `.db` 文件。
@@ -103,10 +104,14 @@
 | 契约行状态 | CD 行为 | 闸门 |
 |-----------|---------|------|
 | 表 / 行缺失，或 `enabled<>1` | 零 DDL | 503 `errors.cd_not_enabled`（去 CI 后台「集成服务」启用） |
-| `enabled=1` + `provision='auto'` | 首次连库自动建全清单 + 补缺失列 + 补索引 + 契约视图（MySQL / SQLite 同理） | 表没建全 → 503 `errors.cd_not_deployed`（重启 CD 自愈） |
+| `enabled=1` + `provision='auto'` | 首次连库自动建全清单 + 补缺失列 + 补索引（MySQL / SQLite 同理） | 表没建全 → 503 `errors.cd_not_deployed`（重启 CD 自愈） |
 | `enabled=1` + `provision='manual'` | 零 DDL（结构归 DBA：MySQL 导入 `database/init_mysql.sql`） | 缺表 → 503 `errors.cd_not_deployed`（导入建表脚本） |
 
 关闭集成服务只冻结准入：CD 表与数据原样保留，不 `DROP`。闸门覆盖登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手。
+
+**契约怎么读**：唯一通道为 Glue 的窄只读端点 `GET /api/integration/services/cd`（scope 复用 `build.read`，CD 现有服务 token 即可）。问不到（Glue 版本过旧 → 404/405、网络/鉴权失败、未配 `CI_API_URL`）一律按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不直读共享表，也不当作「未启用」。HTTP 通道带缓存窗口（`CI_CONTRACT_TTL`，默认 30s；`0` = 每次请求都问），窗口内复用结果，故 CI 后台改开关后 CD 最迟一个窗口生效。这样 CD 不再与 Glue 的库结构（表名 / 列名 / 驱动）绑死，将来拆库独立部署也不影响闸门。
+
+部署日志的解耦方向与契约读取对称：CI 改经 HTTP 只读端点 `GET /api/integration/deploy-logs` 拉取部署记录（入站静态 token `CD_API_TOKEN` + Bearer；10 列 + 筛选 + 分页，可用性走状态码），不再读共享视图。共享视图 `v_glue_deploy_logs` 已删除。
 
 **增删一张 CD 表 = 只改四处**（闸门判定、错误文案、启动告警、张数全部自动跟随，不写死数字）：
 
@@ -125,7 +130,7 @@
 - **`manual`**：CD 零 DDL（连 ALTER 都不发）；MySQL 由管理员导入 `database/init_mysql.sql`，SQLite 由运维补建（或请 CI 改回自动迁移模式后重新启用）。
 - **提示按 `provision` 说实话**：`cd_deploy_hint(driver, provision)` 与 `cd_not_enabled_hint()` 是唯一出口（见 `backend/database.py`），避免把运维指向错误的动作；其中未启用的**用户可见提示只有一句话**（`errors.cd_not_enabled` 的 i18n 文案 —— 登录页提示框与 toast 同源：`error_key` → i18n，都不拼长文案、都随语言切换），动作细节随响应体 `detail.hint` 与启动日志下发。
 
-- **数据库不可用 ≠ 未启用 / 未部署**：连不上、建不了表（库文件只读/磁盘满/被占用）、取不到连接 → `DatabaseUnavailableError` → 503 `errors.db_unavailable`（`driver` / `reason` 随 `error_params` 下发；排查连接、配置、权限、磁盘）；只有「没启用」才是 `errors.cd_not_enabled`（去点开关）、「清单没建全」才是 `errors.cd_not_deployed`（去补表）。同为 503，但 error_key 不同、提示的动作不同 —— 混用会把运维指向错误方向。
+- **契约不可达 / 数据库不可用 ≠ 未启用 / 未部署**：契约端点问不到 → `ContractUnavailableError` → 503 `errors.ci_contract_unreachable`（`reason` 随 `error_params` 下发；排查 Glue / `CI_API_URL` / CI API token）；连不上、建不了表（库文件只读/磁盘满/被占用）、取不到连接 → `DatabaseUnavailableError` → 503 `errors.db_unavailable`（`driver` / `reason` 随 `error_params` 下发；排查连接、配置、权限、磁盘）；只有「没启用」才是 `errors.cd_not_enabled`（去点开关）、「清单没建全」才是 `errors.cd_not_deployed`（去补表）。同为 503，但 error_key 不同、提示的动作不同 —— 混用会把运维指向错误方向。
 
 ## 解决问题
 

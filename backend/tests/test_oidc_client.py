@@ -1,7 +1,7 @@
 """OIDC 客户端与配置回归(L1a,见 docs/SSO_OIDC_ZH.md §6.3 / §8 / §11).
 
 覆盖:
-  · AUTH_MODE 白名单校验与 `oidc_ready()` / `oidc_missing_settings()` 自检(fail-closed 口径);
+  · `oidc_ready()` / `oidc_missing_settings()` 自检(fail-closed 口径);
   · authorize URL 只信 discovery 的端点,参数齐全(response_type/client_id/redirect_uri/state/nonce);
   · token 兑换:必须回传 redirect_uri,invalid_grant 单独建模(供路由静默重走 start);
   · id_token:RS256 真签名验签(进程内生成 RSA 密钥对,不引 PyJWT,不打桩 cryptography)
@@ -83,7 +83,6 @@ class _OidcSettingsMixin:
     """settings 是全局单例:用例必须自己保存/恢复 OIDC 字段,避免相互污染."""
 
     FIELDS = (
-        "auth_mode",
         "oidc_issuer",
         "oidc_client_id",
         "oidc_client_secret",
@@ -122,43 +121,25 @@ def _discovery_doc(**over: Any) -> dict:
 
 
 class TestAuthModeConfig(unittest.TestCase):
-    """AUTH_MODE 白名单 + oidc 模式必填项自检(§6.3:半配的 OIDC 一律拒绝启动)."""
-
-    def test_validator_whitelist_and_normalisation(self):
-        from pydantic import ValidationError
-
-        self.assertEqual(Settings(auth_mode=" OIDC ").auth_mode, "oidc")
-        self.assertEqual(Settings(auth_mode="local").auth_mode, "local")
-        # 留空按未配置处理,落回默认档 oidc(compose 透传 ${AUTH_MODE:-oidc} 与根 .env 写空同此路径)
-        self.assertEqual(Settings(auth_mode="").auth_mode, "oidc")
-        self.assertEqual(Settings(auth_mode="   ").auth_mode, "oidc")
-        # 拼错的模式名必须报错,不静默退化成 local(否则运维以为切到了 SSO)
-        with self.assertRaises(ValidationError):
-            Settings(auth_mode="basic")
-
-    def test_code_default_is_oidc(self):
-        """字段默认值必须是 oidc:环境变量与两份 env 文件全缺失时也落到 SSO 档."""
-        self.assertEqual(Settings.model_fields["auth_mode"].default, "oidc")
+    """OIDC 必填项自检(§6.3:半配的 OIDC 一律拒绝启动)."""
 
     def test_issuer_trailing_slash_stripped(self):
         # issuer 与 discovery 精确比对,末尾多一个 / 就会误判不一致
         self.assertEqual(Settings(oidc_issuer=f"{_ISSUER}/").oidc_issuer, _ISSUER)
 
     def test_oidc_ready_false_and_missing_list(self):
-        s = Settings(**{"auth_mode": "oidc", "oidc_issuer": "", "CD_OIDC_SECRET": "", "CD_OIDC_REDIRECT_URI": ""})
+        s = Settings(**{"oidc_issuer": "", "CD_OIDC_SECRET": "", "CD_OIDC_REDIRECT_URI": ""})
         self.assertFalse(s.oidc_ready())
         self.assertEqual(s.oidc_missing_settings(), ["OIDC_ISSUER", "CD_OIDC_SECRET", "CD_OIDC_REDIRECT_URI"])
 
     def test_oidc_ready_true_when_configured(self):
-        s = Settings(
-            **{"auth_mode": "oidc", "oidc_issuer": _ISSUER, "CD_OIDC_SECRET": "s", "CD_OIDC_REDIRECT_URI": _REDIRECT}
-        )
+        s = Settings(**{"oidc_issuer": _ISSUER, "CD_OIDC_SECRET": "s", "CD_OIDC_REDIRECT_URI": _REDIRECT})
         self.assertTrue(s.oidc_ready())
         self.assertEqual(s.oidc_missing_settings(), [])
 
-    def test_local_mode_is_ready_regardless(self):
-        s = Settings(**{"auth_mode": "local", "oidc_issuer": "", "CD_OIDC_SECRET": "", "CD_OIDC_REDIRECT_URI": ""})
-        self.assertTrue(s.oidc_ready())  # local 模式下这些项与它无关
+    def test_local_login_mode_removed(self):
+        """本地登录模式已彻底删除:Settings 不再有 auth_mode 字段."""
+        self.assertNotIn("auth_mode", Settings.model_fields)
 
 
 class TestIdTokenVerification(_OidcSettingsMixin, unittest.TestCase):
@@ -286,11 +267,12 @@ class TestAuthorizeAndTokenExchange(_OidcSettingsMixin, unittest.TestCase):
         resp.json.return_value = {"id_token": "x.y.z", "access_token": "at"}
         with (
             patch.object(oidc, "discovery", return_value=_discovery_doc()),
-            patch.object(oidc.requests, "post", return_value=resp) as post,
+            patch.object(oidc, "_session") as sess,
         ):
+            sess.post.return_value = resp
             payload = oidc.exchange_code("code-1")
         self.assertEqual(payload["id_token"], "x.y.z")
-        _, kwargs = post.call_args
+        _, kwargs = sess.post.call_args
         # Glue 用 consumeCode($code,$clientId,$redirectUri) 精确比对:漏传即 invalid_grant
         self.assertEqual(kwargs["data"]["redirect_uri"], _REDIRECT)
         self.assertEqual(kwargs["data"]["grant_type"], "authorization_code")
@@ -303,8 +285,9 @@ class TestAuthorizeAndTokenExchange(_OidcSettingsMixin, unittest.TestCase):
         resp.json.return_value = {"error": "invalid_grant", "message": "已翻译的文案"}
         with (
             patch.object(oidc, "discovery", return_value=_discovery_doc()),
-            patch.object(oidc.requests, "post", return_value=resp),
+            patch.object(oidc, "_session") as sess,
         ):
+            sess.post.return_value = resp
             with self.assertRaises(oidc.OidcError) as ctx:
                 oidc.exchange_code("used-code")
         self.assertTrue(ctx.exception.invalid_grant)  # 路由据此静默重走一次 start
@@ -315,8 +298,9 @@ class TestAuthorizeAndTokenExchange(_OidcSettingsMixin, unittest.TestCase):
         resp.json.return_value = {"error": "invalid_client", "message": "客户端认证失败"}
         with (
             patch.object(oidc, "discovery", return_value=_discovery_doc()),
-            patch.object(oidc.requests, "post", return_value=resp),
+            patch.object(oidc, "_session") as sess,
         ):
+            sess.post.return_value = resp
             with self.assertRaises(oidc.OidcError) as ctx:
                 oidc.exchange_code("code-1")
         self.assertFalse(ctx.exception.invalid_grant)
@@ -328,8 +312,9 @@ class TestAuthorizeAndTokenExchange(_OidcSettingsMixin, unittest.TestCase):
         resp.json.return_value = {"access_token": "at"}  # scope 漏 openid 时的表现(Glue 不报错)
         with (
             patch.object(oidc, "discovery", return_value=_discovery_doc()),
-            patch.object(oidc.requests, "post", return_value=resp),
+            patch.object(oidc, "_session") as sess,
         ):
+            sess.post.return_value = resp
             with self.assertRaises(oidc.OidcError) as ctx:
                 oidc.exchange_code("code-1")
         self.assertIn("openid", ctx.exception.message)

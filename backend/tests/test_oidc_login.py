@@ -3,9 +3,9 @@
 三组语义各有专门的用例:
   1. glue_identity:窗口内零调用,role 变化才重取权限,角色 404 fail-closed(不降级为空权限),
      软失败窗口(last-known-good)与超窗 fail-closed,明确否定永不沿用旧身份;
-  2. routers/oidc:local 模式 404,state 单次使用,invalid_grant 静默重走一次,
+  2. routers/oidc:state 单次使用,invalid_grant 静默重走一次,
      准入失败回 /login?error=<error_key>;
-  3. auth 双轨:OIDC 模式下 verify_token / get_current_user 不再读任何共享表,
+  3. auth 请求路径:verify_token / get_current_user 不读任何共享表,
      通配权限 "*" 放行,停用/身份不可用即删会话行.
 
 不连网络也不连库:Glue 调用打桩(`glue_identity._glue_get`),Database 用 MagicMock.
@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from fastapi import HTTPException, Request
 
+from backend import auth as auth_module
 from backend.auth import enforce_deploy_perm, get_current_user, require_perm, verify_token
 from backend.config import settings
 from backend.exceptions import AppException
@@ -38,7 +39,6 @@ class _OidcSettingsMixin:
     """settings 是全局单例:用例自己保存/恢复 OIDC 相关字段,避免相互污染."""
 
     FIELDS = (
-        "auth_mode",
         "oidc_issuer",
         "oidc_client_secret",
         "oidc_redirect_uri",
@@ -53,7 +53,6 @@ class _OidcSettingsMixin:
     def setUp(self):
         super().setUp()
         self._saved = {f: getattr(settings, f) for f in self.FIELDS}
-        settings.auth_mode = "oidc"
         settings.oidc_issuer = "https://glue.example.com"
         # 必填三项给全:局部 OIDC 预检(errors.oidc_not_configured)不应在这些用例里触发
         settings.oidc_client_secret = "test-secret"
@@ -384,25 +383,6 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         )
         return stack
 
-    def test_route_absent_in_local_mode(self):
-        settings.auth_mode = "local"
-        with self.assertRaises(HTTPException) as start_ctx:
-            oidc_router.start(_req(), db=self.db)
-        with self.assertRaises(HTTPException) as callback_ctx:
-            oidc_router.callback(request=_req(), db=self.db)
-        self.assertEqual(start_ctx.exception.status_code, 404)
-        self.assertEqual(callback_ctx.exception.status_code, 404)
-
-    def test_local_mode_navigation_returns_to_login_page(self):
-        """local 模式下旧书签/回退按钮整页访问这两个端点:回登录页,而不是把裸 JSON 404 当页面渲染."""
-        settings.auth_mode = "local"
-        start_resp = oidc_router.start(self._nav(), db=self.db)
-        cb_resp = oidc_router.callback(request=self._nav(), db=self.db, code="c1", state="st-1")
-        for resp in (start_resp, cb_resp):
-            self.assertEqual(resp.status_code, 302)
-            # 不带 error key:local 模式下登录页是可用表单,不能弹"本地登录已停用"
-            self.assertEqual(resp.headers["location"], "/login")
-
     def test_start_redirects_and_sets_single_use_cookie(self):
         with patch.object(
             oidc_router.oidc, "authorize_url", return_value="https://glue.example.com/oauth/authorize?state=st"
@@ -534,7 +514,7 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         self.db.cd_integration_state.return_value.enabled = False  # 契约行 enabled=0:CD 未启用
         resp = oidc_router.start(self._nav(), db=self.db)
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_enabled")
+        self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_enabled&service=cd")
         self.assertIn("cd_oidc_state=", resp.headers["set-cookie"])  # 失败也要清一次性 cookie
 
     def test_xhr_gate_failure_still_raises_503_with_key(self):
@@ -547,7 +527,7 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
     def test_navigation_missing_tables_redirects_to_login_with_key(self):
         self.db.cd_missing_tables.return_value = ["cd_sessions"]
         resp = oidc_router.start(self._nav(), db=self.db)
-        self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_deployed")
+        self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_deployed&tables=cd_sessions")
 
     def test_navigation_discovery_failure_redirects_to_login(self):
         with patch.object(oidc_router.oidc, "authorize_url", side_effect=oidc_router.oidc.OidcError("issuer 不一致")):
@@ -579,7 +559,7 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
     def test_navigation_gate_failure_on_callback_redirects_to_login(self):
         self.db.cd_missing_tables.return_value = ["cd_sessions"]
         resp = oidc_router.callback(request=self._nav(), db=self.db, code="c1", state="st-1")
-        self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_deployed")
+        self.assertEqual(resp.headers["location"], "/login?error=errors.cd_not_deployed&tables=cd_sessions")
 
     def test_navigation_success_still_lands_on_home(self):
         """导航形态的成功路径不受分流影响:仍是 302 / + 会话 cookie."""
@@ -595,55 +575,32 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         self.assertIn("cd_token=tok-nav", resp.headers["set-cookie"])
 
 
-class TestAuthDualTrack(_OidcSettingsMixin, unittest.TestCase):
-    """auth 双轨(§7.2):OIDC 模式不读共享表;通配权限放行;停用/身份不可用即删会话行."""
+class TestAuthRequestPath(_OidcSettingsMixin, unittest.TestCase):
+    """auth 请求路径(§7.2):只查 cd_sessions + Glue 身份;通配权限放行;停用/身份不可用即删会话行."""
 
     def _stub_identity(self, ident: dict | None = None, exc: Exception | None = None):
         if exc is not None:
             return patch.object(glue_identity, "get_identity", side_effect=exc)
         return patch.object(glue_identity, "get_identity", return_value=ident if ident else _ident())
 
-    def test_verify_token_oidc_mode_never_reads_shared_tables(self):
+    def test_verify_token_never_reads_shared_tables(self):
+        """共享表(admin_users / roles / role_permissions)的读取入口已随本地登录模式删除."""
         db = _fake_db()
-        with (
-            patch(
-                "backend.auth._query_user_with_systems", side_effect=AssertionError("OIDC 模式不得读共享 admin_users")
-            ),
-            patch(
-                "backend.auth._query_permissions", side_effect=AssertionError("OIDC 模式不得读共享 role_permissions")
-            ),
-            self._stub_identity(),
-        ):
+        with self._stub_identity():
             username = verify_token(_req({"cd_token": "tok-1"}), None, db=db)
         self.assertEqual(username, "alice")
+        for name in ("_query_user_with_systems", "_query_permissions", "authenticate", "verify_password"):
+            self.assertFalse(hasattr(auth_module, name), f"{name} 应随本地登录模式一并删除")
 
     def test_get_current_user_returns_glue_permissions(self):
         db = _fake_db()
-        with (
-            patch(
-                "backend.auth._query_user_with_systems", side_effect=AssertionError("OIDC 模式不得读共享 admin_users")
-            ),
-            self._stub_identity(_ident(role="ops", systems="cd,monitor", permissions=["cd.deploy.k8s"])),
-        ):
+        with self._stub_identity(_ident(role="ops", systems="cd,monitor", permissions=["cd.deploy.k8s"])):
             user = get_current_user(_req({"cd_token": "tok-1"}), None, db=db)
-        # 响应结构与 local 完全一致(前端 useAuth / 路由守卫零改动,§6.2)
+        # 响应结构与前端 useAuth / 路由守卫的期望一致(§6.2)
         self.assertEqual(
             user,
             {"username": "alice", "role": "ops", "systems": "cd,monitor", "permissions": ["cd.deploy.k8s"]},
         )
-
-    def test_local_mode_still_uses_shared_tables(self):
-        settings.auth_mode = "local"
-        db = _fake_db()
-        with (
-            patch(
-                "backend.auth._query_user_with_systems",
-                return_value={"username": "alice", "systems": "cd", "status": 1},
-            ) as query,
-            self._stub_identity(exc=AssertionError("local 模式不得调用 Glue 身份")),
-        ):
-            self.assertEqual(verify_token(_req({"cd_token": "tok-1"}), None, db=db), "alice")
-        query.assert_called_once()
 
     def test_disabled_account_revokes_session_and_raises_401(self):
         db = _fake_db()

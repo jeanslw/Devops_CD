@@ -52,7 +52,27 @@
       "support": "Support",
       "login": "Login"
     },
-    "running": "Running",
+    "status": {
+      "checking": "Checking…",
+      "running": "Running",
+      "stopped": "Not enabled",
+      "not_deployed": "Not deployed",
+      "misconfigured": "Misconfigured",
+      "unreachable": "Unreachable",
+      "db_error": "DB unavailable",
+      "detail": {
+        "db": "Check database connection & config",
+        "oidc": "SSO not configured ({items})",
+        "api_url": "CI API URL not configured",
+        "api_token": "CI API token not configured",
+        "token_invalid": "CI API token invalid or revoked",
+        "glue_old": "Devops-Glue too old (no contract endpoint)",
+        "unreachable": "Cannot reach Devops-Glue",
+        "not_enabled": "Not enabled in Devops-Glue",
+        "not_deployed": "CD tables incomplete ({tables} missing)",
+        "ok": "All dependencies ready"
+      }
+    },
     "hero": {
       "text1": "Build Tag",
       "text2": "Deploy Anywhere"
@@ -87,16 +107,9 @@
   },
   "login": {
     "title": "Sign in",
-    "subtitle": "Admin Account",
-    "username": "Username",
-    "password": "Password",
-    "loginBtn": "Login",
-    "enterCredentials": "Please enter username and password",
     "loginFailed": "Login failed",
-    "networkError": "Network error",
     "ssoBtn": "Login",
-    "ssoHint": "Single sign-on (OIDC) — you will be returned to this system automatically after signing in.",
-    "localDisabled": "Local password login is disabled (AUTH_MODE=oidc) — use Devops-Glue sign-in above"
+    "ssoHint": "Single sign-on (OIDC) — you will be returned to this system automatically after signing in."
   },
   "topbar": {
     "logout": "Logout",
@@ -159,8 +172,10 @@
     "noBuilds": "No build records",
     "hint": "Select a project to view build history",
     "triggerTitle": "Trigger New Build",
-    "branch": "Branch",
+    "branch": "Branch / Tag",
     "loadingBranch": "Loading...",
+    "branchGroup": "Branches",
+    "tagGroup": "Tags",
     "variables": "Build Variables",
     "optional": "Optional",
     "varKey": "Key",
@@ -492,6 +507,7 @@
     "capability": "Capability",
     "status": "Status",
     "available": "Available",
+    "checking": "Checking…",
     "error": "Error",
     "viewApp": "View App Resources",
     "viewSys": "View System Resources",
@@ -873,8 +889,6 @@
     "validation": "Invalid parameters",
     "service_unavailable": "Service unavailable",
     "database": "Database error",
-    "invalid_credentials": "Invalid credentials",
-    "login_locked": "Too many failed logins, locked for 15 minutes",
     "server_exists": "Server \"{name}\" already exists",
     "server_not_found": "Server not found",
     "select_server": "Please select a target server",
@@ -933,10 +947,10 @@
     "cd_not_enabled": "CD is not enabled: enable Devops-CD in the Devops-Glue console under \"API Integration Services\"",
     "cd_not_deployed": "CD is not deployed: the CD tables are incomplete (missing: {tables}). Ask an administrator to complete them — in auto mode restarting CD re-creates them automatically; in manual mode (MySQL) import database/init_mysql.sql",
     "db_unavailable": "Database temporarily unavailable ({driver}): {reason}. Check the database connection and configuration; in SQLite mode also make sure the data directory is writable and the disk is not full",
+    "ci_contract_unreachable": "Cannot reach the Devops-Glue integration service: {reason}",
     "invalid_url": "Invalid URL",
     "identity_unavailable": "Identity check failed: this account's role does not exist in Devops-Glue or was deleted. Ask an administrator to verify the role configuration",
     "oidc_not_configured": "Single sign-on is not configured yet: the server is missing {items}. Ask an administrator to fill them in and retry (OIDC_ISSUER in config/app.env or the root .env; CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI in the root .env)",
-    "local_login_disabled": "Local password login is disabled — please use Devops-Glue single sign-on",
     "no_cd_access": "This account has no CD access. Please contact your administrator",
     "unsupported_cd_type": "Unsupported CD type",
     "unsupported_deploy_type": "Unsupported deploy type",

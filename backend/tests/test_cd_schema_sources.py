@@ -26,6 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from backend.config import settings
 
 settings.db_driver = "sqlite"
+# 契约读走 cd_contract.py 的进程内替身(模拟 Glue 端点答复):建表闸门不依赖本机是否配了
+# CI_API_URL,也不读共享库 -- CD 生产同样只经契约端点读启用状态(见 backend/database.py 顶部注释)
+
+from cd_contract import enable_cd  # noqa: E402
 
 from backend.database import (  # noqa: E402
     CD_REQUIRED_TABLES,
@@ -118,16 +122,8 @@ def _python_mysql_final_columns(table: str, python_tables: dict[str, list[str]])
 
 
 def _sqlite_created_columns(path: str) -> dict[str, list[str]]:
-    """真跑一遍 SQLite 自动建表(契约行 enabled=1 + auto),再反射每张表的列."""
-    raw = sqlite3.connect(path)
-    raw.execute(
-        "CREATE TABLE IF NOT EXISTS integrated_services ("
-        "service_name TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 0, "
-        "provision TEXT NOT NULL DEFAULT 'auto')"
-    )
-    raw.execute("INSERT INTO integrated_services (service_name, enabled, provision) VALUES ('cd', 1, 'auto')")
-    raw.commit()
-    raw.close()
+    """真跑一遍 SQLite 自动建表(契约端点答复 enabled=1 + auto),再反射每张表的列."""
+    enable_cd(path)  # 契约替身:Glue 端点答复 enabled=1 + auto(不读共享库)
     Database._tables_ensured = False
     try:
         db = Database(path)
@@ -147,8 +143,6 @@ class TableSetContractTestCase(unittest.TestCase):
 
     def test_required_list_is_all_cd_owned(self):
         self.assertFalse([t for t in CD_REQUIRED_TABLES if not t.startswith("cd_")])
-        # 给 Glue 的契约视图不是 CD 自身表:闸门只核对 BASE TABLE
-        self.assertNotIn("v_glue_deploy_logs", CD_REQUIRED_TABLES)
 
     def test_python_mysql_ddl_covers_inventory(self):
         self.assertEqual(set(_MYSQL_TABLE_DDL), set(CD_REQUIRED_TABLES))

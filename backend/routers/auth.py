@@ -1,86 +1,12 @@
-"""认证路由"""
+"""认证路由 - 当前用户信息 + 登出"""
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 
-from backend.auth import (
-    _extract_token,
-    cd_deploy_gate,
-    get_current_user,
-    get_db,
-    revoke_session,
-    security,
-)
-from backend.config import settings
+from backend.auth import _extract_token, get_current_user, get_db, revoke_session, security
 from backend.database import Database
-from backend.exceptions import AppException
-from backend.login_guard import (
-    client_ip,
-    clear_login_failure,
-    is_login_locked,
-    record_login_failure,
-)
-from backend.models import LoginRequest
 
 router = APIRouter(tags=["auth"])
-
-
-@router.post("/api/login")
-def login(req: LoginRequest, request: Request, response: Response, db: Database = Depends(get_db)):
-    # 登录失败限流:与 CI(Devops-Glue)共享 cache 表计数,5 次失败锁 15 分钟;须在验密之前检查,
-    # 任何失败(含停用 / 无 CD 权限)都计数,成功才清零;唯一例外是"CD 未部署"(部署状态,见下).
-    ip = client_ip(request)
-    # 部署闸门:清单(CD_REQUIRED_TABLES)没建全时禁止登录,且不代为建表,提示按驱动给出补齐动作;
-    # 须排在限流计数之前 -- 未启用的部署不该在共享 cache 表累积失败次数,更不该锁掉管理员账号
-    # (那把锁属于 Devops-Glue,CD 无权污染).
-    cd_deploy_gate(db)
-    # ── 模式守卫:OIDC 模式下本地密码登录关闭 ──
-    # 须排在登录失败限流之前(模式类拒绝属于另一类,不该计入共享失败锁).回退到 local 即立即恢复
-
-    if settings.auth_mode == "oidc":
-        raise AppException(
-            "本地密码登录已停用，请使用 Devops-Glue 单点登录",
-            status_code=403,
-            error_key="errors.local_login_disabled",
-        )
-    username = (req.user or "").strip().lower()
-    # 空用户名直接按凭据错误拒绝:不查锁,不计数,避免所有空用户名失败共享
-    # md5(ip+":") 一个桶,也不泄露"该用户名不存在"之外的任何信息.
-    if not username:
-        raise AppException("账号或密码错误", status_code=401, error_key="errors.invalid_credentials")
-    if is_login_locked(db, ip, username):
-        raise AppException(
-            "登录失败次数过多，账户已锁定 15 分钟，请稍后再试",
-            status_code=429,
-            error_key="errors.login_locked",
-        )
-
-    # 延迟导入 authenticate,避免路由模块加载期产生循环依赖风险
-    from backend.auth import authenticate
-
-    try:
-        token = authenticate(req.user, req.password, db)
-    except AppException:
-        # 账号停用 / 无 CD 访问权限同样计入失败次数
-        record_login_failure(db, ip, username)
-        raise
-    if token:
-        clear_login_failure(db, ip, username)
-        # HttpOnly cookie:JS 不可读,XSS 无法窃取;同源请求自动携带,前端无需手动带 Authorization 头.
-        # Secure 由 settings.cookie_secure 控制(nginx 以 HTTPS 对外时应开启).
-        response.set_cookie(
-            "cd_token",
-            token,
-            httponly=True,
-            samesite="lax",
-            path="/",
-            secure=settings.cookie_secure,
-            max_age=settings.auth_token_ttl_hours * 3600,
-        )
-        return {"token": token}
-    record_login_failure(db, ip, username)
-    raise AppException("账号或密码错误", status_code=401, error_key="errors.invalid_credentials")
-
 
 @router.get("/api/me")
 def me(user: dict = Depends(get_current_user)):

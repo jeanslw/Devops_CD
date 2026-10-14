@@ -40,13 +40,15 @@ Yes. Add multiple metrics under a single monitor item, each targeting a differen
 
 ### Q: CD reports "not enabled" even though the database looks configured?
 
-cd_service must share the same database instance as Devops-Glue API (CD reads only the `integrated_services` contract table from it). If that table is missing — e.g. `DB_PATH`/`DB_*` points at the wrong database — CD fails closed as "not enabled". Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) matches Glue's database.
+cd_service must share the same database instance as Devops-Glue API (CD's own `cd_*` tables live in it; the enablement state is read only through Glue's contract endpoint `GET /api/integration/services/cd`, never directly from the table). When the endpoint cannot be reached, CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`). Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) matches Glue's database.
 
 ### Q: Login fails with "CD is not enabled: enable Devops-CD in the Devops-Glue console under 'API Integration Services'"?
 
 Whether CD is enabled is decided only by Devops-Glue's integration-service contract table `integrated_services` (CI is the only writer): if the contract table / row is missing or `enabled<>1`, CD counts as **not enabled**, performs zero DDL, and login, every request carrying a session, the public webhook receiver and the WebShell handshake all return 503 (`errors.cd_not_enabled`).
 
-**Fix**: turn Devops-CD on in the Devops-Glue console under "API Integration Services → Enable" — the action writes the contract row and stores the `provision` value derived from CI's migration mode, and CD picks it up **immediately** (no config change, no restart).
+> How that table is read: the only channel is Glue's contract endpoint `GET /api/integration/services/cd`. When it cannot be reached (older Glue, network/auth failure), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — it never reads the table directly and never treats it as "not enabled".
+
+**Fix**: turn Devops-CD on in the Devops-Glue console under "API Integration Services → Enable" — the action writes the contract row and stores the `provision` value derived from CI's migration mode, and CD picks it up **within one contract cache window** (`CI_CONTRACT_TTL`, 30s by default — no config change, no restart; set `CI_CONTRACT_TTL=0` to make it immediate).
 
 > The message box shows **only that one sentence**: the login error box and the toast now share one path — both resolve `error_key=errors.cd_not_enabled` through the frontend i18n, so switching to EN really shows English instead of the backend's Chinese fallback; the full action guidance travels in the response's `detail.hint` and in the CD startup log instead of being appended to the message.
 

@@ -2,6 +2,8 @@
 
 > 面向系统管理员：环境要求、配置说明、部署运维。
 
+> **版本对应关系（CD ↔ CI）**：CD v1.6.0 需配套 Devops-Glue（CI）≥ 2.9.0。本版为破坏性变更——本地登录移除、部署日志共享视图改为 HTTP 契约——旧版 Glue（< 2.9.0）不兼容，须先升级 Glue 再升级 CD。
+
 ## 1. 环境要求
 
 ### Python 依赖
@@ -86,9 +88,8 @@ SECRET_KEY=
 # ── 可信反向代理跳数：0=直连（默认，忽略 X-Forwarded-For）；前置 nginx 设 1，多层递增 ──
 TRUSTED_PROXY_HOPS=0
 
-# ── 认证模式（默认档 oidc = Devops-Glue 单点登录；改 local + 重启即回退本地密码登录）──
-# oidc 必填以下三项，缺任一项时 compose 预检中止启动、裸机启动日志记 ERROR
-AUTH_MODE=oidc
+# ── 登录方式（Devops-Glue 单点登录，唯一方式）──
+# 以下三项必填，缺任一项时 compose 预检中止启动、裸机启动日志记 ERROR
 OIDC_ISSUER=http://glue.example.com        # Glue 对外地址，须与 discovery 的 issuer 完全一致
 CD_OIDC_SECRET=                            # 与 Glue oauth_clients['cd']['secret'] 完全一致
 CD_OIDC_REDIRECT_URI=http://cd.example.com/api/auth/oidc/callback   # 与 Glue 登记值逐字符一致
@@ -102,7 +103,7 @@ CD_OIDC_REDIRECT_URI=http://cd.example.com/api/auth/oidc/callback   # 与 Glue �
 ### 2.2 业务参数：`config/app.env`（随镜像发布，通常无需修改）
 
 ```env
-AUTH_MODE=oidc              # 唯一认证总开关：oidc（默认档，Devops-Glue 单点登录）| local（本地密码登录，回退档）
+OIDC_REVALIDATE_SECONDS=60  # 惰性复核窗口：已登录会话的停用/降权生效上限（秒）
 AUTH_TOKEN_TTL_HOURS=24     # 登录 token 有效期（小时）
 SUPER_ADMIN_ROLE=super_admin
 DB_POOL_MAX=10
@@ -131,7 +132,7 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ## 3. 数据库说明
 
-> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例。CD 只读共享库里的 `integrated_services` 契约表（不再探测 `ci_pipeline_artifacts`）；该表/行缺失时一律按「未启用」fail-closed。
+> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例（CD 自己的 `cd_*` 表都在这个共享库里）。CD 只经 Devops-Glue 的契约端点 `GET /api/integration/services/cd` 读启用状态（不再探测 `ci_pipeline_artifacts`，也不直读契约表）；问不到时按「契约不可达」fail-closed，见下「契约怎么读」。
 
 | 驱动 | 适用场景 | 注意 |
 |------|----------|------|
@@ -140,17 +141,18 @@ NOTIFY_TRUNCATE_CHARS=200
 
 ### CD 表由谁创建（集成服务开关 = 部署闸门）
 
-「CD 启用了没有」由 **Devops-Glue 的集成服务契约表 `integrated_services`** 决定（CI 是唯一写入方；语义见 Devops-Glue 管理手册的「集成服务」章节）：表里 `service_name='cd'` 的那一行带两个开关 —— `enabled` 与 `provision`，CD 进闸门时**直读这一行**，不再用「表在不在」猜启用状态。
+「CD 启用了没有」由 **Devops-Glue 的集成服务契约表 `integrated_services`** 决定（CI 是唯一写入方；语义见 Devops-Glue 管理手册的「集成服务」章节）：表里 `service_name='cd'` 的那一行带两个开关 —— `enabled` 与 `provision`，CD 进闸门时经 Glue 的契约端点 `GET /api/integration/services/cd` 读取，不再用「表在不在」猜启用状态。
 
 | 契约行状态 | CD 的行为 | 未满足时的表现 |
 |-----------|-----------|----------------|
 | 契约表缺失 / 契约行缺失 / `enabled<>1` | **零 DDL**：不建表、不补列、不补索引 | 登录与所有已持有会话的请求一律 503 `errors.cd_not_enabled`（提示去 CI 后台启用 CD） |
-| `enabled=1` + `provision='auto'` | **CD 自动建表**（MySQL 与 SQLite 同理）：首次连库建全 `CD_REQUIRED_TABLES`（当前 14 张）+ 补既有表缺失列 + 补索引 + 契约视图 | 表没建全（建表失败、运行期被 DROP 等）→ 503 `errors.cd_not_deployed`（提示重启 CD 即自愈） |
+| `enabled=1` + `provision='auto'` | **CD 自动建表**（MySQL 与 SQLite 同理）：首次连库建全 `CD_REQUIRED_TABLES`（当前 14 张）+ 补既有表缺失列 + 补索引 | 表没建全（建表失败、运行期被 DROP 等）→ 503 `errors.cd_not_deployed`（提示重启 CD 即自愈） |
 | `enabled=1` + `provision='manual'` | **零 DDL**：只认运维预建的表（MySQL 由管理员导入 `database/init_mysql.sql`） | 缺任何一张 → 503 `errors.cd_not_deployed`（提示导入建表脚本） |
 
 要点：
 
 - **启用动作只在 CI 后台完成**（Devops-Glue →「API集成服务 → 启用」开启 Devops-CD）：CD 不提供自开通入口、不写种子，也**不会因为「表恰好存在」就放行**；
+- **契约怎么读**：唯一通道为 Glue 的契约端点 `GET /api/integration/services/cd`（CD 现有服务 token 的 `build.read` scope 即可，无需新 token）。问不到（Glue 版本过旧 404/405、网络/鉴权失败、未配 `CI_API_URL`）一律按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不直读契约表，也不当作「未启用」。HTTP 通道带缓存窗口 `CI_CONTRACT_TTL`（默认 30s，`0` = 每请求都问），因此**改完开关最迟一个窗口生效**；响应缺少 `enabled` 字段同样按「问不到」处理，绝不把 CD 静默关掉；
 - `provision` 由 CI 在**启用那一刻**按其迁移模式写入：`DB_AUTO_MIGRATE` 开启 → `auto`（授权 CD 建表），关闭 → `manual`（结构归 DBA）。CD 只读这个值，不做二次判断；
 - **关闭集成服务只冻结准入**：CD 表与数据原样保留，不 `DROP` / 清空；重新启用后历史数据继续可用（CI 只换掉契约行上的 token 引用）；
 - 闸门覆盖：登录（排在限流计数之前）+ 所有已持有会话的请求 + 公开 Webhook 接收端点 + WebShell（WebSocket 握手）—— 即「即使能登录，也禁止做任何操作」；这类 503 属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享的登录失败锁；无认证的探活接口（`/health`、`/api/info`、`/metrics`）保持可用，便于排障。
@@ -180,13 +182,13 @@ mysql -u root -p devops_glue < database/init_mysql.sql
 | `cd_approvals` | 部署审批单（状态机：pending → approved → deploying → deployed/failed，另有 rejected/cancelled；`scheduled_at` 定时发布） |
 | `cd_approval_rules` | 按项目配置的审批规则（审批人用户/角色） |
 
-此外脚本会创建：
-
-- 视图 `v_glue_deploy_logs`：供 Devops-Glue 只读的部署记录契约视图（仅审计字段，不含 `output` 等大字段）。
+CI 改经 HTTP 拉取部署记录，不再读共享视图：`GET /api/integration/deploy-logs`（入站静态 token `CD_API_TOKEN`，`Authorization: Bearer`，常量时间比较）返回 10 个审计列，支持 `project`(模糊) / `status` / `deploy_type`(精确) / `date_from` / `date_to`(含边界) 筛选与 `page` / `per_page`(≤100) 分页；可用性走状态码（200 可用、401 token 错误、503+error_key CD 不可用）。共享视图 `v_glue_deploy_logs` 已删除。
 
 **`provision='auto'` 时的结构一致性**：auto 模式下 CD 用代码内置的 MySQL 建表 DDL（`backend/database.py::_MYSQL_TABLE_DDL`，索引与缺列迁移清单同源）自动建表，它与 `database/init_mysql.sql` 的**表集合、逐表列集合、索引清单**由 `backend/tests/test_cd_schema_sources.py` 逐项锁定 —— 两种模式（auto 自动建 / manual 手动导入）得到的库结构必须一致，同一个库不存在「两套结构」。
 
 **SQLite 模式下的闸门行为**（开发/单机）：`provision='auto'` 时 CD 表随库自动创建，正常恒放行、开发零摩擦；若运行期有人手工 `DROP TABLE`（例如为了复现问题），闸门会**立刻**对登录与所有操作返回 503（只报警、**不静默补建**），**重启服务即自动建全自愈**。若 CI 侧为 `manual`（`DB_AUTO_MIGRATE=false`）而 CD 用 SQLite，CD 同样**零 DDL**，提示语会说明「由运维补建这些表，或在 Devops-Glue 侧改回自动迁移模式后重新启用」—— 任何情况下提示都按 `provision` 说实话（auto 说重启自愈，manual + MySQL 才说导入建表脚本），不会把运维指向错误的动作。
+
+**另一种 503：契约不可达（与上面区分）**：契约端点问不到（未配 `CI_API_URL` / CI API token、Glue 版本过旧 404/405、网络/鉴权失败、响应缺 `enabled`）时，登录与各接口返回 503 `errors.ci_contract_unreachable`（`error_params` 带 `reason`）。这类要**排查 Glue / `CI_API_URL` / CI API token**，不是「未启用」也不是「库坏了」。
 
 **另一种 503：数据库不可用（与上面区分）**：SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接时，登录与各接口返回 503 `errors.db_unavailable`（`error_params` 带驱动与底层原因）。这类是**环境**问题 —— 排查连接配置、数据目录写权限、磁盘空间即可，**不要**去重跑建表脚本（那修不了，方向错了）。SQLite 模式请确认数据目录可写、磁盘未满。
 
@@ -485,20 +487,14 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 
 ### 认证
 
-默认档为 **Devops-Glue 单点登录（`AUTH_MODE=oidc`）**：
+登录方式只有一种：**Devops-Glue 单点登录**。
 
-- 登录：浏览器访问 `/login` 点「使用 Devops-Glue 登录」→ 整页跳转 `/api/auth/oidc/start` → Glue 授权页 → 回跳 `/api/auth/oidc/callback`；身份与权限经 Glue HTTP API 获取，请求路径不读共享表
-- 会话：登录成功后与本地模式一致 —— 不透明随机会话 Token（同时写入 `cd_token` HttpOnly cookie；服务端 `cd_sessions` 表只存其 SHA-256 摘要）
+- 登录：浏览器访问 `/login` 点「登 录」→ 整页跳转 `/api/auth/oidc/start` → Glue 授权页 → 回跳 `/api/auth/oidc/callback`；身份与权限经 Glue HTTP API 获取，请求路径不读共享表
+- 会话：不透明随机会话 Token（同时写入 `cd_token` HttpOnly cookie；服务端 `cd_sessions` 表只存其 SHA-256 摘要）
 - 登出：POST `/api/logout` 服务端吊销会话 —— Token 立即失效
 - 受保护端点支持 `Authorization: Bearer <token>` 请求头或 HttpOnly cookie 两种方式
 - 放权 / 停用生效上限 60 秒（惰性复核）；Glue 不可达时 10 分钟内按 last-known-good 放行，超过即 503 fail-closed
-
-回退档 `AUTH_MODE=local`（本地密码登录 + 每请求直读 `admin_users` / `roles` / `role_permissions`）：
-
-- 登录：POST `/api/login`，用户名 + 密码
-- 登录失败限流：同一 IP+用户名连续失败 5 次锁定 15 分钟
-
-两档切换只需**改 `AUTH_MODE` + 重启**（零 DDL，CD 数据无损）；
+- 密码登录与 `AUTH_MODE` 开关已删除（本地 `admin_users.password_hash` 不再被 CD 读取）；`integrated_services` 契约表 / 必填项缺失时启动预检与闸门按原口径拒绝
 
 ## 8. CI 构建管理集成（可选）
 

@@ -1,10 +1,9 @@
-"""认证模块 - 与 php_api 共享 admin_users 表"""
+"""认证模块 - 会话校验 + Glue 身份 / 权限"""
 
 import hashlib
 import secrets
 import time
 
-import bcrypt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -16,13 +15,11 @@ security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
 # 通配权限:Glue 对 super_admin 返回 ["*"](该角色权限由代码授予,不落 role_permissions 表),
-# CD 侧必须认这个通配 -- 只靠角色名判断会在两种情况下失能:运维把 SUPER_ADMIN_ROLE 改名,
-# 或 Glue 侧角色改名.local 模式的权限永不含 "*",对既有行为零影响.
+# CD 侧必须认这个通配 -- 只靠角色名判断会在 Glue 侧角色改名后失能.
 WILDCARD_PERM = "*"
 # 两种拒绝措辞必须分开:先说"没启用"(去 CI 后台开开关),再说"表没建全"(按 provision 补表)
 CD_NOT_ENABLED_MSG = "CD 服务未启用：请在 Devops-Glue 后台「API集成服务」中启用 Devops-CD"
 CD_NOT_DEPLOYED_MSG = "CD 服务未部署：CD 数据表未建全"
-_systems_col_ok = True  # 乐观假设 systems 列存在,查询失败后置 False
 
 
 SESSION_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) ≈ 43 字符,256 位熵
@@ -80,26 +77,6 @@ def _has_system(systems: str | None, target: str) -> bool:
     return target in [s.strip() for s in systems.split(",")]
 
 
-def _check_cd_access(row) -> None:
-    """检查数据库行的 systems 字段是否允许 CD 访问,拒绝则抛 401.
-    row 必须包含 'systems' key(由调用方保证列已被读取).
-    不会修改 row 对象."""
-    if not _has_system(row.get("systems"), CD_SYSTEM):
-        raise HTTPException(401, "Access denied: CD system not authorized")
-
-
-def _check_disabled(row) -> None:
-    """账号已停用(status=0)则抛 401,让已登录用户的旧 token 即时失效(踢下线).
-    401 会触发前端 useAuth.handle401 → logout,清除本地 token 并回到登录页.
-    status 列不存在时默认为 1 放行,兼容旧库."""
-    try:
-        status = row["status"]
-    except (KeyError, IndexError):
-        status = 1
-    if status is not None and int(status) == 0:
-        raise HTTPException(401, "该账号已被停用，请联系管理员")
-
-
 def get_db() -> Database:
     """FastAPI 依赖:获取数据库实例"""
     return Database(settings.db_path)
@@ -116,12 +93,13 @@ def cd_deploy_gate(db: Database) -> None:
        (auto:CD 自动建表,重启即自愈;manual:MySQL 导入 database/init_mysql.sql);
     3) 两者都满足才放行.半套 schema 一律不放行:登录后各功能只会缺表 500,甚至写坏数据.
 
-    覆盖:登录(routers/auth.login,排在限流计数之前)+ authenticate + 所有带 verify_token /
-    get_current_user 的接口 + 公开 Webhook 接收端点 + WebShell 的 WS 握手 -- 即'即使能登录,
-    也禁止做任何操作';无认证的探活接口(/health,/api/info,/metrics)保持可用.
+    覆盖:OIDC 登录(start / callback)+ 所有带 verify_token / get_current_user 的接口 +
+    公开 Webhook 接收端点 + WebShell 的 WS 握手 -- 即'即使能登录,也禁止做任何操作';
+    无认证的探活接口(/health,/api/info,/metrics)保持可用.
 
-    该拒绝属'部署状态'而非'凭据失败',不计入与 Glue 共享的登录失败锁;数据库当前不可用抛
-    DatabaseUnavailableError(503 errors.db_unavailable),与上面两种严格区分(见 database.py).
+    该拒绝属'部署状态'而非'凭据失败';契约端点问不到抛 ContractUnavailableError(503
+    errors.ci_contract_unreachable),数据库当前不可用抛 DatabaseUnavailableError(503
+    errors.db_unavailable),与上面两种严格区分(见 database.py).
     顺序'先读契约,再查清单':未启用时不数表(省一次元数据查询),提示也不跑偏.
     """
     from backend.exceptions import AppException
@@ -151,9 +129,8 @@ def cd_deploy_gate(db: Database) -> None:
     )
 
 
-# ── OIDC 模式(AUTH_MODE=oidc):会话校验 + 惰性 Glue 复核,全程不读共享表 ──
-# 两种模式共用 cd_sessions(CD 自有表),同一套不透明 token 与 401 语义:切模式不需要迁移
-# 任何数据,回滚也只是把 AUTH_MODE 改回 local.
+# ── 会话校验 + 惰性 Glue 复核:全程不读共享表 ──
+# 会话存 cd_sessions(CD 自有表):不透明 token + 401 语义,与 Glue 的 admin_users 无关.
 
 
 def _oidc_session(db: Database, token: str) -> dict:
@@ -178,7 +155,7 @@ def _revoke_session_quietly(db: Database, token: str) -> None:
 
 
 def _identity_disabled(ident: dict) -> bool:
-    """status=0 即 已停用(与 _check_disabled 同口径:None / 缺值时按启用处理,兼容旧数据)."""
+    """status=0 即 已停用(None / 缺值时按启用处理,兼容旧数据)."""
     status = ident.get("status")
     if status is None:
         return False
@@ -205,7 +182,7 @@ def _oidc_identity(db: Database, token: str, username: str) -> dict:
         if exc.status_code in (401, 403):
             _revoke_session_quietly(db, token)
         raise
-    # 身份事实 → 准入判断(与 local 的 _check_disabled / _check_cd_access 同语义,同 error_key)
+    # 身份事实 → 准入判断(停用 / systems 不含 cd → 删会话行 + 401)
     if _identity_disabled(ident):
         _revoke_session_quietly(db, token)
         raise AppException("该账号已被停用，请联系管理员", status_code=401, error_key="errors.user_disabled")
@@ -222,7 +199,7 @@ def verify_token(
 ) -> str:
     """从 cookie / Bearer token 验证用户身份,返回 username.
     服务端会话表 + 不透明 token:token 本身不携带用户信息,校验即查 cd_sessions
-    (O(1) 哈希查找),logout 删行即时失效;同时检查 systems 是否允许 CD 访问."""
+    (O(1) 哈希查找),logout 删行即时失效;再经 Glue 复核 systems 是否允许 CD 访问."""
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
@@ -231,29 +208,21 @@ def verify_token(
     # 放在会话查询之前:不依赖 cd_sessions 是否存在,缺表时也能给出可操作的错误.
     cd_deploy_gate(db)
 
-    if settings.auth_mode == "oidc":
-        # OIDC 模式:只校验 cd_sessions 行 + 惰性 Glue 复核,
-        # 不再读 admin_users / roles / role_permissions 这些共享表(§7.2 的分支点)
-        sess = _oidc_session(db, token)
-        _oidc_identity(db, token, sess["username"])
-        return sess["username"]
-
-    with db.conn() as conn:
-        sess = _lookup_session(conn, token)
-        if sess is None:
-            raise HTTPException(401, "Invalid or expired token")
-        if time.time() > sess["expires_at"]:
-            _delete_session(conn, token)
-            raise HTTPException(401, "Token expired, please login again")
-        row = _query_user_with_systems(conn, sess["username"], "username, systems, status")
-
-    if row is None:
-        raise HTTPException(401, "Invalid or expired token")
-
-    _check_cd_access(row)
-    _check_disabled(row)
-
+    sess = _oidc_session(db, token)
+    _oidc_identity(db, token, sess["username"])
     return sess["username"]
+
+
+def verify_inbound_api_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> None:
+    """CI→CD 入站静态 token 校验(Authorization: Bearer CD_API_TOKEN).
+
+    常量时间比较防时序侧信道;CD_API_TOKEN 留空或 token 缺失 / 错误一律 401.
+    """
+    token = credentials.credentials if credentials is not None else ""
+    if not settings.cd_api_token or not token or not secrets.compare_digest(token, settings.cd_api_token):
+        raise HTTPException(401, "Invalid or missing API token")
 
 
 def get_current_user(
@@ -262,7 +231,7 @@ def get_current_user(
     db: Database = Depends(get_db),
 ) -> dict:
     """获取当前登录用户完整信息 {username, role, systems, permissions}.
-    同 verify_token:服务端会话校验,同时检查 systems 字段是否允许 CD 访问."""
+    同 verify_token:服务端会话校验 + Glue 身份复核."""
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
@@ -270,56 +239,14 @@ def get_current_user(
     # 部署闸门:与 verify_token 一致 -- CD 未部署/表不全时禁止任何已登录操作(503).
     cd_deploy_gate(db)
 
-    if settings.auth_mode == "oidc":
-        # 返回结构与 local 完全一致(前端 useAuth / 路由守卫零改动,§6.2);
-        # 权限来自 Glue 角色权限端(按角色缓存,复核窗口内零调用)
-        sess = _oidc_session(db, token)
-        ident = _oidc_identity(db, token, sess["username"])
-        return {
-            "username": ident["username"],
-            "role": ident.get("role") or "",
-            "systems": ident.get("systems"),
-            "permissions": ident.get("permissions") or [],
-        }
-
-    with db.conn() as conn:
-        sess = _lookup_session(conn, token)
-        if sess is None:
-            raise HTTPException(401, "Invalid or expired token")
-        if time.time() > sess["expires_at"]:
-            _delete_session(conn, token)
-            raise HTTPException(401, "Token expired, please login again")
-        row = _query_user_with_systems(conn, sess["username"], "username, role, systems, status")
-
-    if row is None:
-        raise HTTPException(401, "Invalid or expired token")
-
-    _check_cd_access(row)
-    _check_disabled(row)
-
-    # 查询该角色的权限列表(无角色 → 空权限,deny-by-default)
-    role_name = row.get("role") or ""
-    permissions = _query_permissions(db, role_name)
-
+    sess = _oidc_session(db, token)
+    ident = _oidc_identity(db, token, sess["username"])
     return {
-        "username": row["username"],
-        "role": role_name,
-        "systems": row.get("systems"),
-        "permissions": permissions,
+        "username": ident["username"],
+        "role": ident.get("role") or "",
+        "systems": ident.get("systems"),
+        "permissions": ident.get("permissions") or [],
     }
-
-
-def _query_permissions(db: Database, role_name: str) -> list:
-    """通过 roles / role_permissions 表查询指定角色的权限列表."""
-    try:
-        with db.conn() as conn:
-            rows = conn.execute(
-                "SELECT rp.perm_key FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.name=?",
-                (role_name,),
-            ).fetchall()
-            return [r["perm_key"] for r in rows]
-    except Exception:
-        return []  # 表不存在或查询失败时优雅降级
 
 
 def require_perm(perm_key: str):
@@ -385,72 +312,6 @@ def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None
         raise HTTPException(403, f"Permission denied: {_MANAGE_PERM} or {required} required")
 
 
-def verify_password(plain: str, hashed: str | None) -> bool:
-    """校验密码哈希,自动识别算法:argon2id($argon2 前缀)或 bcrypt(默认).
-
-    CI 侧 PASSWORD_HASH_ALGO 可在两者间切换,CD 必须兼容(不能硬编码:CI 一切到 argon2id,
-    CD 登录即抛 ValueError: Invalid salt).任何校验失败(NULL / 空哈希 / 算法未知 / 哈希格式
-    损坏 / 未安装 argon2-cffi)都返回 False,不抛异常 -- 登录路径不允许因脏数据 500.
-    """
-    if not hashed:
-        return False
-    if hashed.startswith("$argon2"):
-        try:
-            from argon2 import PasswordHasher
-            from argon2.exceptions import VerificationError
-        except ImportError:  # 未安装 argon2-cffi 时,argon2id 哈希无法校验
-            return False
-        try:
-            return PasswordHasher().verify(hashed, plain)
-        except (VerificationError, ValueError):
-            return False
-    try:
-        return bcrypt.checkpw(plain.encode(), hashed.encode())
-    except (ValueError, TypeError):
-        return False
-
-
-def authenticate(user: str, password: str, db: Database) -> str | None:
-    """验证用户凭据,同时检查 systems(如果存在)是否允许 CD 访问.
-    成功返回不透明会话 token(写入 cd_sessions,logout 删行即时吊销);
-    CD 表没建全(MySQL 未导入脚本 / SQLite 建表未跑全)抛 AppException(503):未部署即禁止登录,
-    应用也不代为建表;账号已停用抛 AppException(403) 以区别于密码错误;
-    其余失败返回 None(由调用方统一按'账号或密码错误'处理)"""
-    from backend.exceptions import AppException
-
-    # 部署闸门(防御深度):登录路由已在限流计数前拦过一次,这里再兜一次 --
-    # 任何调用路径都不会在"CD 表没建全"时去写 cd_sessions(缺表必然报错,见 cd_deploy_gate).
-    cd_deploy_gate(db)
-
-    with db.conn() as conn:
-        row = _query_user_with_systems(conn, user, "username, password_hash, systems, status")
-
-        if row is None:
-            return None
-
-        # status=0 表示账号已停用.必须先于密码校验判断:无论密码对错都提示"已停用",
-        # 否则停用账号输入错误密码会落到"账号或密码错误"分支,误导用户以为只是密码忘了.
-        # (列不存在时默认为 1 放行,兼容旧库)
-        try:
-            status = row["status"]
-        except (KeyError, IndexError):
-            status = 1
-        if status is not None and int(status) == 0:
-            raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
-
-        if not verify_password(password, row["password_hash"]):
-            return None
-
-        if not _has_system(row.get("systems"), CD_SYSTEM):
-            # 密码正确但 systems 不含 "cd":明确提示无权限,而非误导为"账号或密码错误"
-            raise AppException(
-                "该账号无 CD 访问权限，请联系管理员",
-                status_code=403,
-                error_key="errors.no_cd_access",
-            )
-        return _create_session(conn, user)
-
-
 def revoke_session(db: Database, token: str) -> None:
     """吊销会话(logout):删除服务端会话行,token 立即失效.
     幂等:重复调用 / 无效 token 均不报错."""
@@ -464,71 +325,25 @@ def load_user_context(db: Database, username: str) -> dict:
     用于审批单 / 回滚后台执行时重建执行身份(无 token 场景).角色与权限同 get_current_user,
     执行时仍做部署权限二次校验(防御深度).账号已停用(status=0)抛 AppException(403):
     手动执行路径登录即被拦,后台 / 定时执行路径由此处拦截,保证停用账号的已批准定时单不会被执行.
-
-    OIDC 模式身份/权限来自 Glue(get_identity,与请求路径同源、同缓存、同 fail-closed 语义),
-    不再读共享 admin_users / roles / role_permissions;停用 / systems 不含 cd 一律 403
-    (本路径不删会话:下一次请求复核自会 401 清会话);local 模式保留直读.
+    身份 / 权限来自 Glue(get_identity,与请求路径同源、同缓存、同 fail-closed 语义);
+    停用 / systems 不含 cd 一律 403(本路径不删会话:下一次请求复核自会 401 清会话).
     """
     from backend.exceptions import AppException
 
-    if settings.auth_mode == "oidc":
-        ident = glue_identity.get_identity(username)
-        if _identity_disabled(ident):
-            raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
-        # 与请求路径 _oidc_identity 同判据(防御深度):Glue 侧 systems 去掉 cd 即拒绝执行,
-        # 不依赖下一次请求的兜底 401;此处不删会话,故用 403(措辞与 authenticate 同口径)
-        if not _has_system(ident.get("systems"), CD_SYSTEM):
-            raise AppException(
-                "该账号无 CD 访问权限，请联系管理员",
-                status_code=403,
-                error_key="errors.no_cd_access",
-            )
-        return {
-            "username": ident.get("username") or username,
-            "role": ident.get("role") or "",
-            "permissions": ident.get("permissions") or [],
-        }
-
-    with db.conn() as conn:
-        row = conn.execute("SELECT role, status FROM admin_users WHERE username=?", (username,)).fetchone()
-    # 停用账号检查(与 authenticate / _check_disabled 同口径):列不存在时默认 1 放行(兼容旧库)
-    try:
-        status = row["status"] if row else 1
-    except (KeyError, IndexError):
-        status = 1
-    if status is not None and int(status) == 0:
+    ident = glue_identity.get_identity(username)
+    if _identity_disabled(ident):
         raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
-    # 用户不存在(账号被删)或无角色 → 空权限,执行时权限校验会拒绝(deny-by-default),
-    # 不再回退到任何默认角色
-    role = (row["role"] if row else "") or ""
-    permissions = _query_permissions(db, role)
-    return {"username": username, "role": role, "permissions": permissions}
+    # 与请求路径 _oidc_identity 同判据(防御深度):Glue 侧 systems 去掉 cd 即拒绝执行,
+    # 不依赖下一次请求的兜底 401;此处不删会话,故用 403.
+    if not _has_system(ident.get("systems"), CD_SYSTEM):
+        raise AppException(
+            "该账号无 CD 访问权限，请联系管理员",
+            status_code=403,
+            error_key="errors.no_cd_access",
+        )
+    return {
+        "username": ident.get("username") or username,
+        "role": ident.get("role") or "",
+        "permissions": ident.get("permissions") or [],
+    }
 
-
-def _query_user_with_systems(conn, username: str, columns: str):
-    """查询用户行,优先读取 systems 列;列不存在时回退查询并默认放行.
-    使用模块级 _systems_col_ok 标志避免重复 SQL 错误."""
-    global _systems_col_ok
-    if _systems_col_ok:
-        try:
-            return conn.execute(
-                f"SELECT {columns} FROM admin_users WHERE username=?",  # nosec
-                (username,),
-            ).fetchone()
-        except Exception:
-            _systems_col_ok = False
-    # 回退:不查 systems/status 列,返回的行不含对应 key → 默认放行(兼容旧表)
-    fallback_cols = (
-        columns.replace(", systems", "")
-        .replace("systems, ", "")
-        .replace("systems", "")
-        .replace(", status", "")
-        .replace("status, ", "")
-        .replace("status", "")
-    )
-    if fallback_cols.strip():
-        return conn.execute(
-            f"SELECT {fallback_cols} FROM admin_users WHERE username=?",  # nosec
-            (username,),
-        ).fetchone()
-    return None

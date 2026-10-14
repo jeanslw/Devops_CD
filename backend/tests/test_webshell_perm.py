@@ -1,10 +1,9 @@
 """web 终端准入判据(_webshell_permitted)与独立鉴权路径(_ws_verify)单元测试.
 
-锁定两处修复(见 backend/routers/terminal.py):
-  1. '*' 通配 / super_admin 隐含全权 / cd.webshell 三者的放行口径与 require_perm / enforce_deploy_perm 一致
-     (local 分支原先不认 '*');
-  2. _ws_verify local 分支与 REST(verify_token)同口径:systems 不含 'cd' 的账号必须 401 --
-     WebShell 是独立鉴权路径,不能漏掉 _check_cd_access(原先只查 "username, status").
+锁定 backend/routers/terminal.py 两处口径:
+  1. '*' 通配 / super_admin 隐含全权 / cd.webshell 三者的放行口径与 require_perm / enforce_deploy_perm 一致;
+  2. _ws_verify 与 REST(verify_token)同口径:同一套"查 cd_sessions + Glue 复核",
+     身份复核判为无 CD 权限 / 不可用时必须 401,不能因为走 WebSocket 就放行.
 """
 
 import asyncio
@@ -13,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -25,6 +25,7 @@ settings.db_driver = "sqlite"
 
 from backend.auth import _hash_token  # noqa: E402
 from backend.database import Database  # noqa: E402
+from backend.exceptions import AppException  # noqa: E402
 from backend.routers.terminal import _webshell_permitted, _ws_verify  # noqa: E402
 
 from cd_contract import enable_cd  # noqa: E402
@@ -57,38 +58,20 @@ class TestWebshellPermitted(unittest.TestCase):
 
 
 class TestWebshellAdmission(unittest.TestCase):
-    """WebShell 独立鉴权路径(_ws_verify)必须与 REST 同口径:systems 校验 + 停用踢下线.
+    """WebShell 独立鉴权路径(_ws_verify)与 REST 同口径:同一套会话 + Glue 复核.
 
-    锁定 terminal.py 修复:local 分支原先只查 "username, status"、漏掉 _check_cd_access --
-    一个 systems 不含 'cd' 的账号仍可打开 WebShell(而 REST 会被 verify_token 拦下).
+    身份复核拒绝(无 CD 权限 / 账号停用 / Glue 不可用)一律 401,握手不会放行.
     """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self._tmp.name, "ws_admission.db")
-        self._saved_auth_mode = settings.auth_mode
         self._saved_db_path = settings.db_path
-        settings.auth_mode = "local"
         settings.db_path = self.db_path
         enable_cd(self.db_path)  # 契约 enabled=1 + auto:让闸门放行、cd_sessions 自动建出
         Database._tables_ensured = False
         db = Database(self.db_path)
         with db.conn() as conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS admin_users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username VARCHAR(64) UNIQUE,
-                    password_hash VARCHAR(255),
-                    role VARCHAR(32) DEFAULT '',
-                    systems VARCHAR(255) DEFAULT '',
-                    status INTEGER DEFAULT 1
-                )"""
-            )
-            # mallory:有会话但 systems 不含 'cd' -- REST 会 401,WebShell 也必须 401
-            conn.execute(
-                "INSERT INTO admin_users (username, password_hash, role, systems, status) VALUES (?,?,?,?,?)",
-                ("mallory", "", "deployer", "ci", 1),
-            )
             self.token = "ws-test-token"
             conn.execute(
                 "INSERT INTO cd_sessions (token_hash, username, expires_at) VALUES (?,?,?)",
@@ -96,20 +79,33 @@ class TestWebshellAdmission(unittest.TestCase):
             )
 
     def tearDown(self):
-        settings.auth_mode = self._saved_auth_mode
         settings.db_path = self._saved_db_path
         Database._tables_ensured = False
         self._tmp.cleanup()
 
     def test_verify_denies_user_without_cd_system(self):
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(_ws_verify(self.token))
+        """Glue 复核判为无 CD 权限(AppException 401)→ 握手期同样 401,不按"未知即放行"处理."""
+        denied = AppException("Access denied: CD system not authorized", status_code=401, error_key="errors.no_cd_access")
+        with patch("backend.routers.terminal._oidc_identity", side_effect=denied):
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(_ws_verify(self.token))
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_verify_allows_user_with_cd_system(self):
-        with Database(self.db_path).conn() as conn:
-            conn.execute("UPDATE admin_users SET systems='cd' WHERE username='mallory'")
-        self.assertEqual(asyncio.run(_ws_verify(self.token)), "mallory")
+        ident = {
+            "username": "mallory",
+            "role": "deployer",
+            "systems": "cd",
+            "status": 1,
+            "permissions": ["cd.webshell"],
+        }
+        with patch("backend.routers.terminal._oidc_identity", return_value=ident):
+            self.assertEqual(asyncio.run(_ws_verify(self.token)), "mallory")
+
+    def test_verify_rejects_unknown_token(self):
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(_ws_verify("no-such-token"))
+        self.assertEqual(ctx.exception.status_code, 401)
 
 
 if __name__ == "__main__":

@@ -134,7 +134,7 @@ ps aux | wc -l
 
 1. 左侧菜单进入「构建管理」。
 2. 列表展示 CI 项目及最新构建状态。
-3. 点击「触发构建」：选择分支/Tag，可选填写自定义构建变量，提交。
+3. 点击「触发构建」：选择分支/Tag（下拉按「分支」「标签 (Tag)」分组；分支与 Tag 可能重名，故分组区分），可选填写自定义构建变量，提交。若 CI/Git 连接异常或下拉为空，请检查 CI 连通性（`GET /api/ci/health`）。
 4. 构建出现在历史列表；点击日志图标查看实时控制台输出（从 CI API 流式获取）。
 
 ### 6.3 注意事项
@@ -223,7 +223,7 @@ cd_service/
 | GET | `/health` | — | 健康检查 |
 | GET | `/api/info` | — | 公开信息（版本、DB 类型/状态、运行时间） |
 | GET | `/metrics` | — | Prometheus 指标（运行时长、版本、各状态部署计数；仅聚合格） |
-| POST | `/api/login` | — | 登录 → 不透明会话 Token + `cd_token` HttpOnly cookie（失败 5 次锁定 15 分钟） |
+| GET | `/api/auth/oidc/start` | — | 发起 Devops-Glue 单点登录（302 到 Glue 授权页） |
 | POST | `/api/logout` | ✅ | 吊销当前会话（立即失效，幂等）并清除 cookie |
 | GET | `/api/me` | ✅ | 当前用户信息 |
 | **项目与标签** | | | |
@@ -240,7 +240,8 @@ cd_service/
 | POST | `/api/ci/projects/{pid}/builds/{bid}/retry` | 🔑 | 重试构建（`ci.trigger`） |
 | POST | `/api/ci/projects/{pid}/builds/{bid}/cancel` | 🔑 | 取消构建（`ci.trigger`） |
 | GET | `/api/ci/projects/{pid}/variables` | 🔑 | CI 项目构建变量 |
-| GET | `/api/ci/projects/{pid}/branches` | 🔑 | 仓库分支/Tag 列表 |
+| GET | `/api/ci/projects/{pid}/branches` | 🔑 | 仓库分支列表（仅分支；保留兼容 / 回退用） |
+| GET | `/api/ci/projects/{pid}/refs` | 🔑 | ref 候选值：分支 + Tag（返回 `branches` 与 `tags` 两个数组；老 Glue 回退时 tags 为空） |
 | GET | `/api/ci/health` | 🔑 | CI API 连通性检查 |
 | **服务器** | | | |
 | GET | `/api/servers` | ✅ | 服务器列表 |

@@ -1068,71 +1068,9 @@ class TestResolveTargetEnvs(ApprovalFlowTestCase):
 # ─────────────────────────────────────────────────────────────
 # 规则写入校验(悬空审批角色/审批人阻断)
 # ─────────────────────────────────────────────────────────────
-class TestValidateRule(ApprovalFlowTestCase):
-    def setUp(self):
-        super().setUp()
-        # 直读共享表的本地校验路径:固定 local 模式(OIDC 模式走 Glue API,见 TestValidateRuleOidc)
-        self._auth_mode_patch = patch.object(settings, "auth_mode", "local")
-        self._auth_mode_patch.start()
-        self.addCleanup(self._auth_mode_patch.stop)
-        # 测试用最小共享表副本(真实 schema 由 Glue 管理)
-        with self.db.conn() as conn:
-            conn.execute("CREATE TABLE roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)")
-            conn.execute("CREATE TABLE admin_users (username TEXT PRIMARY KEY, role TEXT, systems TEXT, status TEXT)")
-            conn.execute("INSERT INTO roles (name) VALUES ('cd_ops')")
-            conn.execute(
-                "INSERT INTO admin_users (username, role, systems, status) VALUES ('bob','cd_ops','ci,cd','active')"
-            )
 
-    @staticmethod
-    def _req(**kw):
-        from backend.routers.approvals import ApprovalRuleRequest
-
-        return ApprovalRuleRequest(**kw)
-
-    def test_dangling_role_rejected(self):
-        from backend.routers.approvals import _validate_rule
-
-        with self.assertRaises(ValidationError) as ctx:
-            _validate_rule(self.db, "proj-a", self._req(approver_role="ghost"))
-        self.assertEqual(ctx.exception.error_key, "errors.rule_role_not_found")
-
-    def test_missing_approver_rejected(self):
-        from backend.routers.approvals import _validate_rule
-
-        with self.assertRaises(ValidationError) as ctx:
-            _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="bob,ghost"))
-        self.assertEqual(ctx.exception.error_key, "errors.rule_approver_not_found")
-
-    def test_valid_rule_passes_and_normalizes(self):
-        from backend.routers.approvals import _validate_rule, upsert_rule
-
-        # 前后空格被规范化(校验与写库同一口径)
-        _validate_rule(self.db, " proj-a ", self._req(approver_role=" cd_ops ", approvers=" Bob "))
-        upsert_rule("proj-a", self._req(approver_role="cd_ops", approvers="bob"), db=self.db)
-        with self.db.conn() as conn:
-            row = conn.execute(
-                "SELECT project, approver_role, approvers FROM cd_approval_rules WHERE project=?", ("proj-a",)
-            ).fetchone()
-        self.assertEqual(row["project"], "proj-a")
-        self.assertEqual(row["approver_role"], "cd_ops")
-        self.assertEqual(row["approvers"], "bob")
-
-    def test_empty_project_rejected(self):
-        from backend.routers.approvals import _validate_rule
-
-        with self.assertRaises(ValidationError):
-            _validate_rule(self.db, "  ", self._req())
-
-
-class TestValidateRuleOidc(ApprovalFlowTestCase):
-    """OIDC 模式:规则校验走 Glue RBAC 只读接口,不直读共享 roles / admin_users 表."""
-
-    def setUp(self):
-        super().setUp()
-        self._auth_mode_patch = patch.object(settings, "auth_mode", "oidc")
-        self._auth_mode_patch.start()
-        self.addCleanup(self._auth_mode_patch.stop)
+class TestValidateRuleGlue(ApprovalFlowTestCase):
+    """规则校验走 Glue RBAC 只读接口,不直读共享 roles / admin_users 表(签名也不再需要 db)."""
 
     @staticmethod
     def _req(**kw):
@@ -1152,7 +1090,7 @@ class TestValidateRuleOidc(ApprovalFlowTestCase):
 
         with patch("backend.routers.approvals.get_ci_client", return_value=Fake()):
             with self.assertRaises(ValidationError) as ctx:
-                _validate_rule(self.db, "proj-a", self._req(approver_role="ghost"))
+                _validate_rule("proj-a", self._req(approver_role="ghost"))
         self.assertEqual(ctx.exception.error_key, "errors.rule_role_not_found")
 
     def test_missing_approver_rejected_via_glue(self):
@@ -1167,7 +1105,7 @@ class TestValidateRuleOidc(ApprovalFlowTestCase):
 
         with patch("backend.routers.approvals.get_ci_client", return_value=Fake()):
             with self.assertRaises(ValidationError) as ctx:
-                _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="bob,ghost"))
+                _validate_rule("proj-a", self._req(approver_role="cd_ops", approvers="bob,ghost"))
         self.assertEqual(ctx.exception.error_key, "errors.rule_approver_not_found")
 
     def test_valid_rule_passes_via_glue(self):
@@ -1181,8 +1119,8 @@ class TestValidateRuleOidc(ApprovalFlowTestCase):
                 return [{"username": "bob"}]
 
         with patch("backend.routers.approvals.get_ci_client", return_value=Fake()):
-            # 不抛异常即通过(用户名大小写不敏感,与 local 同口径)
-            _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="Bob"))
+            # 不抛异常即通过(用户名大小写不敏感)
+            _validate_rule("proj-a", self._req(approver_role="cd_ops", approvers="Bob"))
 
     def test_glue_unavailable_skips_validation(self):
         from backend.routers.approvals import _validate_rule
@@ -1196,7 +1134,7 @@ class TestValidateRuleOidc(ApprovalFlowTestCase):
 
         with patch("backend.routers.approvals.get_ci_client", return_value=Down()):
             # fail-open:Glue 不可达时跳过校验,不阻断规则写入
-            _validate_rule(self.db, "proj-a", self._req(approver_role="ghost", approvers="ghost-user"))
+            _validate_rule("proj-a", self._req(approver_role="ghost", approvers="ghost-user"))
 
     def test_empty_lists_are_authoritative_not_fail_open(self):
         from backend.routers.approvals import _validate_rule
@@ -1211,10 +1149,10 @@ class TestValidateRuleOidc(ApprovalFlowTestCase):
         with patch("backend.routers.approvals.get_ci_client", return_value=Empty()):
             # Glue 可达但返回空列表 = 权威空(fail-open 只针对不可达):悬空引用照常被拒
             with self.assertRaises(ValidationError) as ctx:
-                _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops"))
+                _validate_rule("proj-a", self._req(approver_role="cd_ops"))
             self.assertEqual(ctx.exception.error_key, "errors.rule_role_not_found")
             with self.assertRaises(ValidationError) as ctx2:
-                _validate_rule(self.db, "proj-a", self._req(approvers="bob"))
+                _validate_rule("proj-a", self._req(approvers="bob"))
             self.assertEqual(ctx2.exception.error_key, "errors.rule_approver_not_found")
 
     def test_null_username_row_does_not_break_check(self):
@@ -1229,17 +1167,11 @@ class TestValidateRuleOidc(ApprovalFlowTestCase):
 
         with patch("backend.routers.approvals.get_ci_client", return_value=Dirty()):
             # 一行 username 为 null 的脏数据既不能让校验 500,也不能让 bob 被误判为不存在
-            _validate_rule(self.db, "proj-a", self._req(approver_role="cd_ops", approvers="bob"))
+            _validate_rule("proj-a", self._req(approver_role="cd_ops", approvers="bob"))
 
 
-class TestLoadUserContextOidc(ApprovalFlowTestCase):
-    """OIDC 模式:执行上下文重建走 Glue 身份源,不读共享 admin_users / roles / role_permissions."""
-
-    def setUp(self):
-        super().setUp()
-        self._auth_mode_patch = patch.object(settings, "auth_mode", "oidc")
-        self._auth_mode_patch.start()
-        self.addCleanup(self._auth_mode_patch.stop)
+class TestLoadUserContextGlue(ApprovalFlowTestCase):
+    """执行上下文重建走 Glue 身份源,不读共享 admin_users / roles / role_permissions."""
 
     def test_load_user_context_from_glue_identity(self):
         from backend.auth import load_user_context
@@ -1320,23 +1252,6 @@ class TestCancelNotify(ApprovalFlowTestCase):
         mk_notify.assert_called_once()
         self.assertEqual(mk_notify.call_args.args[1], 7)
         self.assertIn("alice", mk_notify.call_args.args[2])
-
-
-class TestRuleWriteWithoutSharedTables(ApprovalFlowTestCase):
-    """local 模式下共享表不可达(测试临时库)时校验优雅跳过,规则写入不被阻断."""
-
-    def setUp(self):
-        super().setUp()
-        # 该用例验证的是 local 直读共享表路径的表缺失 → 跳过(OIDC 模式走 Glue API,见 TestValidateRuleOidc)
-        self._auth_mode_patch = patch.object(settings, "auth_mode", "local")
-        self._auth_mode_patch.start()
-        self.addCleanup(self._auth_mode_patch.stop)
-
-    def test_rule_write_succeeds_without_shared_tables(self):
-        from backend.routers.approvals import ApprovalRuleRequest, upsert_rule
-
-        res = upsert_rule("proj-a", ApprovalRuleRequest(approver_role="ghost", approvers="ghost-user"), db=self.db)
-        self.assertTrue(res["success"])
 
 
 # ─────────────────────────────────────────────────────────────

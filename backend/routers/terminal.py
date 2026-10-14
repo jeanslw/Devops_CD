@@ -12,13 +12,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, W
 
 from backend.auth import (
     WILDCARD_PERM,
-    _check_cd_access,
-    _check_disabled,
     _delete_session,
     _lookup_session,
     _oidc_identity,
-    _query_permissions,
-    _query_user_with_systems,
     cd_deploy_gate,
     get_db,
     require_perm,
@@ -91,22 +87,12 @@ async def _ws_verify(token: str | None = None) -> str:
         if time.time() > sess["expires_at"]:
             _delete_session(conn, token)
             raise HTTPException(401, "token 已过期，请重新登录")
-        if settings.auth_mode == "oidc":
-            # OIDC 模式:只校验 cd_sessions + 惰性复核 Glue;切档后 WS 握手仍会读共享 admin_users,
-            # 异常转换同上,401/503 都是 fail-closed.
-            try:
-                ident = _oidc_identity(db, token, sess["username"])
-            except AppException as exc:
-                raise HTTPException(exc.status_code, exc.message) from exc
-            return ident["username"]
-        row = _query_user_with_systems(conn, sess["username"], "username, systems, status")
-        if row is None:
-            raise HTTPException(401, "token 无效")
-        # WebSocket(WebShell)是独立鉴权路径,必须与 REST(verify_token)同口径:
-        # systems 是否允许 CD 访问 + 停用账号即时踢下线
-        _check_cd_access(row)
-        _check_disabled(row)
-        return row["username"]
+    # 会话校验 + 惰性 Glue 复核(停用 / systems 不含 cd 即删会话);异常转换同上,401/503 都是 fail-closed.
+    try:
+        ident = _oidc_identity(db, token, sess["username"])
+    except AppException as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+    return ident["username"]
 
 
 @router.websocket("/ws/terminal/{server_id}")
@@ -123,25 +109,16 @@ async def terminal(websocket: WebSocket, server_id: int):
 
     # 权限检查:需要 cd.webshell(判据与 require_perm / enforce_deploy_perm 同口径)
     db = get_db()
-    if settings.auth_mode == "oidc":
-        # OIDC 模式:权限来自 Glue(复用 _ws_verify 刚建好的身份缓存,窗口内零调用)
-        try:
-            ident = glue_identity.get_identity(username)
-        except AppException:
-            # 身份/权限不可用(角色悬空,Glue 长时间不可达):拒绝握手,不按"无权限但放行"处理
-            await websocket.close(code=4003, reason="权限校验不可用")
-            return
-        if not _webshell_permitted(ident.get("role") or "", ident.get("permissions") or []):
-            await websocket.close(code=4003, reason="权限不足")
-            return
-    else:
-        with db.conn() as conn:
-            row = conn.execute("SELECT role FROM admin_users WHERE username=?", (username,)).fetchone()
-        # 用户不存在 / 无角色 / 权限不足一律拒绝(fail-closed):与 require_perm 的 deny-by-default 同口径
-        role = (row["role"] if row else "") or ""
-        if not _webshell_permitted(role, _query_permissions(db, role)):
-            await websocket.close(code=4003, reason="权限不足")
-            return
+    # 权限来自 Glue(复用 _ws_verify 刚建好的身份缓存,窗口内零调用)
+    try:
+        ident = glue_identity.get_identity(username)
+    except AppException:
+        # 身份/权限不可用(角色悬空,Glue 长时间不可达):拒绝握手,不按"无权限但放行"处理
+        await websocket.close(code=4003, reason="权限校验不可用")
+        return
+    if not _webshell_permitted(ident.get("role") or "", ident.get("permissions") or []):
+        await websocket.close(code=4003, reason="权限不足")
+        return
 
     await websocket.accept()
 

@@ -42,17 +42,12 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
 
     # ── 认证访问控制 ──
-    # admin_users.systems 为空时是否放行 CD 访问:true(默认)兼容历史数据,
-    # 严格环境设 false 即 deny-by-default(空 systems 无 CD 权限).
+    # 身份 systems 为空时是否放行 CD 访问:true(默认)兼容历史数据,false 即 deny-by-default.
     allow_empty_systems: bool = True
 
-    # ── 认证模式:唯一总开关──
-    # oidc(默认)= Devops-Glue 单点登录(BFF 机密客户端):身份 / 权限经 Glue HTTP API
-    #             获取,请求路径不读共享表.
-    # local = 本地密码登录 + 每请求直读共享表(admin_users / roles / role_permissions).
-    # 切档 / 回退 = 改这一行 + 重启(无需回滚镜像与 DDL).oidc 必填项缺失时启动日志记
-    # ERROR,登录页点 SSO 提示缺哪些(见 oidc_missing_settings / §6.2).
-    auth_mode: str = "oidc"  # oidc | local(白名单校验,见下方 validator)
+    # ── OIDC 登录(Devops-Glue 单点登录,唯一登录方式)──
+    # 必填项缺失时启动日志记 ERROR,compose 预检中止启动,登录页点 SSO 提示缺哪些
+    # (见 oidc_missing_settings).
     # Glue 对外地址,须与其 discovery 的 issuer 完全一致(不一致即拒绝登录并打印两侧取值).
     oidc_issuer: str = ""
     # OAuth 客户端标识:Glue oauth_clients['cd'] 的键名,v1 固定为 cd.
@@ -91,20 +86,7 @@ class Settings(BaseSettings):
                 return v[len(prefix) :]
         return v
 
-    # ── 认证模式校验与自检──
-
-    @field_validator("auth_mode", mode="after")
-    @classmethod
-    def _validate_auth_mode(cls, v: str) -> str:
-        """AUTH_MODE 白名单校验:拼错的模式名立刻报错,不静默退化成 local --
-        静默退化比启动失败危险(运维以为切到了 SSO,实际每个请求仍在读共享表).
-        带空格的写法('oidc ')按可用处理,故先 strip + lower;空值按未配置落回
-        默认 oidc(compose 透传 ${AUTH_MODE:-oidc},根 .env 写空亦然).
-        """
-        mode = (v or "").strip().lower() or "oidc"
-        if mode not in ("local", "oidc"):
-            raise ValueError(f"AUTH_MODE 只支持 local / oidc，当前为 {v!r} / AUTH_MODE must be local or oidc")
-        return mode
+    # ── OIDC 自检──
 
     @field_validator("oidc_issuer", mode="after")
     @classmethod
@@ -124,13 +106,11 @@ class Settings(BaseSettings):
         return missing
 
     def oidc_ready(self) -> bool:
-        """AUTH_MODE=oidc 时三项必填是否齐备.
+        """三项必填(OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI)是否齐备.
 
-        local 恒为 True(这些项与它无关).oidc 缺任一项即 False:compose 的 env-check
-        据此中止启动,应用侧记 ERROR(半配的 OIDC 会用公开默认密钥带病运行).
+        缺任一项即 False:compose 的 env-check 据此中止启动,应用侧记 ERROR(半配的 OIDC
+        会用公开默认密钥带病运行).
         """
-        if self.auth_mode != "oidc":
-            return True
         return not self.oidc_missing_settings()
 
     # ── 服务(可选)──
@@ -142,8 +122,8 @@ class Settings(BaseSettings):
     # 等反代之后设 1(多层按实际层数增大),登录失败锁定据此取真实 IP(与 CI 共享计数).
     trusted_proxy_hops: int = 0
 
-    # ── 角色(仅用于登录身份的角色判断;具体权限以 roles / permissions / role_permissions 表为准)──
-    # 超级管理员角色名:隐含全部权限.
+    # ── 角色 ──
+    # 超级管理员角色名:隐含全部权限(权限经 Glue API 读取).
     super_admin_role: str = "super_admin"
 
     # ── SSH(可选)──
@@ -184,7 +164,34 @@ class Settings(BaseSettings):
     ci_admin_pass: str = ""
     # API token(dg_ 前缀,服务账号 / 第三方调用),配置后优先于账号密码登录
     ci_api_token: str = ""
+    # CI→CD 入站静态 token:校验 /api/integration/deploy-logs 的 Bearer,留空即该端点拒绝所有请求
+    cd_api_token: str = ""
     ci_timeout: int = 30
+    # 集成服务契约(CD 启用状态 / provision)只经 Glue 的窄只读端点
+    # GET /api/integration/services/{service} 读取,CD 不读共享库的任何 CI 表 --
+    # 契约仍归 CI 写入,消费方只读一个 HTTP 接口,Glue 改库结构 / 将来拆库独立部署都不影响 CD.
+    # 端点问不到(Glue 版本过旧 404/405、网络或鉴权失败、CI_API_URL/CI_API_TOKEN 未配置)按
+    # "库不可用"处理(503 fail-closed),见 backend/database.py 顶部注释.
+    # 契约读的缓存窗口(秒):窗口内复用上次结果 -- CD 每请求都过闸门,不能每请求都打一次 Glue;
+    # 0 = 每次请求都问. CI 后台改开关后,CD 最迟一个窗口(默认 30s)后生效.
+    # 想立刻复核(排障 / 改完开关马上生效)见 database.invalidate_contract_cache().
+    ci_contract_ttl: int = 30
+
+    # ── 出站地址族优先级(可选)──
+    # ipv4(默认)= IPv4 候选排最前,失败回退 IPv6;ipv6 = 反过来;auto = 不重排(getaddrinfo 系统顺序).
+    # 覆盖进程内所有经 socket 解析的出站连接(requests/urllib3、http.client、SSH),见 backend/net.py.
+    http_ip_family: str = "ipv4"
+
+    @field_validator("http_ip_family", mode="after")
+    @classmethod
+    def _validate_ip_family(cls, v: str) -> str:
+        """HTTP_IP_FAMILY 白名单校验:忽略大小写与首尾空格,取值非法即报错."""
+        family = (v or "").strip().lower() or "ipv4"
+        if family not in ("ipv4", "ipv6", "auto"):
+            raise ValueError(
+                f"HTTP_IP_FAMILY 只支持 ipv4 / ipv6 / auto，当前为 {v!r} / must be ipv4, ipv6 or auto"
+            )
+        return family
 
     # ── 监控(可选)──
     monitoring_enabled: bool = True

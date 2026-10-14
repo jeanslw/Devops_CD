@@ -225,7 +225,11 @@ def exchange_code(code: str) -> dict:
         "scope": settings.oidc_scopes,
     }
     try:
-        resp = requests.post(
+        # 复用模块级会话:同一连接池内第二次起不再握手。注意登录是低频操作(discovery /
+        # JWKS 已缓存 1h,一次登录只有 1 次 token POST),本改动边际收益有限 —— 真正把 token
+        # 兑换从 ~2.2s 压到 ~0.13s 的是 net.py 的 IPv4 优先:首个尝试即落在正在监听的
+        # 127.0.0.1 上,不必先撞那个注定被拒、且本机要白等约 2s 的 ::1.
+        resp = _session.post(
             endpoint,
             data=body,
             auth=(settings.oidc_client_id, settings.oidc_client_secret),

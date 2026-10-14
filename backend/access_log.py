@@ -67,3 +67,36 @@ def install_access_log_filter(logger_name: str = "uvicorn.access") -> None:
     logger = logging.getLogger(logger_name)
     if not any(isinstance(f, MaskCredentialQueryFilter) for f in logger.filters):
         logger.addFilter(MaskCredentialQueryFilter())
+
+
+class SuppressTracebackFilter(logging.Filter):
+    """清掉 exc_info,把异常消息(type: message)拼到 record.msg 末尾,去掉 Traceback 帧."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - logging.Filter 约定名
+        if record.exc_info:
+            exc = record.exc_info[1]
+            if exc is not None:
+                try:
+                    msg = record.getMessage()
+                except Exception:
+                    msg = ""
+                record.msg = f"{msg}: {type(exc).__name__}: {exc}" if msg else f"{type(exc).__name__}: {exc}"
+                record.args = None
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
+def install_console_log_filter() -> None:
+    """幂等安装:filter 挂到根 / uvicorn / uvicorn.error logger 与 lastResort handler.
+
+    uvicorn 与 Starlette 直接记到 uvicorn.error;应用(backend.* / main)logger 无 handler,
+    经根 logger 落到 lastResort(uvicorn 的 LOGGING_CONFIG 不配 root),都挂上.
+    """
+    for name in ("", "uvicorn", "uvicorn.error"):
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, SuppressTracebackFilter) for f in logger.filters):
+            logger.addFilter(SuppressTracebackFilter())
+    last_resort = logging.lastResort
+    if last_resort is not None and not any(isinstance(f, SuppressTracebackFilter) for f in last_resort.filters):
+        last_resort.addFilter(SuppressTracebackFilter())

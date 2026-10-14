@@ -53,7 +53,6 @@
 		│ Shared Database (SQLite / MySQL / MariaDB)  │
 		│                                             │
 		│  ci_pipeline_artifacts ← CI write           │
-		│  v_glue_deploy_logs    ← CI read-only view  │
 		│  cd_servers            ←  CD maintain       │
 		│  cd_deploy_logs        ← CD write           │
 		│  cd_approvals(_rules)  ←  CD write          │
@@ -71,6 +70,8 @@
 ```
 
 > **Data ownership**: besides the shared tables above, CD maintains its own `cd_*` tables (webhooks, monitors, alerts, registry cache, config, sessions, approvals). CI-specific build data (pipelines, mappings, build records) is fetched from CI over its HTTP API — CD does not read other `ci_*` tables directly.
+>
+> **Ref candidates on the build page** also come from a Glue HTTP endpoint: `GET /api/git/{path}/refs` returns branches + tags in one call (`/api/build/{path}/branches` only returns branches). CD proxies it as `GET /api/ci/projects/{pid}/refs` and the build page renders two `<optgroup>`s (a branch and a tag can share a name). On an older Glue without that route the client falls back to `/branches`, so tags come back empty.
 
 **Database Selection**: PHP CI and CD Service must use the same database instance.
 - **SQLite**: Zero-config, suitable for single-host dev/test. Container deployments must mount a shared volume so both processes can access the same `.db` file.
@@ -102,10 +103,14 @@ Whether "CD is enabled" is decided by **Devops-Glue's integration-service contra
 | Contract row state | What CD does | Gate |
 |--------------------|--------------|------|
 | table / row missing, or `enabled<>1` | zero DDL | 503 `errors.cd_not_enabled` (enable it in the CI console under "Integrated Services") |
-| `enabled=1` + `provision='auto'` | on first connect: create every listed table + add missing columns + indexes + the contract view (MySQL and SQLite alike) | incomplete => 503 `errors.cd_not_deployed` (restart CD to self-heal) |
+| `enabled=1` + `provision='auto'` | on first connect: create every listed table + add missing columns + indexes (MySQL and SQLite alike) | incomplete => 503 `errors.cd_not_deployed` (restart CD to self-heal) |
 | `enabled=1` + `provision='manual'` | zero DDL (schema owned by the DBA: MySQL imports `database/init_mysql.sql`) | missing table => 503 `errors.cd_not_deployed` (import the DDL script) |
 
 Disabling the integration service only freezes admission: the CD tables and their data stay as they are — never `DROP`ped. The gate covers login, every request carrying a session, the public webhook receiver and the WebShell handshake.
+
+**How the contract is read**: the only channel is Glue's narrow read-only endpoint `GET /api/integration/services/cd` (the existing service token's `build.read` scope is enough). When it cannot be reached (older Glue → 404/405, network/auth failure, `CI_API_URL` unset), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — it never reads the shared `integrated_services` table and never treats it as "not enabled". The HTTP channel is cached for a window (`CI_CONTRACT_TTL`, 30s by default; `0` = ask every request), so a switch flipped in the CI console takes effect within one window. CD is therefore no longer tied to Glue's database shape (table, columns, driver), which also keeps the gate working if the two ever run on separate databases.
+
+The CI→CD deployment-log direction mirrors the contract read: CI pulls deployment records over the read-only HTTP endpoint `GET /api/integration/deploy-logs` (inbound static token `CD_API_TOKEN` + Bearer; 10 columns + filters + pagination, availability via status codes). The shared `v_glue_deploy_logs` view is removed.
 
 **Adding or removing a CD table touches four places** (gate verdict, error texts, startup warning and counts all follow automatically — nothing is hard-coded):
 
@@ -124,7 +129,7 @@ Inventory drift is guarded four ways: `backend/tests/test_cd_schema_sources.py` 
 - **`manual`**: CD issues zero DDL (not even ALTER); MySQL is imported by an administrator from `database/init_mysql.sql`, SQLite is completed by an operator (or CI is switched back to auto-migrate and CD re-enabled).
 - **Hints tell the truth per `provision`**: `cd_deploy_hint(driver, provision)` and `cd_not_enabled_hint()` (see `backend/database.py`) are the only outlets, so operators are never sent to the wrong fix. For "not enabled" the **user-visible notice is a single sentence** (the `errors.cd_not_enabled` i18n string — login box and toast share one path, `error_key` → i18n: neither appends extra text, both follow the UI language) — the action detail travels in `detail.hint` and the startup log.
 
-- **Database unavailable ≠ not enabled / not deployed**: cannot connect, cannot create tables (DB file read-only / disk full / locked), cannot get a connection => `DatabaseUnavailableError` => 503 `errors.db_unavailable` (`driver` / `reason` travel in `error_params`; check connectivity, configuration, permissions, disk). Only "not enabled" is `errors.cd_not_enabled` (go flip the switch) and only an incomplete inventory is `errors.cd_not_deployed` (go complete the tables). All are 503 but with different error keys and different actions — mixing them points operators the wrong way.
+- **Contract unreachable / database unavailable ≠ not enabled / not deployed**: contract endpoint unreachable => `ContractUnavailableError` => 503 `errors.ci_contract_unreachable` (`reason` travels in `error_params`; check Glue / `CI_API_URL` / the CI API token); cannot connect, cannot create tables (DB file read-only / disk full / locked), cannot get a connection => `DatabaseUnavailableError` => 503 `errors.db_unavailable` (`driver` / `reason` travel in `error_params`; check connectivity, configuration, permissions, disk). Only "not enabled" is `errors.cd_not_enabled` (go flip the switch) and only an incomplete inventory is `errors.cd_not_deployed` (go complete the tables). All are 503 but with different error keys and different actions — mixing them points operators the wrong way.
 
 ## Problem Statement
 

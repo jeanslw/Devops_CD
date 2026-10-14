@@ -28,7 +28,7 @@ class RejectRequest(BaseModel):
 class ApprovalRuleRequest(BaseModel):
     enabled: bool = False
     require_envs: str = ""  # 逗号分隔环境标签,空 = 所有环境需审批
-    approver_role: str = ""  # 审批角色(须存在于 Glue RBAC;local 档查共享 roles 表);空 = 仅按 approvers 审批
+    approver_role: str = ""  # 审批角色(须存在于 Glue RBAC);空 = 仅按 approvers 审批
     approvers: str = ""  # 逗号分隔显式审批人用户名(优先于 approver_role)
     notify_bot_id: int = 0
     require_rollback_approval: bool = True
@@ -266,14 +266,12 @@ def list_rules(db: Database = Depends(get_db), _user: dict = Depends(require_per
     return {"items": [dict(r) for r in rows]}
 
 
-def _validate_rule(db, project: str, req: ApprovalRuleRequest) -> None:
+def _validate_rule(project: str, req: ApprovalRuleRequest) -> None:
     """审批规则写入前校验,防止悬空引用导致审批判定静默失效.
 
     - project 非空且不超过列宽(VARCHAR(255),'*' 表示全局默认);
-    - approver_role 必须存在(OIDC 模式查 Glue /api/rbac/roles,local 模式查共享 roles 表;
-      悬空角色会让角色匹配永不命中且无告警);
-    - approvers 用户名必须存在(OIDC 模式查 Glue /api/rbac/users,local 模式查共享 admin_users 表;
-      上游不可达时跳过该项校验).
+    - approver_role 必须存在(查 Glue /api/rbac/roles;悬空角色会让角色匹配永不命中且无告警);
+    - approvers 用户名必须存在(查 Glue /api/rbac/users;上游不可达时跳过该项校验).
     """
     project = (project or "").strip()
     if not project:
@@ -287,49 +285,11 @@ def _validate_rule(db, project: str, req: ApprovalRuleRequest) -> None:
     if len(",".join(approvers)) > 1024:
         raise ValidationError("approvers 过长（最大 1024）", error_key="errors.deploy_validation")
     approver_role = (req.approver_role or "").strip()
-    if settings.auth_mode == "oidc":
-        _validate_rule_via_glue(approver_role, approvers)
-    else:
-        _validate_rule_local(db, approver_role, approvers)
-
-
-def _validate_rule_local(db, approver_role: str, approvers: list[str]) -> None:
-    """local 模式:直读共享 roles / admin_users 表校验引用(表不可达时跳过,不阻断写入)."""
-    if approver_role:
-        with db.conn() as conn:
-            try:
-                row = conn.execute("SELECT 1 FROM roles WHERE name=?", (approver_role,)).fetchone()
-            except Exception as e:
-                # 共享 roles 表不可达(schema 由 Glue 管理)时跳过校验,不阻断规则写入
-                logger.warning("roles table check skipped: %s", e)
-                row = True
-        if not row:
-            raise ValidationError(
-                f"审批角色 {approver_role} 不存在，请先在 CI 中创建该角色",
-                error_key="errors.rule_role_not_found",
-            )
-    if approvers:
-        with db.conn() as conn:
-            ph = ",".join("?" * len(approvers))
-            try:
-                rows = conn.execute(
-                    f"SELECT username FROM admin_users WHERE LOWER(username) IN ({ph})",  # nosec
-                    [a.lower() for a in approvers],
-                ).fetchall()
-            except Exception as e:
-                # 共享 admin_users 表不可达(schema 由 Glue 管理)时跳过校验,不阻断规则写入
-                logger.warning("admin_users check skipped: %s", e)
-                rows = None
-        if rows is not None:
-            # username 列可能为 NULL(脏数据):按空串落集合,避免一行脏数据把校验打成 500
-            found = {(r["username"] or "").lower() for r in rows}
-            missing = [a for a in approvers if a.lower() not in found]
-            if missing:
-                raise ValidationError(f"审批人不存在: {', '.join(missing)}", error_key="errors.rule_approver_not_found")
+    _validate_rule_via_glue(approver_role, approvers)
 
 
 def _glue_read(call, label: str):
-    """调 Glue RBAC 只读接口;不可达 / 未配置时返回 None(调用方据此跳过该项校验,fail-open 同 local 口径).
+    """调 Glue RBAC 只读接口;不可达 / 未配置时返回 None(调用方据此跳过该项校验).
 
     注意异常只包住**调用本身**:调用方对返回值的判定(ValidationError)必须原样抛出,
     不能被这里吞成"跳过校验".
@@ -342,10 +302,10 @@ def _glue_read(call, label: str):
 
 
 def _validate_rule_via_glue(approver_role: str, approvers: list[str]) -> None:
-    """OIDC 模式:经 Glue RBAC 只读接口校验引用,不直读共享表(解耦过渡期).
+    """经 Glue RBAC 只读接口校验引用,不直读共享表.
 
-    Glue 不可达 / 未配置时跳过校验(与 local 模式"表不可达即跳过"同口径 fail-open):
-    悬空引用只会让审批"无人能批"而卡死部署,不构成越权;阻断规则写入的代价更高.
+    Glue 不可达 / 未配置时跳过校验(fail-open):悬空引用只会让审批"无人能批"而卡死部署,
+    不构成越权;阻断规则写入的代价更高.
     但"Glue 可达且返回空列表"是**权威空**,悬空引用照常拒绝 —— fail-open 只针对不可达.
     """
     if approver_role:
@@ -375,7 +335,7 @@ def upsert_rule(
     _user: dict = Depends(require_perm("cd.deploy.approve")),
 ):
     """按项目 upsert 审批规则.project 为 '*' 表示全局默认规则."""
-    _validate_rule(db, project, req)
+    _validate_rule(project, req)
     project = (project or "").strip()
     approver_role = (req.approver_role or "").strip()
     approvers = ",".join(a.strip() for a in (req.approvers or "").split(",") if a.strip())

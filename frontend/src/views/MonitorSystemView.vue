@@ -16,10 +16,10 @@
               <td>{{ s.host }}:{{ s.port }}</td>
               <td>{{ typeLabel(s) }}</td>
               <td v-html="capHtml(s)"></td>
-              <td><span class="badge" :class="s.status==='available'?'badge-ok':s.status==='unavailable'?'badge-pend':'badge-err'">{{ s.status === 'available' ? $t('monitor.available') : s.status === 'unavailable' ? $t('monitor.unavailable') : $t('monitor.error') }}</span></td>
+              <td><span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span></td>
               <td>
                 <button v-if="s.status==='available'||s.status==='unavailable'" class="btn btn-blue btn-sm" @click="viewDetail(s.id)">{{ $t('monitor.viewSys') }}</button>
-                <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ $t('monitor.unavailable') }}</button>
+                <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ s.status === 'unknown' ? $t('monitor.checking') : $t('monitor.unavailable') }}</button>
               </td>
             </tr>
           </tbody>
@@ -86,6 +86,8 @@ const detailError = ref('')
 const detail = ref(null)
 
 const TYPE_LABELS = { k8s: '☸️ K8S', docker: '🐳 Docker', ssh: '🖥️ Linux' }
+// 单台探测的并发上限:列表一次拉回后并行探测,避免同时开太多 SSH
+const PROBE_CONCURRENCY = 4
 
 const memColor = computed(() => {
   const p = parseFloat(detail.value?.memory_percent) || 0
@@ -101,9 +103,24 @@ function fmtUptime(secs) {
 }
 
 function capHtml(s) {
+  if (s.status === 'unknown') return `<span style="color:#888;font-size:12px">${t('monitor.checking')}</span>`
   if (s.status === 'error') return `<span style="color:#e57373;font-size:12px">${t('monitor.connectionFailed')}</span>`
   if (s.status === 'unavailable') return `<span style="color:#ffab40;font-size:12px">${t('monitor.baseCmdMissing')}</span>`
   return `<span style="color:#81c784;font-size:12px">${t('monitor.sshOk')}</span>`
+}
+
+// 状态 → 文案/徽章样式:'unknown' 表示尚未探测(列表只读库,不等 SSH)
+function statusText(s) {
+  if (s.status === 'available') return t('monitor.available')
+  if (s.status === 'unavailable') return t('monitor.unavailable')
+  if (s.status === 'unknown') return t('monitor.checking')
+  return t('monitor.error')
+}
+
+function statusClass(s) {
+  if (s.status === 'available') return 'badge-ok'
+  if (s.status === 'unknown' || s.status === 'unavailable') return 'badge-pend'
+  return 'badge-err'
 }
 
 async function checkEnabled() {
@@ -131,6 +148,35 @@ async function loadServers() {
   } catch (e) {} finally { loading.value = false }
 }
 
+// 逐台探测:列表先渲染,单台结果回来就回填该行;某台不可达只影响自己那一行,
+// 不再让整页等所有主机返回.并发上限避免同时开太多 SSH.
+async function probeAll() {
+  const ids = servers.value.map(s => s.id)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(PROBE_CONCURRENCY, ids.length) }, async () => {
+    while (cursor < ids.length) await probeOne(ids[cursor++])
+  })
+  await Promise.all(workers)
+}
+
+async function probeOne(id) {
+  try {
+    const r = await fetch(`/api/monitor/servers/${id}/probe`, { headers: auth.A() })
+    if (auth.handle401(r)) return
+    const ct = r.headers.get('content-type') || ''
+    if (!ct.includes('application/json')) { applyProbe(id, { status: 'error' }); return }
+    const d = await r.json()
+    applyProbe(id, d && d.server ? d.server : { status: 'error' })
+  } catch (e) {
+    applyProbe(id, { status: 'error' })
+  }
+}
+
+function applyProbe(id, patch) {
+  const i = servers.value.findIndex(s => s.id === id)
+  if (i >= 0) servers.value[i] = { ...servers.value[i], ...patch }
+}
+
 async function viewDetail(sid) {
   detailServerId.value = sid
   detailLoading.value = true
@@ -149,8 +195,8 @@ async function viewDetail(sid) {
 
 onMounted(async () => {
   const enabled = await checkEnabled()
-  if (enabled) {
-    loadServers()
-  }
+  if (!enabled) return
+  await loadServers()
+  probeAll()  // 不 await:列表先渲染,各主机的结果回来后逐行回填
 })
 </script>

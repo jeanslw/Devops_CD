@@ -6,6 +6,8 @@ FastAPI 部署执行器 - SSH / docker-compose / K8s
 """
 
 import logging
+import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,11 +16,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+import requests
+
 from backend import __version__
-from backend.access_log import install_access_log_filter
+from backend.access_log import install_access_log_filter, install_console_log_filter
 from backend.config import settings
-from backend.database import Database, DatabaseUnavailableError, cd_deploy_hint, cd_not_enabled_hint
+from backend.database import Database, ContractUnavailableError, DatabaseUnavailableError, cd_deploy_hint, cd_not_enabled_hint
 from backend.exceptions import AppException
+from backend.net import install_ip_family
 from backend.routers import (
     alerts,
     approvals,
@@ -47,12 +52,10 @@ from backend.services.registry_service import RegistryService, start_background_
 async def lifespan(app: FastAPI):
     """启动时:定时同步 + 告警检查 + 审批崩溃恢复"""
     db = Database()
-    # 认证模式:唯一总开关.启动日志必打,便于切档后确认(观测点见 §10).
-    logging.getLogger(__name__).info("认证模式：AUTH_MODE=%s", settings.auth_mode)
     if not settings.oidc_ready():
         # 缺配置不阻断启动,但必须提示缺少项(compose 的 env-check 会在启动前中止,两者同清单).
         logging.getLogger(__name__).error(
-            "AUTH_MODE=oidc 缺少必填项：%s，SSO 登录会失败。OIDC_ISSUER 在 config/app.env 或根 .env 配置，"
+            "OIDC 登录缺少必填项：%s，SSO 登录会失败。OIDC_ISSUER 在 config/app.env 或根 .env 配置，"
             "CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI 在根 .env 配置",
             "、".join(settings.oidc_missing_settings()),
         )
@@ -66,7 +69,7 @@ async def lifespan(app: FastAPI):
         state = db.cd_integration_state()
         if not state.enabled:
             logging.getLogger(__name__).warning(
-                "Devops-CD 尚未启用（集成服务契约表 integrated_services 里没有 enabled=1 的 cd 行）："
+                "Devops-CD 尚未启用（契约端点返回 enabled 不为 1）："
                 "登录与所有接口均被拒绝（503 errors.cd_not_enabled）。%s",
                 cd_not_enabled_hint(),
             )
@@ -80,6 +83,12 @@ async def lifespan(app: FastAPI):
                     state.provision,
                     cd_deploy_hint(db.driver, state.provision),
                 )
+    except ContractUnavailableError as e:
+        # 契约端点问不到(未配置 / Glue 过旧 / 网络 / 鉴权失败):请求返回 503 errors.ci_contract_unreachable,
+        # 与"数据库不可用"区分开,排查方向是 Glue / CI_API_URL / CI API token.
+        logging.getLogger(__name__).error(
+            "无法读取集成服务契约：%s —— 请求将返回 503 errors.ci_contract_unreachable", e.message
+        )
     except DatabaseUnavailableError as e:
         # 库当前不可用(连不上/建不了表):请求返回 503 errors.db_unavailable -- 与"未部署"区分开,
         # 排查方向是连接/权限/磁盘,而不是重跑建表脚本.
@@ -145,6 +154,13 @@ _STARTED_AT = datetime.now(timezone.utc)
 # 在导入期安装:`uvicorn main:app`,`python main.py`,`--workers N` 三种启动方式都覆盖
 # (uvicorn 的 dictConfig 会重建 handler/level,但不会清空 logger 上已注册的 filters).
 install_access_log_filter()
+# 控制台日志不打印异常调用栈:去掉 Traceback 的文件/行号帧,把异常原因(type: message)
+# 并到一行(同样导入期安装,覆盖三种启动方式).
+install_console_log_filter()
+
+# 出站地址族优先级(HTTP_IP_FAMILY=ipv4 | ipv6 | auto,默认 ipv4):导入期安装一次,
+# 覆盖进程内所有经 socket 解析的出站连接(见 backend/net.py).
+install_ip_family()
 
 # ── 安全响应头(所有响应统一附加)──
 # CSP:只允许同源资源 + data: 图片(前端 CSS 有 SVG data URI)+ ws:/wss:(WebShell).
@@ -178,7 +194,7 @@ async def add_security_headers(request: Request, call_next):
 
 # 注册路由
 app.include_router(auth.router)
-# OIDC 登录(AUTH_MODE=oidc 时启用;local 模式下两条路由自身返回 404)
+# OIDC 登录(Devops-Glue 单点登录,唯一登录方式)
 app.include_router(oidc.router)
 app.include_router(projects.router)
 app.include_router(servers.router)
@@ -242,10 +258,138 @@ def api_info():
         "db_type": settings.db_driver,
         "db_connected": db_ok,
         "uptime_seconds": uptime_seconds,
-        # 认证模式(前端登录页据此渲染 SSO 按钮 / 本地表单):只暴露模式名,
-        # 不暴露 issuer / secret / redirect_uri.
-        "auth_mode": settings.auth_mode,
     }
+
+
+# ── 公开状态诊断(落地页"运行中"徽标的实时来源,无需认证)────────────────────────
+# 只暴露布尔 / 枚举 / HTTP 状态码等非敏感事实:绝不回显 token、URL、主机名、账号.
+# 契约探活会打一次 Glue,故按短窗口缓存(所有请求共享),避免每个访客都触发上游请求.
+_STATUS_TTL = 10.0
+_status_lock = threading.Lock()
+_status_cache: dict = {"at": 0.0, "data": None}
+
+
+def _probe_contract() -> tuple[int | None, bool | None, str | None]:
+    """直接探活 Glue 契约端点(绕过 ci_client 的 401 重登逻辑),返回 (status_code, enabled, provision).
+
+    ci_client 在静态 token 模式下收到 401 会经 _force_relogin 抛出无状态码异常,把"token 失效"
+    与"网络不可达"混在一起;诊断要区分这两者,故这里用 requests 直接打一次,保留原始状态码.
+    契约端点路径与 ci_client.API["service_contract"] 一致(服务名固定 cd).
+    """
+    url = settings.ci_api_url.rstrip("/") + "/api/integration/services/cd"
+    try:
+        resp = requests.get(url, headers={"Authorization": f"Bearer {settings.ci_api_token}"}, timeout=5.0)
+    except requests.RequestException:
+        return None, None, None  # 连接失败 / 超时:不可达
+    if resp.status_code != 200:
+        return resp.status_code, None, None
+    enabled: bool | None = None
+    provision: str | None = None
+    try:
+        data = resp.json()
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if isinstance(data, dict):
+            enabled = str(data.get("enabled", "")).strip().lower() not in ("", "0", "false", "none")
+            p = str(data.get("provision") or "").strip().lower()
+            provision = "manual" if p == "manual" else "auto"
+    except Exception:
+        pass  # 响应不是预期 JSON:enabled / provision 保持 None,按无法判定处理
+    return resp.status_code, enabled, provision
+
+
+def _status_detail() -> dict:
+    """汇总 DB / OIDC / CI 契约 / 表清单四类事实,派生统一 status 与 status_detail(按修复优先级取第一处)."""
+    now = time.monotonic()
+    with _status_lock:
+        cached = _status_cache["data"]
+    if cached is not None and now - _status_cache["at"] < _STATUS_TTL:
+        return cached
+
+    db = None
+    db_ok = False
+    try:
+        db = Database()
+        db_ok = db.probe()
+    except Exception:
+        db_ok = False
+
+    oidc_missing = settings.oidc_missing_settings()
+    oidc_ok = not oidc_missing
+
+    url_ok = bool(settings.ci_api_url)
+    token_ok = bool(settings.ci_api_token)
+
+    contract_status = None
+    contract_enabled = None
+    contract_provision = None
+    if url_ok and token_ok:
+        contract_status, contract_enabled, contract_provision = _probe_contract()
+    contract_reachable = contract_status == 200
+
+    tables_deployed = None
+    tables_missing: list[str] = []
+    if contract_reachable and contract_enabled and db is not None:
+        try:
+            tables_missing = db.cd_missing_tables()
+            tables_deployed = not tables_missing
+        except Exception:
+            tables_deployed = None
+
+    if not db_ok:
+        status, detail = "db_error", "db"
+    elif not oidc_ok:
+        status, detail = "misconfigured", "oidc"
+    elif not url_ok:
+        status, detail = "misconfigured", "api_url"
+    elif not token_ok:
+        status, detail = "misconfigured", "api_token"
+    elif not contract_reachable:
+        if contract_status in (401, 403):
+            status, detail = "misconfigured", "token_invalid"
+        elif contract_status in (404, 405):
+            status, detail = "unreachable", "glue_old"
+        else:
+            status, detail = "unreachable", "unreachable"
+    elif contract_enabled is None:
+        # 契约响应 200 但 enabled 缺失 / 不可解析:无法判定,与闸门"响应形状不符"口径一致
+        status, detail = "unreachable", "unreachable"
+    elif not contract_enabled:
+        status, detail = "stopped", "not_enabled"
+    elif tables_deployed is False:
+        status, detail = "not_deployed", "not_deployed"
+    else:
+        status, detail = "running", "ok"
+
+    data = {
+        "app": "Devops-Glue CD",
+        "version": app.version,
+        "status": status,
+        "status_detail": detail,
+        "db_connected": db_ok,
+        "oidc_configured": oidc_ok,
+        "oidc_missing": oidc_missing,
+        "ci_api_url_configured": url_ok,
+        "ci_api_token_configured": token_ok,
+        "contract": {
+            "reachable": contract_reachable,
+            "enabled": contract_enabled,
+            "provision": contract_provision,
+            "http_status": contract_status,
+        },
+        "tables_deployed": tables_deployed,
+        "tables_missing": tables_missing,
+    }
+    with _status_lock:
+        _status_cache["at"] = now
+        _status_cache["data"] = data
+    return data
+
+
+@app.get("/api/status")
+def api_status():
+    """落地页"运行中"徽标的实时来源(无需认证):只返回非敏感布尔 / 枚举 / 状态码."""
+    return _status_detail()
 
 
 # ── Prometheus 指标(文本格式,供 Prometheus / Grafana 抓取,无需认证)──

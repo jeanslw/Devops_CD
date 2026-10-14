@@ -33,8 +33,8 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 - **前端**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
 - **数据库**：无独立数据库，完全跟随 Devops-Glue API 的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+
 - **端口**：8081
-- **版本**：v1.5.7（Changelog / v1.5.7 tag 2026-10-08 更新）
-- **认证**：默认 Devops-Glue 单点登录（OIDC，`AUTH_MODE=oidc`）；本地密码登录保留为回退档（`AUTH_MODE=local`，与 Glue 共享 admin_users / roles 表）。会话为不透明 token（HttpOnly cookie / Bearer 头，logout 可即时吊销），密码哈希自动识别（bcrypt / argon2id），不可单独使用
+- **版本**：v1.6.0（Changelog 2026-10-14 更新）
+- **认证**：Devops-Glue 单点登录（OIDC，唯一登录方式）；身份与权限经 Glue API 获取。会话为不透明 token（HttpOnly cookie / Bearer 头，logout 可即时吊销），不可单独使用
 <details>
 ## <summary>快速开始</summary>
 
@@ -58,8 +58,7 @@ cp .env.example .env
 # SECRET_KEY：裸机可留空（自动生成 .cd_secret_key）；docker compose 必填（只读容器写不出密钥文件），
 #            用 openssl rand -base64 32（见 docs/ADMIN_MANUAL_ZH.md）
 # 业务参数（超时 / 缓存 TTL / 间隔 / 监控开关等）在 config/app.env，已带合理默认值，一般不用改
-# 认证：默认 Devops-Glue 单点登录（AUTH_MODE=oidc）⇒ 需在 .env 配置 OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI；
-# 暂不具备条件时把 AUTH_MODE=local 写进 .env 覆盖
+# 认证：Devops-Glue 单点登录（OIDC）⇒ 需在 .env 配置 OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI
 
 python main.py
 # 访问 http://localhost:8081

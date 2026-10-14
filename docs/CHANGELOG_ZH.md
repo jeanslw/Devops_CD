@@ -1,31 +1,35 @@
 # 更新日志
 
-## v1.6.0 (2026-10-11) — 集成服务开关：启用与建表交给 Devops-Glue 契约表
+## v1.6.0 (2026-10-14) — 本地登录 → OIDC 单点登录、契约读改走 HTTP
 
-### 升级注意
-- **CD 的启用状态改由 Devops-Glue 的集成服务契约表决定**：请先在 Devops-Glue 后台「API集成服务 → 启用」**开启 Devops-CD**，否则 CD 以「未启用」拒绝登录与所有操作（503 `errors.cd_not_enabled`）。
-- `provision='auto'`（CI 的 `DB_AUTO_MIGRATE` 开启）时 CD 会**自动建表 / 补列**，无需再手工导入脚本；`provision='manual'`（CI 关闭自动迁移）时行为与 v1.5.7 相同：由管理员导入 `database/init_mysql.sql`（幂等，升级后请重跑一次）。
-- **关闭集成服务不会删除 CD 表与数据**（只冻结准入，重新启用后历史数据继续可用）。
-- **本版起默认登录方式为 Devops-Glue 单点登录（OIDC）**：部署前请在根 `.env` 配置 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`；暂时不具备条件时，把 `AUTH_MODE=local` 写进根 `.env` 或 `config/app.env` 覆盖，即可继续使用本地密码登录。
+> **⚠️ 重大更新 —— 破坏性变更**：v1.6.0 与 v1.5.x 及更早版本**不兼容**。本地登录移除、改为 OIDC 单点登录，部署日志共享视图改为 HTTP 契约；升级须配套对应版本的 Devops-Glue（CI），版本对应关系见管理员手册。
+
+### 升级注意:破坏性变更
+
+- **本地登录 → OIDC 单点登录**：本地密码登录已移除，登录唯一入口改为 Devops-Glue OIDC 单点登录（`/api/auth/oidc/start` → `/api/auth/oidc/callback`）。升级前须在根 `.env` 配置 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`。
+- **启用状态由 Devops-Glue 集成服务契约决定**：先在 CI 后台「API集成服务 → 启用」开启 Devops-CD，否则 503 `errors.cd_not_enabled`。
+- `provision='auto'`（CI 的 `DB_AUTO_MIGRATE` 开启）自动建表；`provision='manual'` 由管理员导入 `database/init_mysql.sql`（幂等，升级后重跑）。
+- 关闭集成服务只冻结准入，不删表、不删数据。
 
 ### 新增功能
-- **默认登录方式改为 Devops-Glue 单点登录（OIDC / BFF）** — `AUTH_MODE=oidc` 成为默认档（裸机与 Docker 一致）：登录走授权码流，身份与权限经 Glue API 获取，请求路径上不再读共享表；本地密码登录保留为回退档（`AUTH_MODE=local` + 重启即恢复，零 DDL）。必填项 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI` 缺失时三处给出同一份清单：compose 预检中止启动、启动日志记 ERROR、登录页点 SSO 提示 `errors.oidc_not_configured`（含缺失项名，XHR 为 503 + `error_key`）。默认档在每层写实：`config/app.env`、compose 两个服务的 `AUTH_MODE: ${AUTH_MODE:-oidc}`、`backend/config.py` 字段默认值；`AUTH_MODE` 留空按未配置落回 `oidc`，拼错（如 `basic`）则启动即报错，不静默退化。
-- **登录入口统一为 `/login`** — 落地页导航栏与登录页都指向登录页，由登录页按公开接口 `/api/info` 的 `auth_mode` 决定展示 SSO 按钮还是本地表单；模式未知时不渲染任何一态，避免首帧闪动。
-- **集成服务契约驱动「启用」判定（CI 是唯一写入方）** — 新增 `Database.cd_integration_state()`：只读一行 `integrated_services`（`service_name='cd'`）拿到 `enabled` + `provision`，作为闸门第一道判据。契约表 / 行缺失或 `enabled<>1` → **零 DDL** + 503 `errors.cd_not_enabled`（提示去 CI 后台启用）；CI 后台一启用，运行中的 CD **下一个请求即生效**（无需重启、无需改配置）。
-- **`provision='auto'` 自动建表（MySQL 与 SQLite 行为一致）** — MySQL 侧新增 `_MYSQL_TABLE_DDL` / `_MYSQL_INDEXES` / `_MYSQL_COLUMN_MIGRATIONS`（`.dockerignore` 排除了 `database/`，运维脚本不进镜像，故 DDL 必须内置），与 SQLite 的 `_ensure_cd_tables` 一同在「已启用 + 首次连库」时建全 `CD_REQUIRED_TABLES`（14 张）+ 补既有表缺失列 + 补索引 + 契约视图 `v_glue_deploy_logs`，并做清单自检（漏表即报错，不留半套 schema）。
-- **前端 i18n** — 新增 `errors.cd_not_enabled`（中 / 英）；`errors.cd_not_deployed` 文案改为按 `provision` 区分（auto 重启自愈 / manual 导入脚本）。
+
+- **契约读改走 HTTP**：`Database.cd_integration_state()` 唯一通道为 Glue 契约端点 `GET /api/integration/services/cd`（Glue ≥ 2.9.0）；问不到（未配置 / 404 / 405 / 401 / 403 / 5xx / 超时 / 响应缺 `enabled`）一律 503 `errors.ci_contract_unreachable`，不误报为未启用，也不直读共享表。缓存窗口由 `CI_CONTRACT_TTL` 控制（默认 30s，`0` = 每请求都问）。
+- **构建页 ref 下拉支持 Tag**：新增 `GET /api/ci/projects/{pid}/refs` 透传 Glue `/api/git/{path}/refs`（返回 `{"branches": [...], "tags": [...]}`），前端按「分支 / 标签」`<optgroup>` 分组。Glue 版本过旧（404/405）自动回退 `/branches` 并负缓存 5 分钟；真实故障照旧上抛。
+- **CI→CD 部署日志契约端点 `GET /api/integration/deploy-logs`**：CI 侧 DeployLogRepository 改经 HTTP 拉取（入站静态 token `CD_API_TOKEN`，Bearer，常量时间比较），不再读共享视图 `v_glue_deploy_logs`；10 列 + `project`(模糊)/`status`/`deploy_type`/`date_from`/`date_to` 筛选 + `page`/`per_page`(≤100) 分页，可用性走状态码。共享视图 `v_glue_deploy_logs` 已删除。
+- **`provision='auto'` 自动建表**（MySQL 与 SQLite 一致）：首次连库建全 `CD_REQUIRED_TABLES`（14 张）+ 补列 + 补索引，并做清单自检。
 
 ### 变更
-- **闸门判据改为「契约状态 × 清单完整性」** — `cd_deploy_gate()` 先读契约（未启用 → 503 `errors.cd_not_enabled`），再看清单（缺表 → 503 `errors.cd_not_deployed`，提示按 `provision` 说实话：`cd_deploy_hint(driver, provision)` 与新增的 `cd_not_enabled_hint()`）；启动日志同步改为三态（未启用 / 已启用但缺表 / 正常）。
-- **`manual` 模式零 DDL** — 与 CI 的手动建库模式对齐（`DB_AUTO_MIGRATE=false` 时 CI 也只补种子、不做 DDL）：CD 在 `manual` 下不建表、不补列，结构升级一律由 DBA 执行建表脚本。
-- **未启用提示只留一句话、且随语言切换** — 503 `errors.cd_not_enabled` 的用户可见文案固定为「CD 服务未启用：请在 Devops-Glue 后台『API集成服务』中启用 Devops-CD」；**登录页 error 框改为与 toast 同源**（`error_key` → 前端 i18n，切 EN 输出英文，不再直接渲染后端的中文兜底串；镜像仓库「扫描触发」失败提示同样改为先取 `error_key`）；动作细节 `cd_not_enabled_hint()` 改随响应体 `detail.hint` 与启动日志下发，不再拼进 `message`。
-- **文档与测试** — `ADMIN_MANUAL(_ZH)` / `ARCHITECTURE(_ZH)` / `FAQ(_ZH)` 的闸门章节同步改写；新增 `backend/tests/test_cd_schema_sources.py`（清单 ↔ `init_mysql.sql` ↔ `_MYSQL_TABLE_DDL` ↔ SQLite 实建表的**表 / 列 / 索引四方同构**）与共享辅助 `backend/tests/cd_contract.py`，并重写 `backend/tests/test_cd_deploy_gate.py`（三种契约状态 × 两个驱动 × 零 DDL 断言）。
-- **CI 表索引归属划清** — CD 的 `database/init_mysql.sql` 不再对共享表 `ci_pipeline_artifacts` / `ci_job_git_map` 建索引（删除相关 `CALL __add_index('idx_pa_*')`）；这两张 CI 表的索引改由 Devops-Glue 建库脚本 `database/mysql_init.sql` 负责（新增 `idx_pipeline_artifacts_project_key` / `idx_pipeline_artifacts_created`，与 Glue `sqlite_init.sql` 同名同列；`ci_job_git_map` 的索引本就齐全）。CD 只建/迁移自己的 `cd_*` 表，运行期不触碰共享表。
-- **前端构建告警清零** — `frontend/index.html` 的 xterm 样式表引用由 `/static/xterm/` 改为 `/xterm/`（Vite `base: '/static/'` 会自动加前缀，避免「`xterm.min.css` not found」告警）；`frontend/src/router/index.js` 的 LoginView 由懒加载改为静态引入（App.vue 登录门静态需要它，无法拆出独立 chunk），消除 Vite「dynamically imported but also statically imported」告警。
-- **测试补强** — `test_cd_schema_sources.py` 新增索引契约用例：断言 `init_mysql.sql` 的 `__add_index` 只作用于 `cd_*` 表、绝不对共享表（`ci_*` / `admin_users` / `roles` …）建索引；`test_webshell_perm.py` 新增 WebShell 准入用例组：`systems` 不含 `cd` 的账号 401、含 `cd` 放行、空角色 / 空权限一律 fail-closed。
+
+- **闸门判据 =「契约状态 × 清单完整性」**：未启用 → 503 `errors.cd_not_enabled`；缺表 → 503 `errors.cd_not_deployed`（提示按 `provision` 区分 auto 重启自愈 / manual 导入脚本）。
+- **`manual` 模式零 DDL**：结构升级由 DBA 执行建表脚本。
+- **监控页不再等所有主机**：服务器列表只读库立即返回，前端并发 `GET /api/monitor/servers/{id}/probe` 逐台回填；单台不可达只影响该行。
+- **出站地址族 `HTTP_IP_FAMILY`**（ipv4 / ipv6 / auto，默认 ipv4）：`backend/net.py` 重排 `socket.getaddrinfo`，改善服务端未监听 IPv6 时的失败重试。
+- **CI 表索引归属划清**：CD 不再对共享 `ci_pipeline_artifacts` / `ci_job_git_map` 建索引，改由 Glue 建库脚本负责。
+- **前端构建告警清零**：xterm 样式表路径 `/static/xterm/` → `/xterm/`；LoginView 由懒加载改为静态引入。
 
 ### 修复
-- **WebShell 鉴权与 REST 同口径（越权修复）** — `_ws_verify` 本地分支原先只查 `username, status`、漏掉 `systems` 是否允许 CD 访问：一个 `systems` 不含 `cd` 的账号仍能打开 WebShell（REST 会被 `verify_token` 拦下，WebShell 是独立鉴权路径）。现补上 `_check_cd_access(row)` + `_check_disabled(row)`，与 REST `verify_token` 同口径；权限分支由 `if row and not …`（fail-open）改为「用户不存在 / 无角色 / 权限不足一律拒绝」（fail-closed，与 `require_perm` 的 deny-by-default 同口径）。
+
+- **WebShell 鉴权与 REST 同口径（越权修复）**：补 `_check_cd_access` + `_check_disabled`，权限分支改 fail-closed，与 `require_perm` 一致。
 
 ## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
 
