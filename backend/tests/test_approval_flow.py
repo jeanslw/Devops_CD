@@ -1069,6 +1069,7 @@ class TestResolveTargetEnvs(ApprovalFlowTestCase):
 # 规则写入校验(悬空审批角色/审批人阻断)
 # ─────────────────────────────────────────────────────────────
 
+
 class TestValidateRuleGlue(ApprovalFlowTestCase):
     """规则校验走 Glue RBAC 只读接口,不直读共享 roles / admin_users 表(签名也不再需要 db)."""
 

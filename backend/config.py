@@ -188,9 +188,7 @@ class Settings(BaseSettings):
         """HTTP_IP_FAMILY 白名单校验:忽略大小写与首尾空格,取值非法即报错."""
         family = (v or "").strip().lower() or "ipv4"
         if family not in ("ipv4", "ipv6", "auto"):
-            raise ValueError(
-                f"HTTP_IP_FAMILY 只支持 ipv4 / ipv6 / auto，当前为 {v!r} / must be ipv4, ipv6 or auto"
-            )
+            raise ValueError(f"HTTP_IP_FAMILY 只支持 ipv4 / ipv6 / auto，当前为 {v!r} / must be ipv4, ipv6 or auto")
         return family
 
     # ── 监控(可选)──

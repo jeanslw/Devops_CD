@@ -29,8 +29,16 @@ from backend.routers.logs import integration_deploy_logs  # noqa: E402
 from cd_contract import enable_cd, reset_contract_stub  # noqa: E402
 
 CONTRACT_COLS = [
-    "id", "project", "tag", "image", "deploy_type", "target", "status",
-    "triggered_by", "deploy_note", "created_at",
+    "id",
+    "project",
+    "tag",
+    "image",
+    "deploy_type",
+    "target",
+    "status",
+    "triggered_by",
+    "deploy_note",
+    "created_at",
 ]
 
 TOKEN = "test-inbound-token"

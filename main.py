@@ -21,7 +21,13 @@ import requests
 from backend import __version__
 from backend.access_log import install_access_log_filter, install_console_log_filter
 from backend.config import settings
-from backend.database import Database, ContractUnavailableError, DatabaseUnavailableError, cd_deploy_hint, cd_not_enabled_hint
+from backend.database import (
+    Database,
+    ContractUnavailableError,
+    DatabaseUnavailableError,
+    cd_deploy_hint,
+    cd_not_enabled_hint,
+)
 from backend.exceptions import AppException
 from backend.net import install_ip_family
 from backend.routers import (

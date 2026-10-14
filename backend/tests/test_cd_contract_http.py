@@ -174,7 +174,7 @@ class HttpStateTestCase(_ContractHttpTestCase):
 
 
 class UnreachableTestCase(_ContractHttpTestCase):
-    """"问不到"≠"未启用":一律按契约不可达 fail-closed(503 ci_contract_unreachable),绝不静默放行."""
+    """ "问不到"≠"未启用":一律按契约不可达 fail-closed(503 ci_contract_unreachable),绝不静默放行."""
 
     def test_404_raises_contract_unreachable(self):
         """404 = 服务名不在 Glue 白名单(配置写错),不是未启用:必须 503,否则拼错服务名会静默关站."""
