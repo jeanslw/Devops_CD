@@ -42,9 +42,7 @@ _STATE_TTL = 600  # 授权页停留时限(秒):超时即让 state 失效,重新�
 _LABEL = "OIDC 登录"
 
 
-def _login_redirect(
-    error_key: str, missing: list[str] | None = None, params: dict | None = None
-) -> RedirectResponse:
+def _login_redirect(error_key: str, missing: list[str] | None = None, params: dict | None = None) -> RedirectResponse:
     """业务性失败:回登录页并带上 i18n key(并清掉一次性 state cookie).
 
     missing 非空时附带缺失的配置项名,登录页把它渲染成 errors.oidc_not_configured 的 {items}.

@@ -85,7 +85,9 @@ class TestWebshellAdmission(unittest.TestCase):
 
     def test_verify_denies_user_without_cd_system(self):
         """Glue 复核判为无 CD 权限(AppException 401)→ 握手期同样 401,不按"未知即放行"处理."""
-        denied = AppException("Access denied: CD system not authorized", status_code=401, error_key="errors.no_cd_access")
+        denied = AppException(
+            "Access denied: CD system not authorized", status_code=401, error_key="errors.no_cd_access"
+        )
         with patch("backend.routers.terminal._oidc_identity", side_effect=denied):
             with self.assertRaises(HTTPException) as ctx:
                 asyncio.run(_ws_verify(self.token))

@@ -8,6 +8,7 @@ from backend.database import Database
 
 router = APIRouter(tags=["auth"])
 
+
 @router.get("/api/me")
 def me(user: dict = Depends(get_current_user)):
     """返回当前登录用户信息"""

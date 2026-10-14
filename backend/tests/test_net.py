@@ -54,8 +54,9 @@ class AddrInfoPreferenceTestCase(unittest.TestCase):
         self.assertEqual([o[4][0] for o in out], ["127.0.0.1", "127.0.0.2", "::1", "::2"])
 
     def test_ipv6_preference_reverses_order(self):
-        with patch.object(net, "_preferred_family", "ipv6"), patch.object(
-            net, "_orig_getaddrinfo", return_value=self.infos
+        with (
+            patch.object(net, "_preferred_family", "ipv6"),
+            patch.object(net, "_orig_getaddrinfo", return_value=self.infos),
         ):
             out = net.getaddrinfo("localhost", 8080)
         self.assertEqual([o[4][0] for o in out], ["::1", "::2", "127.0.0.1", "127.0.0.2"])
@@ -66,7 +67,10 @@ class AddrInfoPreferenceTestCase(unittest.TestCase):
         self.assertEqual(sorted(map(repr, out)), sorted(map(repr, self.infos)))
 
     def test_auto_keeps_system_order(self):
-        with patch.object(net, "_preferred_family", "auto"), patch.object(net, "_orig_getaddrinfo", return_value=self.infos):
+        with (
+            patch.object(net, "_preferred_family", "auto"),
+            patch.object(net, "_orig_getaddrinfo", return_value=self.infos),
+        ):
             self.assertIs(net.getaddrinfo("localhost", 8080), self.infos)
 
     def test_pinned_family_is_left_alone(self):

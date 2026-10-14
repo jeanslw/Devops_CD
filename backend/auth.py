@@ -346,4 +346,3 @@ def load_user_context(db: Database, username: str) -> dict:
         "role": ident.get("role") or "",
         "permissions": ident.get("permissions") or [],
     }
-

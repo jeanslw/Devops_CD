@@ -13,9 +13,7 @@ from backend.services.deploy_service import DeployService
 router = APIRouter(prefix="/api", tags=["logs"])
 
 # CI→CD 只读契约端点暴露的部署记录列(审计字段,不含 output 等大字段)
-_CONTRACT_COLS = (
-    "id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at"
-)
+_CONTRACT_COLS = "id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at"
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DEFAULT_WINDOW_DAYS = 30
 
