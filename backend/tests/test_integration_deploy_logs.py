@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -86,10 +87,15 @@ class IntegrationDeployLogsTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def _seed(self, conn):
+        now = datetime.now()
+
+        def ago(days, hhmmss="10:00:00"):
+            return (now - timedelta(days=days)).strftime("%Y-%m-%d") + f" {hhmmss}"
+
         rows = [
-            ("proj-a", "t1", "img1", "ssh", "srv1", "ok", "alice", "note-a", "2026-01-05 10:00:00"),
-            ("proj-a", "t2", "img2", "compose", "srv2", "failed", "bob", "note-b", "2026-02-10 11:00:00"),
-            ("proj-b", "t3", "img3", "ssh", "srv3", "running", "carol", "note-c", "2026-03-15 12:00:00"),
+            ("proj-a", "t1", "img1", "ssh", "srv1", "ok", "alice", "note-a", ago(1)),
+            ("proj-a", "t2", "img2", "compose", "srv2", "failed", "bob", "note-b", ago(10)),
+            ("proj-b", "t3", "img3", "ssh", "srv3", "running", "carol", "note-c", ago(40)),
         ]
         for p, tag, img, dt, target, status, by, note, created in rows:
             conn.execute(
@@ -119,20 +125,33 @@ class IntegrationDeployLogsTestCase(unittest.TestCase):
         self.assertEqual(data["items"][0]["status"], "ok")
 
     def test_deploy_type_filter(self):
-        data = self._call(deploy_type="ssh")
+        # 显式 date_from 越过默认 30 天窗口,单独验证 deploy_type 过滤
+        data = self._call(deploy_type="ssh", date_from="2000-01-01")
         self.assertEqual(data["total"], 2)
         self.assertTrue(all(i["deploy_type"] == "ssh" for i in data["items"]))
 
     def test_date_range_inclusive(self):
-        data = self._call(date_from="2026-02-01", date_to="2026-02-28")
+        now = datetime.now()
+        date_from = (now - timedelta(days=15)).strftime("%Y-%m-%d")
+        date_to = (now - timedelta(days=10)).strftime("%Y-%m-%d")
+        data = self._call(date_from=date_from, date_to=date_to)
         self.assertEqual(data["total"], 1)
-        self.assertEqual(data["items"][0]["created_at"], "2026-02-10 11:00:00")
+        self.assertEqual(data["items"][0]["tag"], "t2")
+
+    def test_default_window_last_30_days(self):
+        # 不传日期:默认只返回近 30 天(40 天前的 t3 应被排除)
+        data = self._call()
+        tags = [i["tag"] for i in data["items"]]
+        self.assertEqual(data["total"], 2)
+        self.assertIn("t1", tags)
+        self.assertIn("t2", tags)
+        self.assertNotIn("t3", tags)
 
     def test_pagination(self):
         data = self._call(per_page=1, page=2)
-        self.assertEqual(data["total"], 3)
+        self.assertEqual(data["total"], 2)
         self.assertEqual(data["per_page"], 1)
-        self.assertEqual(data["total_pages"], 3)
+        self.assertEqual(data["total_pages"], 2)
         self.assertEqual(len(data["items"]), 1)
 
     def test_per_page_capped_at_100(self):

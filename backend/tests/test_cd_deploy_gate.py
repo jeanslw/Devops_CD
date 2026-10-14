@@ -60,7 +60,6 @@ from backend.database import (  # noqa: E402
     CdIntegrationState,
     ContractUnavailableError,
     Database,
-    DatabaseUnavailableError,
     PROVISION_AUTO,
     _is_missing_table_error,
     cd_deploy_hint,
