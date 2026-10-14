@@ -74,7 +74,7 @@ def list_monitor_servers(
         entry["has_prometheus"] = False
         entry["has_metrics_server"] = False
         cached = _cache_get(f"servers:{srv['id']}")
-        if cached is not None:
+        if isinstance(cached, dict):
             entry.update(cached)
         result.append(entry)
 
