@@ -1,6 +1,7 @@
 """部署日志路由"""
 
 import re
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 
@@ -16,6 +17,7 @@ _CONTRACT_COLS = (
     "id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at"
 )
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DEFAULT_WINDOW_DAYS = 30
 
 
 @router.get("/deploy-logs")
@@ -63,12 +65,17 @@ def integration_deploy_logs(
     if deploy_type:
         where.append("deploy_type = ?")
         params.append(deploy_type)
-    if date_from:
+    if date_from or date_to:
+        if date_from:
+            where.append("created_at >= ?")
+            params.append(date_from)
+        if date_to:
+            where.append("created_at <= ?")
+            params.append(f"{date_to} 23:59:59")
+    else:
+        # 日期都不传时默认近 30 天
         where.append("created_at >= ?")
-        params.append(date_from)
-    if date_to:
-        where.append("created_at <= ?")
-        params.append(f"{date_to} 23:59:59")
+        params.append((datetime.now() - timedelta(days=_DEFAULT_WINDOW_DAYS)).strftime("%Y-%m-%d"))
 
     where_sql = f" WHERE {' AND '.join(where)}" if where else ""
 
