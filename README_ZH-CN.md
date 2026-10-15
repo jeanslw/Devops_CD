@@ -31,10 +31,10 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 - **语言**：Python 3.10+
 - **框架**：FastAPI + uvicorn
 - **前端**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
-- **数据库**：无独立数据库，完全跟随 Devops-Glue API 的数据库实例。SQLite / MySQL 8.0+ / MariaDB 10.4+
+- **数据库**：SQLite / MySQL 8.0+ / MariaDB 10.4+ (Devops-CD 可与 Devops-Glue 共用同一个库，也可拆库用 CD 专用库)
 - **端口**：8081
 - **版本**：v1.6.0（Changelog 2026-10-14 更新）
-- **认证**：Devops-Glue 单点登录（OIDC，唯一登录方式）；身份与权限经 Glue API 获取。会话为不透明 token（HttpOnly cookie / Bearer 头，logout 可即时吊销），不可单独使用
+- **认证**：Devops-Glue 单点登录（OIDC，唯一登录方式）；身份与权限经 Glue API 获取,不可单独使用
 <details>
 ## <summary>快速开始</summary>
 
@@ -53,8 +53,8 @@ pip install -r requirements.txt
 
 # 配置 .env（部署配置：数据库 / Harbor / CI 凭据 / SECRET_KEY）
 cp .env.example .env
-# DB_DRIVER=sqlite（默认，需和 Devops-Glue API 指向同一个 .db 文件，如 ../php_api/config/data/data.db）
-# 或 DB_DRIVER=mysql（推荐，需和 Devops-Glue API 共用同一个库）
+# DB_DRIVER=sqlite（默认）
+# 或 DB_DRIVER=mysql（推荐）
 # SECRET_KEY：裸机可留空（自动生成 .cd_secret_key）；docker compose 必填（只读容器写不出密钥文件），
 #            用 openssl rand -base64 32（见 docs/ADMIN_MANUAL_ZH.md）
 # 业务参数（超时 / 缓存 TTL / 间隔 / 监控开关等）在 config/app.env，已带合理默认值，一般不用改
@@ -73,7 +73,7 @@ docker compose up -d --build
 # 访问 http://localhost:8081
 ```
 </details>
-> **SQLite 模式注意**：CD Service 和 Devops-Glue API 共用同一个 SQLite 数据库文件。容器部署时必须将数据库目录挂载为共享卷。推荐生产环境使用 MySQL 或 MariaDB 10.4+，避免 SQLite 并发写入问题。
+> **SQLite 模式注意**：CD 可用独立 SQLite 文件；若与 Devops-Glue API 共用同一个文件，容器部署时必须将数据库目录挂载为共享卷。推荐生产环境使用 MySQL 或 MariaDB 10.4+，避免 SQLite 并发写入问题。
 
 ## 文档
 

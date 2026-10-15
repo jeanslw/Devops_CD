@@ -40,15 +40,15 @@ Yes. Add multiple metrics under a single monitor item, each targeting a differen
 
 ### Q: CD reports "not enabled" even though the database looks configured?
 
-cd_service must share the same database instance as Devops-Glue API (CD's own `cd_*` tables live in it; the enablement state is read only through Glue's contract endpoint `GET /api/integration/services/cd`, never directly from the table). When the endpoint cannot be reached, CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`). Verify `DB_PATH` (SQLite) or `DB_*` (MySQL) matches Glue's database.
+The enablement state is read only through Glue's contract endpoint `GET /api/integration/services/cd`; when it cannot be reached, CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`). Check `CI_API_URL` / `CI_API_TOKEN`, and that `DB_PATH` (SQLite) / `DB_*` (MySQL) points to the database holding the CD tables.
 
 ### Q: Login fails with "CD is not enabled: enable Devops-CD in the Devops-Glue console under 'API Integration Services'"?
 
-Whether CD is enabled is decided only by Devops-Glue's integration-service contract table `integrated_services` (CI is the only writer): if the contract table / row is missing or `enabled<>1`, CD counts as **not enabled**, performs zero DDL, and login, every request carrying a session, the public webhook receiver and the WebShell handshake all return 503 (`errors.cd_not_enabled`).
+Whether CD is enabled is decided by the switch in the Devops-Glue console (CD reads it via the contract endpoint `GET /api/integration/services/cd`): `enabled<>1` counts as **not enabled**, CD performs zero DDL, and login, every request carrying a session, the public webhook receiver and the WebShell handshake all return 503 (`errors.cd_not_enabled`).
 
-> How that table is read: the only channel is Glue's contract endpoint `GET /api/integration/services/cd`. When it cannot be reached (older Glue, network/auth failure), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — it never reads the table directly and never treats it as "not enabled".
+> When the contract endpoint cannot be reached (older Glue, network/auth failure), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — never treated as "not enabled".
 
-**Fix**: turn Devops-CD on in the Devops-Glue console under "API Integration Services → Enable" — the action writes the contract row and stores the `provision` value derived from CI's migration mode, and CD picks it up **within one contract cache window** (`CI_CONTRACT_TTL`, 30s by default — no config change, no restart; set `CI_CONTRACT_TTL=0` to make it immediate).
+**Fix**: turn Devops-CD on in the Devops-Glue console under "API Integration Services → Enable" — CD picks it up **within one contract cache window** (`CI_CONTRACT_TTL`, 30s by default — no config change, no restart; set `CI_CONTRACT_TTL=0` to make it immediate).
 
 > The message box shows **only that one sentence**: the login error box and the toast now share one path — both resolve `error_key=errors.cd_not_enabled` through the frontend i18n, so switching to EN really shows English instead of the backend's Chinese fallback; the full action guidance travels in the response's `detail.hint` and in the CD startup log instead of being appended to the message.
 
@@ -242,7 +242,7 @@ New `perm_key` entries must be inserted into CI's `permissions` table AND assign
 
 ### Q: Log table growing too fast?
 
-`cd_deploy_logs` stores every deployment's output. The CD service does not have built-in log cleanup — this is an ops responsibility.
+`cd_deploy_logs` stores every deployment's output. The CD Service does not have built-in log cleanup — this is an ops responsibility.
 
 **Manual cleanup** (SQL):
 ```sql
@@ -255,7 +255,7 @@ DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 0 2 * * * mysql -u root -p'password' devops_glue -e "DELETE FROM cd_deploy_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);"
 ```
 
-**Background tasks**: The CD service runs the following built-in background threads (intervals configured via `config/app.env`):
+**Background tasks**: The CD Service runs the following built-in background threads (intervals configured via `config/app.env`):
 - Harbor registry sync: `REGISTRY_SYNC_INTERVAL` (default 30 **minutes**, 0 disables)
 - Alert checking: `ALERT_CHECK_INTERVAL` (default 60s)
 - Scheduled publish executor: drains approved deployment approval tickets whose `scheduled_at` time has arrived

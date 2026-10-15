@@ -6,11 +6,9 @@
 --    脚本幂等（CREATE TABLE IF NOT EXISTS + INFORMATION_SCHEMA 守卫），可安全重复执行；
 --    升级后请再跑一次以补齐新增表/新列。
 --
--- 使用前请确保已创建数据库，例如: CREATE DATABASE devops_glue CHARACTER SET utf8mb4;
--- 执行: mysql -u root -p devops_glue < database/init_mysql.sql
-
--- ⚠️ admin_users 由 php_api 管理，这里仅补充 role 列（cd_service 权限系统）
--- ALTER TABLE admin_users ADD COLUMN role VARCHAR(32) DEFAULT 'cd_admin';
+-- 使用前请确保已创建数据库（CD 专用库或与 Devops-Glue 共用的库均可，两侧互不读对方表），
+-- 例如: CREATE DATABASE devops_cd CHARACTER SET utf8mb4;
+-- 执行: mysql -u root -p database_name < database/init_mysql.sql
 
 CREATE TABLE IF NOT EXISTS cd_servers (
     id         INT AUTO_INCREMENT PRIMARY KEY,

@@ -16,65 +16,54 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    # ── 数据库(必填: sqlite | mysql)──
+    # ── 数据库(必填;sqlite | mysql)──
     db_driver: str = ""
-    db_path: str = ""  # SQLite 模式必填,MySQL 模式忽略
+    db_path: str = ""  # SQLite 库文件路径(sqlite 必填,mysql 忽略)
     db_host: str = ""
     db_port: int = 3306
     db_name: str = ""
     db_user: str = ""
     db_pass: str = ""
-    db_pool_max: int = 10  # MySQL 连接池最大值
-    db_pool_min: int = 2  # MySQL 连接池最小值(常开连接数)
+    db_pool_max: int = 10  # MySQL 连接池上限
+    db_pool_min: int = 2  # MySQL 连接池常开连接数
 
-    # ── 加密密钥(可选)──
-    # 加密 cd_servers 的 password / ssh_key;留空则自动生成 .cd_secret_key 文件.
-    # 仅裸机可留空:compose 是 read_only 容器,密钥文件写不出来,由 env-check 强制必填.
+    # ── 加密密钥(容器部署必填;裸机可留空自动生成)──
+    # 加密 cd_servers 的 password / ssh_key;留空时首次运行生成 .cd_secret_key 文件(需可写目录).
     secret_key: str = ""
 
-    # ── 认证 token(可选)──
-    # 会话 token 有效期(小时),默认 24.token 是不透明随机串,库内只存 SHA-256 摘要,
-    # 退出登录(/api/logout)删行即时吊销.
+    # ── 会话与访问控制 ──
+    # 会话 token 有效期(小时);库内只存 SHA-256 摘要,logout 删行即时吊销.
     auth_token_ttl_hours: int = 24
-
-    # HttpOnly 会话 cookie 是否加 Secure(仅 HTTPS 下浏览器才回传).
-    # 服务在 nginx 之后以 HTTPS 对外时设 true;直连 HTTP 暴露时保持 false.
+    # 会话 cookie 是否加 Secure(HTTPS 对外设 true;HTTP 直连保持 false).
     cookie_secure: bool = False
-
-    # ── 认证访问控制 ──
-    # 身份 systems 为空时是否放行 CD 访问:true(默认)兼容历史数据,false 即 deny-by-default.
+    # Glue 侧 systems 为空时是否放行 CD 访问(true 兼容历史,false 即 deny-by-default).
     allow_empty_systems: bool = True
 
-    # ── OIDC 登录(Devops-Glue 单点登录,唯一登录方式)──
-    # 必填项缺失时启动日志记 ERROR,compose 预检中止启动,登录页点 SSO 提示缺哪些
-    # (见 oidc_missing_settings).
-    # Glue 对外地址,须与其 discovery 的 issuer 完全一致(不一致即拒绝登录并打印两侧取值).
+    # ── OIDC 登录(Devops-Glue 单点登录,唯一登录方式;三项必填)──
+    # 缺失时:compose 预检中止启动 / 裸机启动日志记 ERROR / 登录页提示缺哪些(oidc_missing_settings).
+    # Glue 对外地址,须与其 discovery 的 issuer 完全一致.
     oidc_issuer: str = ""
-    # OAuth 客户端标识:Glue oauth_clients['cd'] 的键名,v1 固定为 cd.
+    # OAuth 客户端标识 = Glue oauth_clients['cd'] 的键名.
     oidc_client_id: str = "cd"
-    # 机密客户端密钥,与 Glue oauth_clients['cd']['secret'] 完全一致(根 .env,不进镜像).
+    # 客户端密钥,与 Glue oauth_clients['cd']['secret'] 一致.
     oidc_client_secret: str = Field(default="", validation_alias="CD_OIDC_SECRET")
-    # 回调地址,与 Glue 侧登记值逐字符一致(Glue 用 hash_equals 比对,含 scheme/host/port/path).
+    # 回调地址,与 Glue 侧登记值逐字符一致(含 scheme/host/port/path).
     oidc_redirect_uri: str = Field(default="", validation_alias="CD_OIDC_REDIRECT_URI")
-    # scope 须含 openid:漏掉不报错,只是响应没有 id_token(身份拿不到),见 §8.7 第 3 条.
+    # scope 须含 openid(缺了响应没有 id_token).
     oidc_scopes: str = "openid profile email"
-    # 惰性复核窗口(秒):距上次 Glue 复核超过该值才重查一次,即停用 / 降权的生效上限,
-    # 不必等会话 TTL(见 §3.2 / §4.3).
+    # 惰性复核窗口(秒):停用 / 降权的生效上限.
     oidc_revalidate_seconds: int = 60
-    # Glue 不可达时的软失败窗口(秒):窗口内按 last-known-good 身份放行,超过即
-    # fail-closed;0 = 立即 fail-closed.
+    # Glue 不可达软失败窗口(秒):窗口内按 last-known-good 放行,超过 fail-closed;0 = 立即.
     oidc_stale_grace_seconds: int = 600
-    # 时钟偏移容忍(秒):校验 id_token 的 iat / exp 按此放宽,容双方机器时钟微差.
+    # id_token iat / exp 校验的时钟偏移容忍(秒).
     oidc_id_token_max_skew: int = 60
 
     # ── Harbor 镜像仓库(必填)──
-    # 统一读 HARBOR_BASE_URL(带 scheme 的完整地址,如 https://hub.example.com):CI(Glue)
-    # 直接使用;CD 剥掉 scheme 供 Docker 镜像引用,HarborClient 自动探测 https → http.
+    # 读 HARBOR_BASE_URL(完整地址,如 https://hub.example.com);CD 剥掉 scheme 供镜像引用.
     harbor_registry: str = Field(default="", validation_alias="HARBOR_BASE_URL")
     harbor_user: str = ""
     harbor_password: str = ""
-    # Harbor HTTPS 证书校验开关;自签名证书时设 HARBOR_VERIFY_SSL=false.
-    harbor_verify_ssl: bool = True
+    harbor_verify_ssl: bool = True  # Harbor 自签名证书时设 false
 
     @field_validator("harbor_registry", mode="after")
     @classmethod
@@ -113,18 +102,15 @@ class Settings(BaseSettings):
         """
         return not self.oidc_missing_settings()
 
-    # ── 服务(可选)──
+    # ── 监听(可选)──
     host: str = "0.0.0.0"  # nosec
     port: int = 8081
 
-    # ── 反向代理可信跳数(可选,默认 0)──
-    # 0 = 不信任 X-Forwarded-For,客户端 IP 取 TCP 对端(直连暴露时保持 0);位于 nginx
-    # 等反代之后设 1(多层按实际层数增大),登录失败锁定据此取真实 IP(与 CI 共享计数).
+    # ── 反向代理可信跳数(已无消费者,仅为兼容旧配置保留)──
     trusted_proxy_hops: int = 0
 
     # ── 角色 ──
-    # 超级管理员角色名:隐含全部权限(权限经 Glue API 读取).
-    super_admin_role: str = "super_admin"
+    super_admin_role: str = "super_admin"  # 超级管理员角色名,隐含全部权限(权限经 Glue API 读取)
 
     # ── SSH(可选)──
     ssh_timeout: int = 30
@@ -136,8 +122,7 @@ class Settings(BaseSettings):
     container_restart_policy: str = "always"
 
     # ── 部署重试(可选)──
-    # 幂等命令(docker compose up -d / kubectl apply)失败时的重试入口,消化瞬时
-    # SSH / 网络抖动.attempts = 含首次在内的最大执行次数(=1 关闭重试),delay = 间隔秒数.
+    # 幂等命令(docker compose up -d / kubectl apply)失败时重试:attempts = 最大执行次数(=1 关闭),delay = 间隔秒.
     deploy_retry_attempts: int = 3
     deploy_retry_delay: float = 2.0
 
@@ -157,24 +142,18 @@ class Settings(BaseSettings):
     # ── 镜像仓库同步(可选)──
     registry_sync_interval: int = 30  # 分钟,0 关闭
 
-    # ── CI 集成(可选)──
-    # CI 服务地址(如 http://localhost:8080);留空则不启用构建管理功能.
+    # ── CI 集成(必填:身份 / 权限 / 契约闸门全走 Glue API)──
+    # Glue API 地址(如 http://localhost:8080).
     ci_api_url: str = ""
     ci_admin_user: str = ""
     ci_admin_pass: str = ""
-    # API token(dg_ 前缀,服务账号 / 第三方调用),配置后优先于账号密码登录
+    # API token(dg_ 前缀),优先于账号密码.
     ci_api_token: str = ""
-    # CI→CD 入站静态 token:校验 /api/integration/deploy-logs 的 Bearer,留空即该端点拒绝所有请求
+    # CI→CD 入站静态 token:校验 /api/integration/deploy-logs 的 Bearer,留空则该端点拒绝所有请求.
     cd_api_token: str = ""
-    ci_timeout: int = 30
-    # 集成服务契约(CD 启用状态 / provision)只经 Glue 的窄只读端点
-    # GET /api/integration/services/{service} 读取,CD 不读共享库的任何 CI 表 --
-    # 契约仍归 CI 写入,消费方只读一个 HTTP 接口,Glue 改库结构 / 将来拆库独立部署都不影响 CD.
-    # 端点问不到(Glue 版本过旧 404/405、网络或鉴权失败、CI_API_URL/CI_API_TOKEN 未配置)按
-    # "库不可用"处理(503 fail-closed),见 backend/database.py 顶部注释.
-    # 契约读的缓存窗口(秒):窗口内复用上次结果 -- CD 每请求都过闸门,不能每请求都打一次 Glue;
-    # 0 = 每次请求都问. CI 后台改开关后,CD 最迟一个窗口(默认 30s)后生效.
-    # 想立刻复核(排障 / 改完开关马上生效)见 database.invalidate_contract_cache().
+    ci_timeout: int = 30  # Glue API 调用超时(秒)
+    # 契约读缓存窗口(秒,0 = 每请求都问):改开关最迟一个窗口生效;
+    # 端点问不到按「契约不可达」fail-closed,见 backend/database.py.
     ci_contract_ttl: int = 30
 
     # ── 出站地址族优先级(可选)──

@@ -41,15 +41,15 @@ lscpu | grep -E '^CPU\(s\)|^Thread|^Core|^Socket'
 
 ### Q: CD 提示「未启用」，但数据库看着已配置？
 
-cd_service 必须与 Devops-Glue API 共用同一个数据库实例（CD 自己的 `cd_*` 表也在该库里；启用状态只经 Glue 的契约端点 `GET /api/integration/services/cd` 读取，不直读契约表）。问不到时 CD 按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`）。请核对 `DB_PATH`（SQLite）或 `DB_*`（MySQL）是否与 Glue 的库一致。
+启用状态只经 Glue 的契约端点 `GET /api/integration/services/cd` 读取；问不到按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`）。请核对 `CI_API_URL` / `CI_API_TOKEN`，以及 `DB_PATH`（SQLite）/ `DB_*`（MySQL）指向 CD 表所在的库。
 
 ### Q: 登录报错「CD 服务未启用：请在 Devops-Glue 后台『API集成服务』中启用 Devops-CD」？
 
-「CD 启用了没有」只由 Devops-Glue 的集成服务契约表 `integrated_services` 决定（CI 是唯一写入方）：契约表 / 契约行缺失或 `enabled<>1` 一律视为**未启用**，CD 做零 DDL，登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手统一 503（`errors.cd_not_enabled`）。
+「CD 启用了没有」由 Devops-Glue 后台「API集成服务」的开关决定（CD 经契约端点 `GET /api/integration/services/cd` 读取）：`enabled<>1` 一律视为**未启用**，CD 做零 DDL，登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手统一 503（`errors.cd_not_enabled`）。
 
-> 这张表怎么读：唯一通道为 Glue 的契约端点 `GET /api/integration/services/cd`；问不到（Glue 版本过旧、网络 / 鉴权失败）时按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不直读契约表，也不当作「未启用」。
+> 问不到契约端点（Glue 版本过旧、网络 / 鉴权失败）时按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不当「未启用」。
 
-**解决**：到 Devops-Glue 后台「API集成服务 → 启用」开启 Devops-CD —— 启用动作会写契约行，并按 CI 的迁移模式写入 `provision`，CD 侧**最迟一个契约缓存窗口（`CI_CONTRACT_TTL`，默认 30s）内生效**（不需要改配置，也不需要重启；想让它立刻生效可把 `CI_CONTRACT_TTL` 设为 `0`）。
+**解决**：到 Devops-Glue 后台「API集成服务 → 启用」开启 Devops-CD —— CD 侧**最迟一个契约缓存窗口（`CI_CONTRACT_TTL`，默认 30s）内生效**（不需要改配置，也不需要重启；想让它立刻生效可把 `CI_CONTRACT_TTL` 设为 `0`）。
 
 > 提示框里**只有上面这一句**：登录页 error 框与 toast 同源 —— 都读 `error_key=errors.cd_not_enabled` 走前端 i18n（所以切 EN 会输出英文，不会出现「后端中文不跟随语言」）；完整动作说明随响应体 `detail.hint` 与 CD 启动日志下发，不会拼进提示框。
 
