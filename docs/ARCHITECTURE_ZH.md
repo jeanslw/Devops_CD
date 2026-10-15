@@ -50,33 +50,32 @@
 ## 组件关系
 
 ```
-		┌──────────────────────────────────────┐
-		│ 共享数据库 (SQLite / MySQL / MariaDB)│
-		│                                      │
-		│  ci_pipeline_artifacts ← CI 写       │
-		│  cd_servers            ← CD 维护     │
-		│  cd_deploy_logs        ← CD 写       │
-		│  cd_approvals(_rules)  ← CD 写       │
-		│  cd_sessions           ← CD 写/删    │
-		│  cd_bots               ← CD 维护     │
-		│  admin_users           ← 共享        │
-		└────────────────┬─────────────────────┘
-				         │
-			      ┌──────┴──────┐
-			      ↓             ↓
-			 ┌────────┐   ┌────────┐
-			 │ PHP CI │   │PythonCD│
-			 │:8080   │   │:8081   │
-			 └────────┘   └────────┘
+		┌────────────────────────────────────────────┐
+		│ 数据库 (SQLite / MySQL / MariaDB)          │
+		│                                            │
+		│  ci_pipeline_artifacts ← CI 写             │
+		│  cd_servers            ← CD 维护           │
+		│  cd_deploy_logs        ← CD 写             │
+		│  cd_approvals(_rules)  ← CD 写             │
+		│  cd_sessions           ← CD 写/删          │
+		│  cd_bots               ← CD 维护           │
+		└──────────────────────┬─────────────────────┘
+							   │
+					  ┌────────┴────────┐
+					  ↓                 ↓
+		     ┌────────────────┐    ┌──────────┐
+		     │Devops Glue API │    │Devops CD │
+		     │     :8080      │    │  :8081   │
+		     └────────────────┘    └──────────┘
 ```
 
-> **数据归属**：除上述共享表外，CD 自行维护其余 `cd_*` 表（webhook、监控、告警、制品缓存、配置、会话、审批）。CI 侧的构建数据（pipeline、映射、构建记录）由 CD 通过 CI 的 HTTP API 获取，不直接读取其他 `ci_*` 表。
+> **数据归属**：CD 自行维护全部自有 `cd_*` 表（webhook、监控、告警、制品缓存、配置、会话、审批）；CI 侧的构建数据（pipeline、映射、构建记录）由 CD 通过 CI 的 HTTP API 获取，不直接读取任何 `ci_*` 表。
 >
 > **构建页的 ref 候选值**同样经 Glue 的 HTTP 端点获取：`GET /api/git/{path}/refs` 一次返回分支 + Tag（`/api/build/{path}/branches` 只给分支），CD 侧透传为 `GET /api/ci/projects/{pid}/refs`，前端分组渲染（分支与 Tag 可能重名）。Glue 版本过旧（无该路由）时自动回退 `/branches`，Tags 为空。
 
-> **数据库选型**：PHP CI 和 CD Service 必须使用同一个数据库实例。
-> - **SQLite**：零配置，适合单机开发/测试。容器部署时必须挂载共享卷，确保两边进程能访问同一个 `.db` 文件。
-> - **MySQL 8.0+ / MariaDB 10.4+**：推荐生产环境使用，支持并发读写，无需共享卷。
+> **数据库选型**：CI 与 CD 可共用同一个库，也可各用独立库（CD 不读 `ci_*` 表，跨服务数据走 HTTP）。
+> - **SQLite**：零配置，适合单机开发/测试；共库部署时容器须挂载共享卷，两边访问同一个 `.db` 文件。
+> - **MySQL 8.0+ / MariaDB 10.4+**：推荐生产环境，支持并发读写。
 
 ## 部署模式矩阵
 
@@ -93,25 +92,25 @@
 
 ## 设计模式
 
-- **Strategy 模式**：`BuildProviderInterface`（PHP CI）/ `Deployer`（Python CD）抽象基类 + Registry 注册表
+- **Strategy 模式**：`BuildProviderInterface`（Devops_Glue API）/ `Deployer`（Python CD）抽象基类 + Registry 注册表
 - **工厂模式**：`GitProviderFactory` 按 URL 自动匹配 Git 平台适配器
-- **双驱动数据库**：SQLite / MySQL / MariaDB 统一接口，一套代码三种模式，与 PHP API 共享同一数据库实例
+- **双驱动数据库**：SQLite / MySQL / MariaDB 统一接口，一套代码三种模式；`cd_*` 表可共库或用独立库
 
 ## CD 表清单（集成服务开关 × 部署闸门）
 
-「CD 是否启用」由 **Devops-Glue 的集成服务契约表 `integrated_services`** 决定（CI 是唯一写入方）：`service_name='cd'` 那一行的 `enabled` 与 `provision` 就是开关，CD 只读（`Database.cd_integration_state()`），不再用「表在不在」猜启用状态。
+「CD 是否启用」由 Devops-Glue 后台的「集成服务」开关决定：CD 经契约端点 `GET /api/integration/services/cd` 读取 `enabled` 与 `provision`，不再用「表在不在」猜启用状态。
 
-| 契约行状态 | CD 行为 | 闸门 |
+| 契约答复 | CD 行为 | 闸门 |
 |-----------|---------|------|
-| 表 / 行缺失，或 `enabled<>1` | 零 DDL | 503 `errors.cd_not_enabled`（去 CI 后台「集成服务」启用） |
+| 未启用（`enabled<>1`） | 零 DDL | 503 `errors.cd_not_enabled`（去 CI 后台「集成服务」启用） |
 | `enabled=1` + `provision='auto'` | 首次连库自动建全清单 + 补缺失列 + 补索引（MySQL / SQLite 同理） | 表没建全 → 503 `errors.cd_not_deployed`（重启 CD 自愈） |
 | `enabled=1` + `provision='manual'` | 零 DDL（结构归 DBA：MySQL 导入 `database/init_mysql.sql`） | 缺表 → 503 `errors.cd_not_deployed`（导入建表脚本） |
 
 关闭集成服务只冻结准入：CD 表与数据原样保留，不 `DROP`。闸门覆盖登录、所有已持有会话的请求、公开 Webhook 接收与 WebShell 握手。
 
-**契约怎么读**：唯一通道为 Glue 的窄只读端点 `GET /api/integration/services/cd`（scope 复用 `build.read`，CD 现有服务 token 即可）。问不到（Glue 版本过旧 → 404/405、网络/鉴权失败、未配 `CI_API_URL`）一律按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不直读共享表，也不当作「未启用」。HTTP 通道带缓存窗口（`CI_CONTRACT_TTL`，默认 30s；`0` = 每次请求都问），窗口内复用结果，故 CI 后台改开关后 CD 最迟一个窗口生效。这样 CD 不再与 Glue 的库结构（表名 / 列名 / 驱动）绑死，将来拆库独立部署也不影响闸门。
+**契约怎么读**：唯一通道为 Glue 的窄只读端点 `GET /api/integration/services/cd`（scope 复用 `build.read`，现有服务 token 即可）。问不到（Glue 过旧 → 404/405、网络/鉴权失败、未配 `CI_API_URL`）一律按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不当「未启用」。带缓存窗口（`CI_CONTRACT_TTL`，默认 30s；`0` = 每请求都问），后台改开关最迟一个窗口生效。
 
-部署日志的解耦方向与契约读取对称：CI 改经 HTTP 只读端点 `GET /api/integration/deploy-logs` 拉取部署记录（入站静态 token `CD_API_TOKEN` + Bearer；10 列 + 筛选 + 分页，可用性走状态码），不再读共享视图。共享视图 `v_glue_deploy_logs` 已删除。
+部署日志方向对称：CI 经 HTTP 只读端点 `GET /api/integration/deploy-logs` 拉取部署记录（入站静态 token `CD_API_TOKEN` + Bearer；10 列 + 筛选 + 分页），不再读共享视图。共享视图 `v_glue_deploy_logs` 已删除。
 
 **增删一张 CD 表 = 只改四处**（闸门判定、错误文案、启动告警、张数全部自动跟随，不写死数字）：
 

@@ -85,30 +85,24 @@ def get_db() -> Database:
 def cd_deploy_gate(db: Database) -> None:
     """部署闸门:CD 必须'已启用'且'表建全'才放行,否则禁止一切操作.
 
-    判据 = Devops-Glue 的集成服务契约表(CI 是唯一写入方;语义见 database.py 顶部注释):
-    1) 未启用(契约表 / 契约行缺失,或 enabled<>1)→ 503 errors.cd_not_enabled,**用户可见提示
-       只留 CD_NOT_ENABLED_MSG**(免把提示框撑长),动作细节(cd_not_enabled_hint)随 detail.hint
-       与启动日志下发;CD 不提供自开通入口,也不会因为'表恰好存在'就放行;
-    2) 已启用但清单没建全 → 503 errors.cd_not_deployed,带缺失表明细 + 按 provision 给正确动作
-       (auto:CD 自动建表,重启即自愈;manual:MySQL 导入 database/init_mysql.sql);
-    3) 两者都满足才放行.半套 schema 一律不放行:登录后各功能只会缺表 500,甚至写坏数据.
+    判据 = Glue 的契约端点答复(见 database.py 顶部注释):
+    1) 未启用(enabled<>1)→ 503 errors.cd_not_enabled,用户可见提示只留 CD_NOT_ENABLED_MSG,
+       动作细节(cd_not_enabled_hint)随 detail.hint 与启动日志下发;
+    2) 已启用但清单没建全 → 503 errors.cd_not_deployed,带缺失表明细 + 按 provision 给动作
+       (auto:重启自愈;manual:导入 database/init_mysql.sql);
+    3) 两者都满足才放行.
 
     覆盖:OIDC 登录(start / callback)+ 所有带 verify_token / get_current_user 的接口 +
-    公开 Webhook 接收端点 + WebShell 的 WS 握手 -- 即'即使能登录,也禁止做任何操作';
-    无认证的探活接口(/health,/api/info,/metrics)保持可用.
-
-    该拒绝属'部署状态'而非'凭据失败';契约端点问不到抛 ContractUnavailableError(503
-    errors.ci_contract_unreachable),数据库当前不可用抛 DatabaseUnavailableError(503
-    errors.db_unavailable),与上面两种严格区分(见 database.py).
-    顺序'先读契约,再查清单':未启用时不数表(省一次元数据查询),提示也不跑偏.
+    公开 Webhook 接收端点 + WebShell 的 WS 握手;无认证的探活接口(/health,/api/info,/metrics)
+    保持可用. 契约端点问不到抛 ContractUnavailableError(503 errors.ci_contract_unreachable),
+    数据库当前不可用抛 DatabaseUnavailableError(503 errors.db_unavailable).
     """
     from backend.exceptions import AppException
 
     state = db.cd_integration_state()
     if not state.enabled:
         raise AppException(
-            # 用户可见文案只留这一句(登录页读 error,toast 读 error_key→i18n);message 的定位
-            # 就是"无前端翻译时的兜底展示"(见 exceptions.AppException),不该塞长提示.
+            # 用户可见文案只留这一句;动作细节(cd_not_enabled_hint)走 detail.hint(启动日志也打印同一份).
             CD_NOT_ENABLED_MSG,
             status_code=503,
             # 动作细节(cd_not_enabled_hint)走 detail.hint:useError 只渲染"字符串型"detail,
@@ -129,8 +123,7 @@ def cd_deploy_gate(db: Database) -> None:
     )
 
 
-# ── 会话校验 + 惰性 Glue 复核:全程不读共享表 ──
-# 会话存 cd_sessions(CD 自有表):不透明 token + 401 语义,与 Glue 的 admin_users 无关.
+# ── 会话校验 + 惰性 Glue 复核:会话存 CD 自有表 cd_sessions(不透明 token). ──
 
 
 def _oidc_session(db: Database, token: str) -> dict:

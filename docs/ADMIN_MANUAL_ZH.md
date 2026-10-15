@@ -56,7 +56,7 @@
 ### 2.1 部署配置：项目根 `.env`
 
 ```env
-# ── 数据库（必填，必须与 Devops-Glue API 一致）──
+# ── 数据库（必填，指向 CD 表所在的库：与 Glue 共库或 CD 专用库均可）──
 DB_DRIVER=sqlite
 DB_PATH=../Devops-Glue/config/data/data.db
 
@@ -73,9 +73,9 @@ HARBOR_BASE_URL=https://hub.example.com
 HARBOR_USER=admin
 HARBOR_PASSWORD=
 
-# ── CI API 集成（可选，构建管理功能）──
+# ── Glue API（必填：OIDC 身份 / 权限 / 契约闸门全走 Glue API，登录必需）──
 CI_API_URL=http://127.0.0.1:8080      # Devops-Glue API 地址（含端口）
-CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/第三方）推荐
+CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/第三方）
 # CI_ADMIN_USER=admin                 # 未配置 token 时回退：CI 系统管理员账号
 # CI_ADMIN_PASS=                      # 未配置 token 时回退：CI 系统管理员密码
 
@@ -85,7 +85,7 @@ CI_API_TOKEN=dg_xxx                   # API Token（dg_ 前缀，服务账号/�
 # 公开示例值 devops_cd_2026 / change_me_to_secret 会被拒绝并回退随机密钥。
 SECRET_KEY=
 
-# ── 可信反向代理跳数：0=直连（默认，忽略 X-Forwarded-For）；前置 nginx 设 1，多层递增 ──
+# ── 可信反向代理跳数（已无消费者，仅为兼容旧配置保留）──
 TRUSTED_PROXY_HOPS=0
 
 # ── 登录方式（Devops-Glue 单点登录，唯一方式）──
@@ -130,40 +130,72 @@ LOG_TRUNCATE_CHARS=20000
 NOTIFY_TRUNCATE_CHARS=200
 ```
 
+### 2.3 联合部署（与 Devops-Glue 共用 Docker Compose / `.env`）
+
+Devops-Glue 的 `docker-compose.yml` 内置 `devops-cd` 段（`build: ../Devops_CD`，默认注释掉），取消注释即把 CD 纳入同一 compose 项目。该段 `env_file: .env` 直接复用 Glue 根 `.env`，`environment` 覆盖 `TZ / CI_API_URL / SECRET_KEY`。
+
+**可直接共用 Glue 根 `.env` 的变量**（CD 读入后自动忽略与本服务无关的键）：
+
+| 变量 | 说明 |
+|------|------|
+| `DB_DRIVER / DB_HOST / DB_PORT / DB_USER / DB_PASS` | 共库时直接共用；**拆库部署须在 CD 段 `environment` 里覆盖 `DB_NAME`**（如 `DB_NAME: devops_cd`），不能靠 `env_file`（里面是 Glue 的库名） |
+| `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | 两服务指向同一 Harbor，直接共用 |
+| `SECRET_KEY` | 共用（Glue 的 CD 段以 `${SECRET_KEY:?}` 强制要求已设置） |
+| `CI_API_TOKEN` | 共用：CD 用同一服务 token 调 Glue API |
+| `CD_API_TOKEN` | 两端必须同值：CD 校验入站 Bearer，Glue 拉取 deploy-logs 时携带 |
+| `TZ` | 建议两侧一致（定时发布 / 审批单按此时区执行） |
+
+**Glue 专属键，CD 自动忽略**：`DB_ROOT_PASS / CD_BASE_URL / TRUSTED_PROXY_HOPS`。
+
+**CD 专属必填项**（写进 Glue 根 `.env` 即随 `env_file` 注入 CD 容器）：`OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI`。
+
+### 2.4 裸机部署所需配置
+
+复制 `.env.example` 为 `.env`，按下表配齐即可（启动步骤见 README「快速开始」：`python -m venv venv` → 安装依赖 → `python main.py`）：
+
+| 分区 | 变量 | 必填？ |
+|------|------|--------|
+| 数据库 | `DB_DRIVER=sqlite` + `DB_PATH`（或 MySQL 5 项） | 必填 |
+| OIDC 单点登录 | `OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI` | 必填（缺一项启动记 ERROR，登录页提示缺哪些） |
+| Glue API | `CI_API_URL / CI_API_TOKEN` | 必填（登录必需） |
+| Harbor | `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | 必填 |
+| 加密密钥 | `SECRET_KEY` | 可留空：首次运行自动生成 `.cd_secret_key`（勿提交、勿删除） |
+| 可选 | `TZ / HOST / PORT / DINGTALK_SECRET / CD_API_TOKEN`（启用 deploy-logs 拉取时必填） | 按需 |
+
 ## 3. 数据库说明
 
-> **关键**：cd_service 没有独立数据库，必须与 Devops-Glue API 共用同一个数据库实例（CD 自己的 `cd_*` 表都在这个共享库里）。CD 只经 Devops-Glue 的契约端点 `GET /api/integration/services/cd` 读启用状态（不再探测 `ci_pipeline_artifacts`，也不直读契约表）；问不到时按「契约不可达」fail-closed，见下「契约怎么读」。
+> **关键**：CD 只读写自有 `cd_*` 表 —— 可与 Devops-Glue 共用同一个库，也可拆库用 CD 专用库（如 `devops_cd`）；CD 不读取 CI 的任何表，跨服务数据（启用状态、身份、权限、构建/Tag）一律走 Glue 的 HTTP API。启用状态唯一通道为契约端点 `GET /api/integration/services/cd`，问不到按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），见下「契约怎么读」。
 
 | 驱动 | 适用场景 | 注意 |
 |------|----------|------|
-| `sqlite` | 开发/单机测试 | 必须指向同一个 `.db` 文件，容器部署需挂载共享卷 |
-| `mysql` | 生产环境（推荐）| 避免 SQLite 并发写入问题，支持 CD 和 PHP API 同时读写 |
+| `sqlite` | 开发/单机测试 | 共库部署时须指向同一个 `.db` 文件，容器需挂载共享卷 |
+| `mysql` | 生产环境（推荐）| 避免 SQLite 并发写入问题 |
 
 ### CD 表由谁创建（集成服务开关 = 部署闸门）
 
-「CD 启用了没有」由 **Devops-Glue 的集成服务契约表 `integrated_services`** 决定（CI 是唯一写入方；语义见 Devops-Glue 管理手册的「集成服务」章节）：表里 `service_name='cd'` 的那一行带两个开关 —— `enabled` 与 `provision`，CD 进闸门时经 Glue 的契约端点 `GET /api/integration/services/cd` 读取，不再用「表在不在」猜启用状态。
+「CD 启用了没有」由 Devops-Glue 后台「API集成服务」的开关决定：CD 经 Glue 的契约端点 `GET /api/integration/services/cd` 读取该开关上的 `enabled` 与 `provision` 两个值，不再用「表在不在」猜启用状态。
 
-| 契约行状态 | CD 的行为 | 未满足时的表现 |
+| 契约答复 | CD 的行为 | 未满足时的表现 |
 |-----------|-----------|----------------|
-| 契约表缺失 / 契约行缺失 / `enabled<>1` | **零 DDL**：不建表、不补列、不补索引 | 登录与所有已持有会话的请求一律 503 `errors.cd_not_enabled`（提示去 CI 后台启用 CD） |
+| 未启用（`enabled<>1`） | **零 DDL**：不建表、不补列、不补索引 | 登录与所有已持有会话的请求一律 503 `errors.cd_not_enabled`（提示去 CI 后台启用 CD） |
 | `enabled=1` + `provision='auto'` | **CD 自动建表**（MySQL 与 SQLite 同理）：首次连库建全 `CD_REQUIRED_TABLES`（当前 14 张）+ 补既有表缺失列 + 补索引 | 表没建全（建表失败、运行期被 DROP 等）→ 503 `errors.cd_not_deployed`（提示重启 CD 即自愈） |
 | `enabled=1` + `provision='manual'` | **零 DDL**：只认运维预建的表（MySQL 由管理员导入 `database/init_mysql.sql`） | 缺任何一张 → 503 `errors.cd_not_deployed`（提示导入建表脚本） |
 
 要点：
 
-- **启用动作只在 CI 后台完成**（Devops-Glue →「API集成服务 → 启用」开启 Devops-CD）：CD 不提供自开通入口、不写种子，也**不会因为「表恰好存在」就放行**；
-- **契约怎么读**：唯一通道为 Glue 的契约端点 `GET /api/integration/services/cd`（CD 现有服务 token 的 `build.read` scope 即可，无需新 token）。问不到（Glue 版本过旧 404/405、网络/鉴权失败、未配 `CI_API_URL`）一律按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不直读契约表，也不当作「未启用」。HTTP 通道带缓存窗口 `CI_CONTRACT_TTL`（默认 30s，`0` = 每请求都问），因此**改完开关最迟一个窗口生效**；响应缺少 `enabled` 字段同样按「问不到」处理，绝不把 CD 静默关掉；
-- `provision` 由 CI 在**启用那一刻**按其迁移模式写入：`DB_AUTO_MIGRATE` 开启 → `auto`（授权 CD 建表），关闭 → `manual`（结构归 DBA）。CD 只读这个值，不做二次判断；
-- **关闭集成服务只冻结准入**：CD 表与数据原样保留，不 `DROP` / 清空；重新启用后历史数据继续可用（CI 只换掉契约行上的 token 引用）；
-- 闸门覆盖：登录（排在限流计数之前）+ 所有已持有会话的请求 + 公开 Webhook 接收端点 + WebShell（WebSocket 握手）—— 即「即使能登录，也禁止做任何操作」；这类 503 属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享的登录失败锁；无认证的探活接口（`/health`、`/api/info`、`/metrics`）保持可用，便于排障。
+- **启用动作只在 CI 后台完成**（Devops-Glue →「API集成服务 → 启用」开启 Devops-CD）：CD 不提供自开通入口，也不会因为「表恰好存在」就放行；
+- **契约怎么读**：唯一通道为 Glue 的契约端点 `GET /api/integration/services/cd`（现有服务 token 的 `build.read` scope 即可）。问不到（Glue 过旧 404/405、网络/鉴权失败、未配 `CI_API_URL`、响应缺 `enabled` 字段）一律按「契约不可达」fail-closed（503 `errors.ci_contract_unreachable`），不当「未启用」。带缓存窗口（`CI_CONTRACT_TTL`，默认 30s，`0` = 每请求都问），改开关最迟一个窗口生效；
+- `provision` 由 CI 在启用那一刻按其迁移模式写入（`DB_AUTO_MIGRATE` 开 → `auto`，关 → `manual`），CD 只读；
+- **关闭集成服务只冻结准入**：不 `DROP` / 清空 CD 表，重新启用后历史数据继续可用；
+- 闸门覆盖：登录（排在限流之前）、所有已持有会话的请求、公开 Webhook 接收端点、WebShell 握手。这类 503 属部署状态而非凭据错误，不计入登录失败计数；`/health`、`/api/info`、`/metrics` 保持可用。
 
 **`provision='manual'`（MySQL）**：由管理员手动导入建表脚本 —— 该脚本也是「库结构升级」的手段，必须把**清单 `CD_REQUIRED_TABLES` 里的表建全**（当前 14 张；以后加表/删表，这张清单就是唯一准绳，闸门、错误文案、告警都会自动跟随，不写死张数）：
 
 ```bash
-mysql -u root -p devops_glue < database/init_mysql.sql
+mysql -u root -p <目标库名> < database/init_mysql.sql
 ```
 
-脚本是幂等的（`CREATE TABLE IF NOT EXISTS` + `INFORMATION_SCHEMA` 守卫的 `__add_column` / `__add_index`），可安全重复执行；**升级后也请重跑一次**以补齐新增表/新列。按当前清单（14 张）导入后共享库中会出现以下 CD 表（闸门清单与之一一对应；清单增删表时此表同步增减）：
+目标库 = CD 表所在的库（共库时为 Glue 的库名，拆库时为 CD 专用库名，如 `devops_cd`）。脚本幂等（`CREATE TABLE IF NOT EXISTS` + `INFORMATION_SCHEMA` 守卫），可安全重复执行；**升级后也请重跑一次**。按当前清单（14 张）导入后该库中会出现以下 CD 表：
 
 | 表名 | 说明 |
 |------|------|
@@ -224,7 +256,7 @@ docker compose up -d
 
 #### 与 Devops-Glue 部署关系
 
-CD Service 和 Devops-Glue（CI）共用同一个 MySQL（`devops_glue` 库），根据是否同主机分为三种方式：
+CD Service 的 `cd_*` 表可与 Devops-Glue 共库（`devops_glue`），也可用 CD 专用库（如 `devops_cd`），根据是否同主机分为三种方式：
 
 **方式一：同主机合并部署（推荐）**
 
@@ -494,7 +526,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 - 登出：POST `/api/logout` 服务端吊销会话 —— Token 立即失效
 - 受保护端点支持 `Authorization: Bearer <token>` 请求头或 HttpOnly cookie 两种方式
 - 放权 / 停用生效上限 60 秒（惰性复核）；Glue 不可达时 10 分钟内按 last-known-good 放行，超过即 503 fail-closed
-- 密码登录与 `AUTH_MODE` 开关已删除（本地 `admin_users.password_hash` 不再被 CD 读取）；`integrated_services` 契约表 / 必填项缺失时启动预检与闸门按原口径拒绝
+- 密码登录与 `AUTH_MODE` 开关已删除，OIDC 为唯一登录方式；契约端点问不到时启动预检与闸门按「契约不可达」拒绝
 
 ## 8. CI 构建管理集成（可选）
 

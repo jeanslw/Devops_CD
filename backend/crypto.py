@@ -77,9 +77,8 @@ def _get_secret_key() -> bytes:
 def _key_file_path() -> Path:
     """密钥文件位置:恒为 CD 项目根目录(BASE_DIR),不随 DB_PATH / 数据库模式变化.
 
-    DB_PATH 只用于打开与 Devops-Glue 共享的数据库文件,不参与任何落盘路径推导:
-    历史版本在 sqlite 模式下取 Path(DB_PATH).parent,会把 .cd_secret_key /
-    .cd_secret_key.salt 写进共享库所在的 Glue 目录(跨项目污染).本版起只认 CD 项目目录.
+    DB_PATH 只用于打开数据库文件,不参与任何落盘路径推导(历史版本取 Path(DB_PATH).parent,
+    会把密钥写进 Glue 目录,跨项目污染;本版起只认 CD 项目目录).
     """
     return BASE_DIR / ".cd_secret_key"
 

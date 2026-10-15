@@ -50,7 +50,7 @@
 
 ```
 		┌─────────────────────────────────────────────┐
-		│ Shared Database (SQLite / MySQL / MariaDB)  │
+		│ Database (SQLite / MySQL / MariaDB)         │
 		│                                             │
 		│  ci_pipeline_artifacts ← CI write           │
 		│  cd_servers            ←  CD maintain       │
@@ -58,24 +58,23 @@
 		│  cd_approvals(_rules)  ←  CD write          │
 		│  cd_sessions           ← CD write / delete  │
 		│  cd_bots               ← CD maintain        │
-		│  admin_users           ←  shared            │
-		└────────────────────┬────────────────────────┘
-							 │
-					  ┌──────┴──────┐
-					  ↓             ↓
-				  ┌────────┐   ┌────────┐
-				  │ PHP CI │   │PythonCD│
-				  │:8080   │   │:8081   │
-				  └────────┘   └────────┘
+		└──────────────────────┬──────────────────────┘
+							   │
+					  ┌────────┴────────┐
+					  ↓                 ↓
+		     ┌────────────────┐    ┌──────────┐
+		     │Devops Glue API │    │Devops CD │
+		     │     :8080      │    │  :8081   │
+		     └────────────────┘    └──────────┘
 ```
 
-> **Data ownership**: besides the shared tables above, CD maintains its own `cd_*` tables (webhooks, monitors, alerts, registry cache, config, sessions, approvals). CI-specific build data (pipelines, mappings, build records) is fetched from CI over its HTTP API — CD does not read other `ci_*` tables directly.
+> **Data ownership**: CD maintains all of its own `cd_*` tables (webhooks, monitors, alerts, registry cache, config, sessions, approvals). CI-specific build data (pipelines, mappings, build records) is fetched from CI over its HTTP API — CD never reads any `ci_*` table directly.
 >
 > **Ref candidates on the build page** also come from a Glue HTTP endpoint: `GET /api/git/{path}/refs` returns branches + tags in one call (`/api/build/{path}/branches` only returns branches). CD proxies it as `GET /api/ci/projects/{pid}/refs` and the build page renders two `<optgroup>`s (a branch and a tag can share a name). On an older Glue without that route the client falls back to `/branches`, so tags come back empty.
 
-**Database Selection**: PHP CI and CD Service must use the same database instance.
-- **SQLite**: Zero-config, suitable for single-host dev/test. Container deployments must mount a shared volume so both processes can access the same `.db` file.
-- **MySQL 8.0+ / MariaDB 10.4+**: Recommended for production. Supports concurrent read/write, no shared volume needed.
+**Database Selection**: CI and CD may share one database or each use its own (CD never reads `ci_*` tables; cross-service data travels over HTTP).
+- **SQLite**: Zero-config, suitable for single-host dev/test. When sharing one database, container deployments must mount a shared volume so both processes access the same `.db` file.
+- **MySQL 8.0+ / MariaDB 10.4+**: Recommended for production. Supports concurrent read/write.
 
 ## Deployment Mode Matrix
 
@@ -94,23 +93,23 @@
 
 - **Strategy Pattern**: `BuildProviderInterface` (PHP CI) / `Deployer` (Python CD) abstract base class + Registry
 - **Factory Pattern**: `GitProviderFactory` auto-matches Git platform adapter by URL
-- **Dual-driver Database**: SQLite / MySQL / MariaDB unified interface, one codebase for three modes, sharing the same database instance with PHP API
+- **Dual-driver Database**: SQLite / MySQL / MariaDB unified interface, one codebase for three modes; the `cd_*` tables may share a database or live in a dedicated one
 
 ## CD Table Inventory (Integrated-Service Switch × Deployment Gate)
 
-Whether "CD is enabled" is decided by **Devops-Glue's integration-service contract table `integrated_services`** (CI is the only writer): the `enabled` and `provision` values on the `service_name='cd'` row are the switches, and CD only reads them (`Database.cd_integration_state()`) instead of guessing from "does the table exist".
+Whether "CD is enabled" is decided by the integrated-service switch in the Devops-Glue console: CD reads `enabled` and `provision` through the contract endpoint `GET /api/integration/services/cd` instead of guessing from "does the table exist".
 
-| Contract row state | What CD does | Gate |
+| Contract reply | What CD does | Gate |
 |--------------------|--------------|------|
-| table / row missing, or `enabled<>1` | zero DDL | 503 `errors.cd_not_enabled` (enable it in the CI console under "Integrated Services") |
+| not enabled (`enabled<>1`) | zero DDL | 503 `errors.cd_not_enabled` (enable it in the CI console under "Integrated Services") |
 | `enabled=1` + `provision='auto'` | on first connect: create every listed table + add missing columns + indexes (MySQL and SQLite alike) | incomplete => 503 `errors.cd_not_deployed` (restart CD to self-heal) |
 | `enabled=1` + `provision='manual'` | zero DDL (schema owned by the DBA: MySQL imports `database/init_mysql.sql`) | missing table => 503 `errors.cd_not_deployed` (import the DDL script) |
 
 Disabling the integration service only freezes admission: the CD tables and their data stay as they are — never `DROP`ped. The gate covers login, every request carrying a session, the public webhook receiver and the WebShell handshake.
 
-**How the contract is read**: the only channel is Glue's narrow read-only endpoint `GET /api/integration/services/cd` (the existing service token's `build.read` scope is enough). When it cannot be reached (older Glue → 404/405, network/auth failure, `CI_API_URL` unset), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — it never reads the shared `integrated_services` table and never treats it as "not enabled". The HTTP channel is cached for a window (`CI_CONTRACT_TTL`, 30s by default; `0` = ask every request), so a switch flipped in the CI console takes effect within one window. CD is therefore no longer tied to Glue's database shape (table, columns, driver), which also keeps the gate working if the two ever run on separate databases.
+**How the contract is read**: the only channel is Glue's narrow read-only endpoint `GET /api/integration/services/cd` (the existing service token's `build.read` scope is enough). When it cannot be reached (older Glue → 404/405, network/auth failure, `CI_API_URL` unset), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — never treated as "not enabled". The channel is cached for a window (`CI_CONTRACT_TTL`, 30s by default; `0` = ask every request), so a switch flipped in the console takes effect within one window.
 
-The CI→CD deployment-log direction mirrors the contract read: CI pulls deployment records over the read-only HTTP endpoint `GET /api/integration/deploy-logs` (inbound static token `CD_API_TOKEN` + Bearer; 10 columns + filters + pagination, availability via status codes). The shared `v_glue_deploy_logs` view is removed.
+The CI→CD deployment-log direction mirrors it: CI pulls deployment records over the read-only HTTP endpoint `GET /api/integration/deploy-logs` (inbound static token `CD_API_TOKEN` + Bearer; 10 columns + filters + pagination). The shared `v_glue_deploy_logs` view is removed.
 
 **Adding or removing a CD table touches four places** (gate verdict, error texts, startup warning and counts all follow automatically — nothing is hard-coded):
 

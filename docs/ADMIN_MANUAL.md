@@ -57,7 +57,7 @@ Precedence: **process environment > root `.env` > `config/app.env` > code defaul
 ### 2.1 Deployment config: repo-root `.env`
 
 ```env
-# ── Database (required; must match Devops-Glue API) ──
+# ── Database (required; points to the database holding the CD tables — shared with Glue or dedicated) ──
 DB_DRIVER=sqlite
 DB_PATH=../Devops-Glue/config/data/data.db
 
@@ -74,9 +74,9 @@ HARBOR_BASE_URL=https://hub.example.com
 HARBOR_USER=admin
 HARBOR_PASSWORD=
 
-# ── CI API Integration (optional, for Build Management) ──
+# ── Glue API (required: OIDC identity / permissions / contract gate all go through the Glue API — needed for login) ──
 CI_API_URL=http://127.0.0.1:8080      # Devops-Glue API base URL (with port)
-CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account / third-party) — preferred
+CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account / third-party)
 # CI_ADMIN_USER=admin                 # fallback admin account login (only when token empty)
 # CI_ADMIN_PASS=                      # fallback admin account password (only when token empty)
 
@@ -88,7 +88,7 @@ CI_API_TOKEN=dg_xxx                   # API token (dg_ prefix, service account /
 # Public sample values devops_cd_2026 / change_me_to_secret are rejected and replaced by a random key.
 SECRET_KEY=
 
-# ── Trusted reverse-proxy hops: 0=direct (default, ignore X-Forwarded-For); 1 behind nginx, increase per extra layer ──
+# ── Trusted reverse-proxy hops (no consumer left; kept for old configs only) ──
 TRUSTED_PROXY_HOPS=0
 
 # ── Login method (Devops-Glue single sign-on, the only way in) ──
@@ -133,40 +133,72 @@ LOG_TRUNCATE_CHARS=20000
 NOTIFY_TRUNCATE_CHARS=200
 ```
 
+### 2.3 Joint Deployment (sharing Devops-Glue's Docker Compose / `.env`)
+
+Devops-Glue's `docker-compose.yml` ships a built-in `devops-cd` section (`build: ../Devops_CD`, commented out by default) — uncomment it to bring CD into the same compose project. That section reuses Glue's root `.env` via `env_file: .env` and overrides `TZ / CI_API_URL / SECRET_KEY` in `environment`.
+
+**Variables shared straight from Glue's root `.env`** (CD ignores keys irrelevant to it):
+
+| Variable | Notes |
+|----------|-------|
+| `DB_DRIVER / DB_HOST / DB_PORT / DB_USER / DB_PASS` | shared as-is when one database is used; **for a dedicated CD database you must override `DB_NAME` in the CD section's `environment`** (e.g. `DB_NAME: devops_cd`) — `env_file` alone would carry Glue's database name |
+| `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | both services point at the same Harbor |
+| `SECRET_KEY` | shared (Glue's CD section enforces it via `${SECRET_KEY:?}`) |
+| `CI_API_TOKEN` | shared: CD calls the Glue API with the same service token |
+| `CD_API_TOKEN` | must be identical on both sides: CD validates the inbound Bearer, Glue presents it when pulling deploy-logs |
+| `TZ` | keep both sides consistent (scheduled deploys / approvals follow this timezone) |
+
+**Glue-only keys, silently ignored by CD**: `DB_ROOT_PASS / CD_BASE_URL / TRUSTED_PROXY_HOPS`.
+
+**CD-specific required keys** (add them to Glue's root `.env`; `env_file` injects them into the CD container): `OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI`.
+
+### 2.4 Bare-Metal Deployment: Required Config
+
+Copy `.env.example` to `.env` and fill it in per the table below (startup steps: see the README quick start — `python -m venv venv` → install deps → `python main.py`):
+
+| Section | Variables | Required? |
+|---------|-----------|-----------|
+| Database | `DB_DRIVER=sqlite` + `DB_PATH` (or the 5 MySQL keys) | required |
+| OIDC SSO | `OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI` | required (missing one → ERROR at startup, login page lists what is missing) |
+| Glue API | `CI_API_URL / CI_API_TOKEN` | required (needed for login) |
+| Harbor | `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | required |
+| Encryption key | `SECRET_KEY` | may stay empty: auto-generated into `.cd_secret_key` on first run (do not commit or delete) |
+| Optional | `TZ / HOST / PORT / DINGTALK_SECRET / CD_API_TOKEN` (required once deploy-logs pulling is enabled) | as needed |
+
 ## 3. Database
 
-> **Critical**: cd_service has no independent database. It must share the same database instance as Devops-Glue API (CD's own `cd_*` tables live in that shared database too). It reads the enablement state only through Devops-Glue's contract endpoint `GET /api/integration/services/cd` (it no longer probes `ci_pipeline_artifacts` and never reads the contract table directly); when the endpoint cannot be reached, CD fails closed as "database unavailable" — see "How the contract is read" below.
+> **Critical**: CD only reads and writes its own `cd_*` tables — they may share one database with Devops-Glue or live in a dedicated CD database (e.g. `devops_cd`). CD never reads any CI table; cross-service data (enablement state, identity, permissions, builds/tags) travels over Glue's HTTP API. The only channel for the enablement state is the contract endpoint `GET /api/integration/services/cd`; when it cannot be reached, CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — see "How the contract is read" below.
 
 | Driver | Use Case | Notes |
 |--------|----------|-------|
-| `sqlite` | Dev / single instance | Must point to same `.db` file; mount shared volume for containers |
-| `mysql` | Production (recommended) | Avoids SQLite write contention between CD and PHP API |
+| `sqlite` | Dev / single instance | When sharing one database, point to the same `.db` file; mount a shared volume for containers |
+| `mysql` | Production (recommended) | Avoids SQLite write contention |
 
 ### Who Creates the CD Tables (Integrated-Service Switch = Deployment Gate)
 
-Whether "CD is enabled" is decided by **Devops-Glue's integration-service contract table `integrated_services`** (CI is the only writer; see the "Integrated Services" section of the Devops-Glue admin manual): the row with `service_name='cd'` carries two switches — `enabled` and `provision` — and CD reads them through Glue's contract endpoint `GET /api/integration/services/cd` instead of guessing from "does the table exist".
+Whether "CD is enabled" is decided by the switch in the Devops-Glue console ("API Integration Services"): CD reads the row's two switches — `enabled` and `provision` — through Glue's contract endpoint `GET /api/integration/services/cd` instead of guessing from "does the table exist".
 
-| Contract row state | What CD does | When it is not satisfied |
+| Contract reply | What CD does | When it is not satisfied |
 |--------------------|--------------|--------------------------|
-| contract table missing / row missing / `enabled<>1` | **zero DDL**: no table, no column, no index | login and every request carrying a session get 503 `errors.cd_not_enabled` (points you to the CI console) |
+| not enabled (`enabled<>1`) | **zero DDL**: no table, no column, no index | login and every request carrying a session get 503 `errors.cd_not_enabled` (points you to the CI console) |
 | `enabled=1` + `provision='auto'` | **CD creates its tables automatically** (MySQL and SQLite alike): on first connect it creates every table in `CD_REQUIRED_TABLES` (14 today) + adds missing columns + indexes | incomplete tables (creation failed, someone DROPped one, …) → 503 `errors.cd_not_deployed` (restart CD to self-heal) |
 | `enabled=1` + `provision='manual'` | **zero DDL**: only pre-created tables are accepted (MySQL: an administrator imports `database/init_mysql.sql`) | any table missing → 503 `errors.cd_not_deployed` (import the DDL script) |
 
 Key points:
 
-- **Enabling happens only in the CI console** (Devops-Glue → "API Integration Services → Enable" → turn on Devops-CD): CD offers no self-service entry, seeds nothing, and **never lets you in just because the tables happen to exist**;
-- **How the contract is read**: the only channel is Glue's contract endpoint `GET /api/integration/services/cd` (the existing service token's `build.read` scope is enough — no new token). When it cannot be reached (older Glue → 404/405, network/auth failure, `CI_API_URL` unset), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — it never reads the shared table and never treats it as "not enabled". The HTTP channel is cached for a window: `CI_CONTRACT_TTL` (30s by default, `0` = ask every request), so **a switch flipped in the console takes effect within one window**. A response without the `enabled` field is treated as "could not ask" — CD is never silently switched off;
-- `provision` is written by CI **at the moment of enabling**, following its own migration mode: `DB_AUTO_MIGRATE` on → `auto` (CD may create tables), off → `manual` (the DBA owns the schema). CD only reads this value;
-- **Disabling only freezes admission**: the CD tables and their data stay exactly as they are — nothing is `DROP`ped or wiped; after re-enabling, historical data is still there (CI merely re-points the token reference on the contract row);
-- the gate covers: login (before the rate-limit counter), every request carrying a session, the public webhook receiver and WebShell (WebSocket handshake) — "even if login were possible, no operation is allowed". Such a 503 is a **deployment state**, not a credential failure, so it is **not counted** in the login-failure lock shared with Devops-Glue; the unauthenticated liveness endpoints (`/health`, `/api/info`, `/metrics`) stay available for troubleshooting.
+- **Enabling happens only in the CI console** (Devops-Glue → "API Integration Services → Enable" → turn on Devops-CD): CD offers no self-service entry and **never lets you in just because the tables happen to exist**;
+- **How the contract is read**: the only channel is Glue's contract endpoint `GET /api/integration/services/cd` (the existing service token's `build.read` scope is enough). When it cannot be reached (older Glue → 404/405, network/auth failure, `CI_API_URL` unset, response missing the `enabled` field), CD fails closed as "contract unreachable" (503 `errors.ci_contract_unreachable`) — never treated as "not enabled". The channel is cached for a window (`CI_CONTRACT_TTL`, 30s by default, `0` = ask every request), so a switch flipped in the console takes effect within one window;
+- `provision` is written by CI at the moment of enabling, following its own migration mode (`DB_AUTO_MIGRATE` on → `auto`, off → `manual`); CD only reads it;
+- **Disabling only freezes admission**: nothing is `DROP`ped or wiped; after re-enabling, historical data is still there;
+- the gate covers: login (before the rate-limit counter), every request carrying a session, the public webhook receiver and the WebShell handshake. Such a 503 is a **deployment state**, not a credential failure, so it is **not counted** in the login-failure counter; `/health`, `/api/info` and `/metrics` stay available for troubleshooting.
 
 **`provision='manual'` (MySQL)**: an administrator imports the DDL script by hand — that script is also how the schema is upgraded, and it must create **every table of the `CD_REQUIRED_TABLES` inventory** (14 today; when tables are added or removed that list is the one source of truth and the gate, error messages and warnings follow automatically — no hard-coded counts):
 
 ```bash
-mysql -u root -p devops_glue < database/init_mysql.sql
+mysql -u root -p <target_db> < database/init_mysql.sql
 ```
 
-The script is idempotent (`CREATE TABLE IF NOT EXISTS` plus `INFORMATION_SCHEMA`-guarded `__add_column` / `__add_index`), so it is safe to re-run; **re-run it after every upgrade** to pick up new tables/columns. With the current inventory (14 tables) the shared database then contains the CD tables below (the gate list maps to them one-to-one; this table grows/shrinks with the inventory):
+The target database is where the CD tables live (Glue's database when sharing one, or a dedicated CD database such as `devops_cd` when split). The script is idempotent (`CREATE TABLE IF NOT EXISTS` plus `INFORMATION_SCHEMA`-guarded helpers), safe to re-run; **re-run it after every upgrade**. With the current inventory (14 tables) the database then contains the CD tables below:
 
 | Table | Description |
 |-------|-------------|
@@ -227,7 +259,7 @@ docker compose up -d
 
 #### Deploying with Devops-Glue
 
-CD Service shares the same MySQL database (`devops_glue`) with Devops-Glue (CI). Three deployment strategies depending on host layout:
+CD Service's `cd_*` tables may share Devops-Glue's database (`devops_glue`) or live in a dedicated CD database (e.g. `devops_cd`). Three deployment strategies depending on host layout:
 
 **Option A: Same-host Combined Deploy (Recommended)**
 
@@ -498,7 +530,7 @@ There is exactly one way in: **Devops-Glue single sign-on**.
 - Protected endpoints accept either the `Authorization: Bearer <token>` header or the HttpOnly cookie
 - Demotion / disable takes effect within 60 s (lazy revalidation); while Glue is unreachable the last-known-good identity is honoured for 10 minutes, then it fails closed with 503
 
-- Password login and the `AUTH_MODE` switch are gone (CD no longer reads `admin_users.password_hash`); a missing `integrated_services` contract row or missing required keys is still rejected by the startup precheck and the deploy gate
+- Password login and the `AUTH_MODE` switch are gone — OIDC is the only login method; when the contract endpoint cannot be reached, the startup precheck and the deploy gate reject as "contract unreachable"
 
 ## 8. CI Build Management Integration (optional)
 

@@ -1,5 +1,5 @@
 # CD Service - 和 PHP Devops-Glue 搭配使用
-# 数据库推荐 MySQL / MariaDB,和 PHP 端共用 devops_glue 库
+# 数据库推荐 MySQL / MariaDB
 #
 # 配置分两层:
 #   · 部署层 -- 根目录 .env(数据库 / SECRET_KEY / Harbor / CI 凭据 / TZ),下面 env_file 注入容器;
@@ -44,8 +44,10 @@ services:
             if missing:
                 print('[启动中止] DB_DRIVER=mysql 时必须在 .env 配置：' + '、'.join(missing))
                 print('[ABORT] DB_DRIVER=mysql requires these .env entries: ' + ', '.join(missing))
-                print('           与 Devops-Glue 联合部署时，账号口令应与 CI 根 .env 的 DB_USER/DB_PASS 一致。')
-                print('           When deployed together with Devops-Glue, use the same DB_USER/DB_PASS as in the CI root .env.')
+                print('           与 Devops-Glue 共用同一个库时，账号口令应与 CI 根 .env 的 DB_USER/DB_PASS 一致；')
+                print('           CD 专用库(拆库部署)则使用该库自己的账号口令。')
+                print('           When sharing the Glue database, use the same DB_USER/DB_PASS as in the CI root .env;')
+                print('           a dedicated CD database (split-DB deploy) uses its own credentials.')
                 print('------------------------------------------------------------------------')
                 print('请补全 .env 后重新执行 / Fill in .env, then run again: docker compose up -d --build')
                 sys.exit(1)
@@ -161,7 +163,7 @@ services:
           cpus: ${CD_CPU_RESERVE:-0.25}
           memory: ${CD_MEM_RESERVE:-256m}
 
-    # MySQL / MariaDB 模式(推荐):和 PHP 端共用 devops_glue 库
+    # MySQL / MariaDB 模式(推荐)
     # 需要在 .env 中配置 DB_DRIVER=mysql 及连接信息
     # ── SQLite 模式(可选,取消下面注释)──
     # environment:

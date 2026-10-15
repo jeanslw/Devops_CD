@@ -27,7 +27,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Language**：Python 3.10+
 - **Framework**：FastAPI + uvicorn (async)
 - **Frontend**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
-- **Database**：No standalone database — shares the same database instance as Devops-Glue API (SQLite / MySQL 8.0+ / MariaDB 10.4+)
+- **Database**：CD owns its `cd_*` tables — they can live in a database shared with Devops-Glue API or in a dedicated CD database (neither side reads the other's tables; cross-service data travels over HTTP). SQLite / MySQL 8.0+ / MariaDB 10.4+
 - **Port**：8081
 - **Version**：v1.6.0 (Changelog updated 2026-10-14)
 - **Authentication**: Devops-Glue single sign-on (OIDC), the only login method. Identity and permissions come from the Glue API. Opaque session tokens (HttpOnly cookie / Bearer header, revocable server-side on logout). Cannot be used independently.
@@ -49,8 +49,8 @@ pip install -r requirements.txt
 
 # Configure environment (deployment values: database / Harbor / CI credentials / SECRET_KEY)
 cp .env.example .env
-# DB_DRIVER=sqlite (default; must point to the same .db file as the PHP API, e.g. ../php_api/config/data/data.db)
-# or DB_DRIVER=mysql (recommended; must share the same database with the PHP API)
+# DB_DRIVER=sqlite (default; a dedicated .db file works — or share the PHP API's file, e.g. ../php_api/config/data/data.db)
+# or DB_DRIVER=mysql (recommended; dedicated CD database, or shared with the PHP API)
 # SECRET_KEY: bare-metal may leave it empty (auto-generates .cd_secret_key); docker compose REQUIRES it
 # (read-only container cannot write the key file) — openssl rand -base64 32 (see docs/ADMIN_MANUAL.md)
 # Application parameters (timeouts / cache TTLs / intervals / monitoring switch) live in config/app.env with sane defaults
@@ -69,7 +69,7 @@ docker compose up -d --build
 # Open http://localhost:8081
 ```
 </details>
-> **SQLite caveat**：The CD Service shares the same SQLite database file with the PHP API. When deploying in containers, mount the database directory as a shared volume. For production, MySQL or MariaDB 10.4+ is strongly recommended to avoid SQLite write contention.
+> **SQLite caveat**：The CD Service can use its own SQLite file; if it shares one with the PHP API, mount the database directory as a shared volume when deploying in containers. For production, MySQL or MariaDB 10.4+ is strongly recommended to avoid SQLite write contention.
 
 ## Documentation
 
