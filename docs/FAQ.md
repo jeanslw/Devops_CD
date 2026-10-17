@@ -74,7 +74,7 @@ Also note: the gate covers login, requests carrying a session, the public webhoo
 Mount the database directory as a shared volume in `docker-compose.yml`:
 ```yaml
 volumes:
-  - /path/to/Devops-Glue/config/data:/shared_data
+  - config/data:/shared_data
 ```
 And set `.env`: `DB_PATH=/shared_data/data.db`
 

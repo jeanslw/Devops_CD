@@ -59,13 +59,15 @@ Precedence: **process environment > root `.env` > `config/app.env` > code defaul
 ```env
 # ── Database (required; points to the database holding the CD tables — shared with Glue or dedicated) ──
 DB_DRIVER=sqlite
-DB_PATH=../Devops-Glue/config/data/data.db
-
+DB_PATH=config/data/data.db
+```
+mkdir -p config/data && chown 1000:1000 config/data
+```
 # MySQL mode (recommended for production):
 # DB_DRIVER=mysql
 # DB_HOST=127.0.0.1
 # DB_PORT=3306
-# DB_NAME=devops_glue
+# DB_NAME=devops_cd
 # DB_USER=root
 # DB_PASS=
 
