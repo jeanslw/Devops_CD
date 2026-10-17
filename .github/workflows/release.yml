@@ -39,28 +39,36 @@ jobs:
           import sys
           from pathlib import Path
 
-          ver = sys.argv[1]
+          ver = sys.argv[1].lstrip("v")
           changelog = Path("docs/CHANGELOG.md")
           if not changelog.exists():
-              body = "⚠️ CHANGELOG.md not found"
-          else:
-              out, found = [], False
-              # 兼容标题格式:## v0.0.0 ... 与 ## [v0.0.0] ...
-              heading_re = re.compile(r"^##\s+\[?(?:v?)(\d+\.\d+\.\d+)\]?")
-              lines = changelog.read_text(encoding="utf-8-sig").splitlines()
-              for line in lines:
-                  m = heading_re.match(line)
-                  if m:
-                      if found:
-                          break
-                      if m.group(1) == ver.lstrip("v"):
-                          found = True
-                          continue
-                  if found:
-                      out.append(line)
-              body = "\n".join(out) if out else f"No changelog entry found for {ver}"
+              print("::error::docs/CHANGELOG.md not found")
+              sys.exit(1)
 
-          Path("release_notes.md").write_text(body + "\n", encoding="utf-8")
+          # 兼容标题格式:## v0.0.0 ... 与 ## [v0.0.0] ...
+          heading_re = re.compile(r"^##\s+\[?(?:v?)(\d+\.\d+\.\d+)\]?")
+          versions, out, found = [], [], False
+          for line in changelog.read_text(encoding="utf-8-sig").splitlines():
+              m = heading_re.match(line)
+              if m:
+                  versions.append(m.group(1))
+                  if found:
+                      break
+                  if m.group(1) == ver:
+                      found = True
+                      continue
+              if found:
+                  out.append(line)
+
+          # tag 必须在 changelog 中有对应条目,否则拒绝发布
+          if not out:
+              print(f"::error::No changelog entry found for v{ver} in docs/CHANGELOG.md")
+              sys.exit(1)
+          # changelog 顶部版本与 tag 不一致仅告警(允许旧分支补发)
+          if versions and versions[0] != ver:
+              print(f"::warning::Changelog top entry is v{versions[0]}, but tag is v{ver}")
+
+          Path("release_notes.md").write_text("\n".join(out).strip() + "\n", encoding="utf-8")
           PY
 
       - name: Publish GitHub Release
@@ -105,9 +113,14 @@ jobs:
             create_release
           fi
 
-          # 最终校验:确认 release 已正式发布
+          # 最终校验:确认 release 已正式发布,且绑定的 tag 与本次版本号一致
           if ! gh release view "$VERSION" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^false$'; then
             echo "::error::Release ${VERSION} is still not published"
             exit 1
           fi
-          echo "Release ${VERSION} is live"
+          RELEASE_TAG="$(gh release view "$VERSION" --json tagName --jq .tagName)"
+          if [ "$RELEASE_TAG" != "$VERSION" ]; then
+            echo "::error::Release ${VERSION} is bound to tag ${RELEASE_TAG}"
+            exit 1
+          fi
+          echo "Release ${VERSION} is live (tag=${RELEASE_TAG})"

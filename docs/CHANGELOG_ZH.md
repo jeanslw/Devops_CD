@@ -1,313 +1,215 @@
 # 更新日志
 
-## v1.6.0 (2026-10-14) — 本地登录 → OIDC 单点登录、契约读改走 HTTP
-
-> **⚠️ 重大更新 —— 破坏性变更**：v1.6.0 与 v1.5.x 及更早版本**不兼容**。本地登录移除、改为 OIDC 单点登录，部署日志共享视图改为 HTTP 契约；升级须配套对应版本的 Devops-Glue（CI），版本对应关系见管理员手册。
-
-### 升级注意:破坏性变更
-
-- **本地登录 → OIDC 单点登录**：本地密码登录已移除，登录唯一入口改为 Devops-Glue OIDC 单点登录（`/api/auth/oidc/start` → `/api/auth/oidc/callback`）。升级前须在根 `.env` 配置 `OIDC_ISSUER` / `CD_OIDC_SECRET` / `CD_OIDC_REDIRECT_URI`。
-- **启用状态由 Devops-Glue 集成服务契约决定**：先在 CI 后台「API集成服务 → 启用」开启 Devops-CD，否则 503 `errors.cd_not_enabled`。
-- `provision='auto'`（CI 的 `DB_AUTO_MIGRATE` 开启）自动建表；`provision='manual'` 由管理员导入 `database/init_mysql.sql`（幂等，升级后重跑）。
-- 关闭集成服务只冻结准入，不删表、不删数据。
-
-### 新增功能
-
-- **契约读改走 HTTP**：`Database.cd_integration_state()` 唯一通道为 Glue 契约端点 `GET /api/integration/services/cd`（Glue ≥ 2.9.0）；问不到（未配置 / 404 / 405 / 401 / 403 / 5xx / 超时 / 响应缺 `enabled`）一律 503 `errors.ci_contract_unreachable`，不误报为未启用，也不直读共享表。缓存窗口由 `CI_CONTRACT_TTL` 控制（默认 30s，`0` = 每请求都问）。
-- **构建页 ref 下拉支持 Tag**：新增 `GET /api/ci/projects/{pid}/refs` 透传 Glue `/api/git/{path}/refs`（返回 `{"branches": [...], "tags": [...]}`），前端按「分支 / 标签」`<optgroup>` 分组。Glue 版本过旧（404/405）自动回退 `/branches` 并负缓存 5 分钟；真实故障照旧上抛。
-- **CI→CD 部署日志契约端点 `GET /api/integration/deploy-logs`**：CI 侧 DeployLogRepository 改经 HTTP 拉取（入站静态 token `CD_API_TOKEN`，Bearer，常量时间比较），不再读共享视图 `v_glue_deploy_logs`；10 列 + `project`(模糊)/`status`/`deploy_type`/`date_from`/`date_to` 筛选 + `page`/`per_page`(≤100) 分页，可用性走状态码。共享视图 `v_glue_deploy_logs` 已删除。
-- **`provision='auto'` 自动建表**（MySQL 与 SQLite 一致）：首次连库建全 `CD_REQUIRED_TABLES`（14 张）+ 补列 + 补索引，并做清单自检。
-
-### 变更
-
-- **闸门判据 =「契约状态 × 清单完整性」**：未启用 → 503 `errors.cd_not_enabled`；缺表 → 503 `errors.cd_not_deployed`（提示按 `provision` 区分 auto 重启自愈 / manual 导入脚本）。
-- **`manual` 模式零 DDL**：结构升级由 DBA 执行建表脚本。
-- **监控页不再等所有主机**：服务器列表只读库立即返回，前端并发 `GET /api/monitor/servers/{id}/probe` 逐台回填；单台不可达只影响该行。
-- **出站地址族 `HTTP_IP_FAMILY`**（ipv4 / ipv6 / auto，默认 ipv4）：`backend/net.py` 重排 `socket.getaddrinfo`，改善服务端未监听 IPv6 时的失败重试。
-- **CI 表索引归属划清**：CD 不再对共享 `ci_pipeline_artifacts` / `ci_job_git_map` 建索引，改由 Glue 建库脚本负责。
-- **前端构建告警清零**：xterm 样式表路径 `/static/xterm/` → `/xterm/`；LoginView 由懒加载改为静态引入。
-
-### 修复
-
-- **WebShell 鉴权与 REST 同口径（越权修复）**：补 `_check_cd_access` + `_check_disabled`，权限分支改 fail-closed，与 `require_perm` 一致。
-
-## v1.5.7 (2026-10-08) — 安全加固、可观测性与 CI 工具链
-
-### 升级注意
-- 从 v1.5.7 及更早版本升级请**重跑 `database/init_mysql.sql`**（幂等），以补齐新表/新列。历史库若只导入了一部分表（或只剩旧版自愈逻辑建出的 `cd_sessions`），同样重跑脚本即可 —— 缺哪张建哪张，503 错误里的表名就是待补齐清单。
-
-### 安全
-- **不透明会话令牌** — 登录 token 由 `base64(username:hash:expires)` 改为 `secrets.token_urlsafe` 不透明随机串；新增 `cd_sessions` 会话表只存 SHA-256 摘要（库泄露不再暴露可用 token），`POST /api/logout` 删行即时吊销（原无状态 token 无法主动失效）。WebShell WS 握手同步改为会话校验。
-- **安全响应头 & HttpOnly Cookie** — 应用统一附加 `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` / CSP；登录下发 `HttpOnly` + `SameSite=Lax` Cookie（`Secure` 由 `COOKIE_SECURE` 开关），JS 无法读取 token；鉴权优先读 Cookie、回退 Bearer 头。前端移除 `?token=` URL / `sessionStorage` token，仅保留非敏感 `cd_authed` 标志。
-- **派生 PBKDF2 盐** — `_derive_key` 改为从 `SECRET_KEY` 派生盐（`_derive_salt` = `cd-service-pbkdf2-salt-v2:` + 密钥的 SHA-256），取代所有部署共享的固定盐 `cd-service-v1-salt`（彩虹表风险）；与 v1.5.7 短暂存在的 `.cd_secret_key.salt` 文件方案不同，它不需要任何文件写入，因此在 `read_only` 容器中可用且跨重启稳定。升级前 `enc:` 旧数据经 `_legacy_fernet`（固定盐）仍可解密；v1.5.7 盐文件若仍在磁盘上，则由只读的盐文件回退（`_salt_file_fernets`，仅查 CD 项目根目录中与密钥文件同目录的盐文件；`DB_PATH` 目录既不读也不写）解密。解密失败分级告警（非法 base64 = ERROR，全部密钥失败 = WARN）。
-- **密码哈希自动识别** — 登录经 `verify_password()` 校验 bcrypt 与 argon2id（按 `$argon2` 前缀自动分派），CI 切换 `PASSWORD_HASH_ALGO` 到 argon2id 不再使 CD 登录崩溃（`ValueError: Invalid salt` → 500）；任何校验失败返回 `False` 不抛异常。
-
-### 新增功能
-- **Prometheus `/metrics`** — 无需认证的指标端点，输出 uptime / version / 各状态部署计数 / running 数（Prometheus 文本格式）。
-- **幂等命令重试入口** — `retry_idempotent` 对可安全重跑命令（`docker compose up -d`、`kubectl apply`）做有限重试，消化瞬时 SSH/网络抖动；`deploy_retry_attempts` / `deploy_retry_delay` 可调（`=1` 关闭）。
-- **容器资源限制** — `docker-compose.yml` 增加 `deploy.resources.limits` / `.reservations`（服务级顶层 `resources:` 会被 Compose 静默丢弃、限制根本不生效；`CD_MEM_LIMIT` / `CD_CPU_LIMIT` / `CD_MEM_RESERVE` / `CD_CPU_RESERVE` 可覆盖）。
-
-### 变更
-- **MySQL 模式零 DDL（越界修复）** — 移除 `cd_sessions` 的 `CREATE TABLE IF NOT EXISTS` 自愈建表。CD 表全部由管理员手动导入 `database/init_mysql.sql` 建立，**该手动导入就是「启用 CD」的闸门**：未导入时应用不建表/建索引，共享库里不留任何 DDL 痕迹。此前那套「半套自愈」既越界又不自洽 —— 14 张 CD 表里只偷偷建了 1 张。仅保留对**已存在**表的缺失列幂等迁移（表不存在时自然跳过，零副作用）。
-- **表必须建全，否则禁止一切操作** — 新增 `Database.cd_missing_tables()` / `cd_deployed()`：按 `CD_REQUIRED_TABLES`（当前 14 张，与 `database/init_mysql.sql` 及 SQLite 建表清单双向校验）逐张核对，**少任何一张都算未部署**。闸门 `auth.cd_deploy_gate()` 覆盖登录（排在限流计数之前）、`authenticate()`、所有 `verify_token` / `get_current_user` 接口、公开 Webhook 接收端点与 WebShell 的 WebSocket 握手（独立鉴权路径，转 503 干净关闭而非握手期未捕获异常） —— 即「**即使能登录，也禁止做任何操作**」：半套 schema 放行只会让各功能到处 500、甚至写坏数据，因此统一返回 503 `errors.cd_not_deployed`（`error_params.tables` 列出缺失表，前端 i18n 插值展示「缺哪张」），并且只报警不补建。无认证的 `/health`、`/api/info`、`/metrics` 保持可用便于排障。该失败属于**部署状态**而非凭据错误，**不计入**与 Devops-Glue 共享 `cache` 表的登录失败锁（未启用的部署不该污染、更不该锁掉管理员账号）。
-- **清单即唯一真相源** — 「CD 到底启用了没有」只由 `CD_REQUIRED_TABLES` 这份清单决定（与清单张数无关）：以后新增/删除 CD 表只改三处（清单 + `database/init_mysql.sql` + `_ensure_cd_tables`），闸门判定、错误文案、启动告警、张数全自动跟随，代码里不写死数字；删表同理，无需改闸门逻辑。
-- **SQLite：建表清单自检 + 提示按驱动说实话** — SQLite 的 CD 表随库自动创建，`_ensure_cd_tables()` 末尾新增**清单自检**：清单里加了表却漏改建表逻辑时，首次连库即 `RuntimeError` 点名缺表（宁可启动失败，也不要半套 schema 跑到线上被闸门 503 才发现）。同时闸门文案不再写死「请导入 init_mysql.sql」，改为**中性描述 + 按驱动动作**（新增 `cd_deploy_hint()` 与 `Database.driver` 只读属性）：SQLite 告诉你去重启（自动建全自愈），只有 MySQL 才告诉你导入建表脚本 —— 不给运维错误指令；前端 `errors.cd_not_deployed` 中英文案同步改为按两种模式分别写明。
-- **启动醒目提示** — 服务启动时探测部署状态，未建全则打印 ERROR 日志并逐张列出缺失的表；不阻断启动，`/health`、`/api/info`、`/metrics` 仍可用于探活与排障。
-- **前端 i18n** — 新增 `errors.cd_not_deployed`（中/英，带 `{tables}` 缺失表插值）。
-- **库不可用 ≠ 未部署：原来漏成裸 500，现在统一 503** — 建表写不进去（SQLite 库文件只读/磁盘满/被占用）、库文件打不开、MySQL 取不到连接、构造期共享库校验失败，原先都会冒成**裸 500**（500 的语义是「程序缺陷」，运维会去查代码而不是环境）。现统一抛 `DatabaseUnavailableError` → **503 `errors.db_unavailable`**（`error_params.driver` / `.reason` 带上驱动与底层原因，前端中英同步新增 `errors.db_unavailable`），与「清单没建全」的 `errors.cd_not_deployed` 严格区分：前者查连接/权限/磁盘，后者才去补建表 —— error_key 不同，给的动作就不同，不会把人指向错误方向；清单自检的 `RuntimeError`（清单与 DDL 漂移 = 代码缺陷）仍原样冒泡，不被 503 掩盖。顺带修掉一个资源泄漏：建表/迁移抛异常时连接未关闭（Windows 上未关闭的句柄会锁住库文件，导致库文件删不掉、下次连库更糟），现在异常路径一律 `close()`。
-- **容器加固** — `cap_drop: ALL`、`no-new-privileges`、根文件系统 `read_only` + `/tmp` tmpfs，端口默认只绑 `127.0.0.1`（配合反代；`CD_BIND_IP=0.0.0.0` 恢复直连）。`env-check` 改为对**所有**数据库模式强制要求 `SECRET_KEY`（容器无条件 `read_only`，自动生成的 `.cd_secret_key` 永远写不出来），并对公开示例值 `devops_cd_2026` / `change_me_to_secret` 直接中止。
-- **`ALLOW_EMPTY_SYSTEMS` 配置** — `admin_users.systems` 为空默认放行（兼容旧数据）；严格环境可设 `false` 改为 deny-by-default。
-- **健康检查断言 DB** — compose healthcheck 改走 `/api/info`，要求 `status=running` 且 `db_connected=true`，DB 挂了不再误报绿灯。
-
-### 修复
-- **只读容器启动不再抛裸 `OSError`** — `SECRET_KEY` 未设置且密钥文件不可写时，`_resolve_secret()` 改为抛出中英双语 `RuntimeError` 并给出确切修复命令（`openssl rand -base64 32`），而不是导入期栈崩溃；`env-check` 在更早阶段对所有数据库模式中止。
-- **被放弃的 v1.5.7 盐文件不再导致凭据静默丢失** — v1.5.7 用 `.cd_secret_key.salt` 随机盐写入的密文仍可解出：该文件若仍存在，则只读地作为一把额外兼容密钥参与解密（不写入）；文件缺失或不可解析时自动跳过。
-
-### CI / 工具链
-- **全量测试进 CI** — pytest 全量 + `--cov` 覆盖率，新增 `.coveragerc`；锁定 `ruff==0.16.5` / `pip-audit==2.10.1` / `pytest==9.1.1` / `pytest-cov==7.1.0`。
-- **类型检查 & lint 进 CI** — mypy（`mypy==1.13.0`）加入 code-quality job；ESLint 9 flat config + `eslint-plugin-vue` v10，新增 `npm run lint` 步骤。
-- **供应链加固** — 5 个 workflow 的 `uses:` 由 `@vX` 全部钉到 commit SHA；`setup-python` 升级 v5→v6 消除 Node 20 弃用告警。
-
-### 测试
-- 新增 `backend/tests/test_cd_deploy_gate.py`：断言 MySQL 迁移路径只下发 `ALTER TABLE`、不出现 `CREATE TABLE` / `CREATE INDEX`（`cd_sessions` 不再被建）；校验闸门清单与 `database/init_mysql.sql`、`database.py` 自动建表**双向一致**（清单漂移即红灯）；覆盖「只缺一张 → 未部署且精确报出该表」、`authenticate` / `verify_token` / `get_current_user` / 公开 Webhook 接收统一 503、未带 token 仍 401、以及连接故障不被误判成「未部署」。
-- `backend/tests/test_auth_login.py` 补部署闸门用例（未建全：不查锁/不计数/不验密并下发缺失表；已建全：正常放行），并修正原用例把 `db` 误传为 `response` 的调用签名。
-- `test_cd_deploy_gate.py` 增加「清单唯一真相源」用例组：SQLite 自动建表必须覆盖清单每一项（集合比较，不写死张数）、清单多了表却缺 SQLite DDL 时首次连库即 `RuntimeError`、运行期 `DROP TABLE` 后闸门立刻拒绝且**重启自愈**、以及补表提示按驱动区分（MySQL 给导入脚本 / SQLite 给重启，不给出错指令）；WebShell 503 用例同步断言 SQLite 分支不再出现 `init_mysql.sql`。
-- **无 shell 包装 + 占位符 quote 回归** — 断言 SSH/Ansible/Compose 命令构建不包显式 shell 包装，且 `image/project/tag/path/inventory` 占位符一律 `shlex.quote`（含 `; rm -rf …` 的 project 被中性化）。
-- **`v_glue_deploy_logs` 契约测试** — 锁定 Glue 视图列，断言 SQLite 与 `init_mysql.sql` 暴露列完全一致。
-
-## v1.5.6 (2026-10-05) — 供 Glue 只读的部署日志契约视图
-
-### 新增功能
-- **`v_glue_deploy_logs` 契约视图** — 在 `cd_deploy_logs` 之上建只读视图，仅暴露审计列（`id, project, tag, image, deploy_type, target, status, triggered_by, deploy_note, created_at`），供 Devops-Glue 渲染「部署日志」审计列表。排除大字段（`output`、`stage_times`）与 CD 内部/运维列（`runner`、`heartbeat_at`、`duration_ms`、`lock_key`、`params_json`、`rollback_type`、`artifact_*`），保证 Glue 只依赖一份稳定、最小化的契约。MySQL 用 `CREATE OR REPLACE VIEW`；SQLite 启动时 `DROP VIEW IF EXISTS` + `CREATE VIEW` 自愈。
-
-## v1.5.5 (2026-10-03) — 部署核心加固
-
-### 修复
-- **Compose 部署权限映射** — `_DEPLOY_PERM_MAP` 补上缺失的 `compose` 键，使 `resolve_deploy_perm("compose")` 映射到 `cd.deploy.docker`；此前会回退到 `cd.deploy.single`，导致 Docker 部署权限错位。
-- **留空 `k8s_ns` 时的 namespace 处理** — 现从 manifest 解析出 `effective_ns`，`kubectl apply` 不带 `-n` 时验证/重启不再查错 namespace（消除「部署假失败」）。
-- **`/api/stop` 拦截 `k8s/*` 类型** — 该端点补上与 `/api/deploy`、`/api/deploy-stream` 一致的 K8s 子模式拦截，避免 `K8sSubDeployer.stop()` 签名错位（TypeError → 500）。
-- **空 `server_ids` 过滤 K8s 集群** — `_get_targets` 未选择服务器时不再把 `k8s`/`argocd`/`fluxcd` 集群当作 SSH/Compose 目标。
-- **首次部署 YAML 元数据解析** — `_get_yaml_metadata` 改为 cat 读文件 + yaml 本地解析，替代 `kubectl get -f`（资源尚未创建时会 NotFound），修复首次部署失败。
-- **占位符 / `ns_flag` 加 quote** — compose `commands` 模式与 helm `ns_flag` 对插值补 `shlex.quote`（对齐 `ssh.py` / `k8s_kubectl.py`）。
-- **SSH 命令超时** — `_exec_on` / `_ssh_cmd` 增加通道读超时（默认 130s），远端挂死不再让部署线程永久阻塞。
-- **busy 与收尾记录一致性** — SSH 路径统一抛 `ValidationError(error_key="errors.deploy_busy")`（对齐 K8s 路径）；`finish_deploy_record` 无 `deploy_id` 的兜底按 `project` 精确更新，不再裸更新全部 `running` 记录。
-
-## v1.5.4 (2026-09-23) — 配置分层：部署配置与业务参数分离
-
-### 变更
-- **配置分两层**：项目根 `.env` 只放部署配置（数据库连接、SECRET_KEY、Harbor / CI 凭据、监听地址、TZ、反代跳数）；业务参数（超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色 / 监控开关等）移到 `config/app.env`，随仓库与镜像发布。
-- **优先级**：进程环境变量 > 根 `.env` > `config/app.env` > 代码默认值。要覆盖某个业务参数，写进根 `.env`（Docker 下由 compose 注入）或 compose 的 `environment` 即可，**无需重建镜像**。
-- **联合部署无需改动 Devops-Glue 的 `docker-compose.yml`**：注释掉的 `devops-cd` 段没有任何 volume，CD 的业务参数来自镜像内 `config/app.env`，部署变量由该段的 `env_file: .env` 注入（`DB_HOST=mysql` 走 compose 服务名）。
-- 单独部署：`docker compose up -d --build`（业务参数取自镜像内 `config/app.env`）；裸机：在项目根执行 `python main.py` 即可 —— `backend/config.py` 自己读取根 `.env`，无需预先导出环境变量，也不依赖任何启动脚本。
-- 文档：管理员手册 §2 拆为「2.1 部署配置 / 2.2 业务参数」（中英）；`.env.example`、FAQ、README、CONTRIBUTING 与界面提示同步；`config/app.env` 内附完整注释。
-
-### 修复
-- **镜像同步把 Harbor 故障伪装成成功**：`RegistryService.sync_repo()` 的兜底 `except Exception` 把 `HarborUnavailableError` 一起吞掉并返回 0，导致 `POST /api/registry/sync` 返回 `{ok: true, total: 0}`、界面显示「同步完成」（后台线程日志同样记「定时同步完成」）。现在连接层错误直接上抛：接口返回 `{ok: false, error_key: "errors.harbor_unavailable"}`，界面显示「连接不可达」（红色，直到下次同步成功才恢复）；单个仓库的非连接类错误仍保持容错。回归测试见 `backend/tests/test_registry_sync.py`。
-- **启动即崩**：pydantic-settings 默认 `extra="forbid"`，`.env` 中存在非字段键（如 `TZ`，或联合部署时 Glue 侧注入的 `DB_ROOT_PASS`）会抛 `extra_forbidden`；现显式 `extra="ignore"`。
-
-## v1.5.3 (2026-09-14) — 审批申请人手动执行工作流、定时发布 & 审批修复
-
-### 新增功能
-- **审批工作流（申请人手动执行）**：`pending → approved → 申请人手动执行`——批准后单据仅可由申请人本人领取执行（保留四眼原则），支持同步 `POST /api/approvals/{id}/execute` 与 SSE `/execute-stream`。移除后台自动执行轮询；重启恢复按关联部署记录实际状态收敛 `deploying` 单据，避免重复部署。
-- **定时发布**：申请人在提交部署时可选填 `scheduled_at`；后台守护线程（30 秒）到点**以申请人身份**自动执行 `approved` 单据。有/无审批规则均生效（无规则 + 定时 → 自动批准单，到点执行）；格式非法返回 400。前端新增可选日期选择器与 ⏰ 徽章。
-- **CD 移除账户写接口**：`/api/users` 写 / 改密接口移除（统一在 CI/Glue 管理）；前端删除 `UsersView` / `UserCreateView`。
-- **部署记录与回滚**：`cd_deploy_logs.approval_id` 列（含历史回填）关联审批单；回滚支持自定义说明；ArgoCD 回滚摘要写入说明列。
-
-### 修复
-- 同步执行异常不再卡死审批单（释放项目并发锁）。
-- 撤销保留原审批人并触发撤销通知。
-- `resolve_target_envs` 改为 fail-closed（不再静默跳过审批）。
-- 启动恢复不再重开已完成的部署。
-- `/api/approvals` 规则匹配消除 N+1。
-- 部署记录审批徽章按状态渲染（原按 approver 判断）。
-- 移除遗留 `cd_admin` 默认角色（deny-by-default；新规则 `approver_role` 默认为空）。
-- `database/init_mysql.sql` 同步：`cd_approvals.scheduled_at`、`cd_deploy_logs.approval_id`、`approver_role DEFAULT ''`。
-
-### 测试
-- 审批用例扩充（定时发布、执行兜底、规则匹配/校验、撤销通知），共 114 个测试通过。
-
----
-
-## v1.5.2 (2026-09-13) — 安全加固版本（配套 Devops-Glue v2.8.1）
-
-### 安全
-- **所有部署入口增加镜像 tag 白名单**：tag 必须匹配 `^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`（符合 OCI 规范），非法 tag 在执行任何远程命令前返回 400。覆盖 Compose、SSH、kubectl/Helm/FluxCD 的 K8s 部署（含 `/deploy-k8s` 与流式变体）以及手工指定 tag 的回滚。注意：历史上的非法 tag（空格、分号等）此后会被拒绝。
-- **消除 Compose 部署器命令注入**：远程 `.env` 更新不再使用 `sed`/`echo` 插值，改为 `touch` + `grep -v` 删除旧 `IMAGE`/`TAG` 行 + `printf`（`shlex.quote`）重写；`docker image inspect/manifest/pull`、`compose up/ps`、`grep` 全部参数化引用，grep 加 `--`。FluxCD 调用（namespace 发现、`flux suspend`、jsonpath、grep 模式）同样全部 quote。
-- **共享登录失败锁定**：登录接入与 Devops-Glue CI 同一把锁——5 次失败 / 15 分钟，共享 `cache` 表，键为 `login_fail_`+md5(ip:lower(用户名))（HTTP 429，`errors.login_locked`）；验密前先查锁，停用/无 CD 权限等失败同样计数，登录成功清零。
-- **移除可伪造的 X-Forwarded-For 信任**：新增 `TRUSTED_PROXY_HOPS` 配置（默认 `0` = 忽略 XFF、只用 TCP 对端）；hops>0 且对端为环回/私网/链路本地时，按跳数从 XFF 右端取真实 IP，防止伪造 XFF 绕过锁定、污染审计 IP。
-- **审批四眼原则**：申请人不能批准或驳回自己发起的审批单（`super_admin` 也不例外，403 `errors.self_approval_forbidden`），必须由另一位审批人处理；批准后仍以申请人身份自动执行。
-- **拒绝公开弱 SECRET_KEY**：`devops_cd_2026` 与 `change_me_to_secret` 一律视为未配置并回退随机密钥，`.env.example` 不再提供默认密钥。使用过示例密钥的部署升级后需重新录入已加密的 SSH 口令/私钥。
-
-### 变更
-- webhook 事件入库不再使用 MySQL 的 `LAST_INSERT_ID()`，改读插入游标 `lastrowid`，修复 SQLite 下 webhook 写入失败。
-- 空/纯空白用户名登录直接按凭据错误拒绝，不查锁、不计数，避免共享 `md5(ip+":")` 桶。
-- 前端中英文语言包新增 `errors.login_locked`、`errors.self_approval_forbidden`，后端错误键已与语言包完全对齐。
-- 新增 `env-check` 一次性预检容器：`DB_DRIVER=mysql` 时若缺少 `DB_HOST`/`DB_USER`/`DB_PASS`，在 uvicorn 启动前以中英双语提示并中止；`SECRET_KEY` 未配置时输出双语提醒（仍可使用自动生成的兜底密钥）。
-
----
-
-## v1.5.1 (2026-09-10) — 对齐 Devops-Glue v2.8.0 的共享库校验
-
-### 变更
-- **启动共享库校验**：改为校验 `ci_pipeline_artifacts` 表（Devops-Glue 的规范 pipeline-artifact 表），替代已删除的 `ci_pipeline_tags`。要求 Devops-Glue v2.8.0+。
-- **文档修正**：CI 数据（映射 / tag / pipeline / 构建）全部经 CI HTTP API 获取，CD 不再直读 CI 表；架构、管理员/用户手册、FAQ 同步更新。
-
-### 数据库
-- `database/init_mysql.sql`：CI 索引引导改为针对 `ci_pipeline_artifacts`（`project_key`、`created_at`）。
-
-### 修复
-- **保留 partial 部署状态**：`partial` 继续作为有效终态保留，不再被吞并为 `failed`；聚合统计和前端状态徽章均保持其独立显示。
-- **保留 Kubernetes namespace 语义**：空 `k8s_ns` 继续表示“不要传 `-n`”，保持与既有设计和 YAML 中声明 namespace 的行为一致；只有显式 namespace 才会被校验并透传给集群命令。
-- **老库数据兼容**：补齐 registry artifact 缺失的 MySQL 迁移字段，避免旧安装需要手工补表。
-- **修正 ArgoCD 回滚逻辑**：回滚等待循环现在会正确检查 revision 是否仍等于 previous_revision，避免误判失败和 `NameError` 这类边界问题。
-- **前端输出兼容**：日志页继续保留蓝色 `partial` 状态徽章，CSS 的 line-clamp 兼容样式也保持对更广泛浏览器的兼容。
-
----
-
-## v1.5.0 (2026-08-31) — 部署审批 + 一键回滚
-
-### 新增功能
-- **部署审批**：部署前新增规则化审批闸门。管理员按项目（或 `*` 全局默认）配置 `cd_approval_rules`：启用开关、目标环境（`require_envs`，匹配服务器标签）、审批人（显式用户名或 `approver_role`，默认 `cd_admin`）、通知机器人。命中规则的部署会生成 `cd_approvals` 审批单（`pending`）并通知审批人，批准后才执行。
-- **审批状态机**：`pending → approved → deploying → deployed / failed`，另有 `rejected`、`cancelled`。批准是原子落库的状态迁移；执行由后台线程完成。
-- **审批持久化队列**：approved 记录由幂等轮询器领取执行；进程重启后 `recover_on_startup` 清理僵尸部署锁并重投 `deploying` 审批单。
-- **审批管理界面**：新增「审批」视图，含审批单列表（批准 / 驳回 / 撤销）与审批规则管理页签。
-- **一键回滚**：新增 `POST /api/deploy/rollback` 与 `POST /api/deploy/rollback-stream`（SSE）。按部署模式分两种策略：
-  - **原生回滚**（kubectl / helm / argocd）：以该模式最新成功记录为上下文，直接调集群原生回退命令（`kubectl rollout undo`、`helm rollback --wait`、ArgoCD `rollback` API）。
-  - **重放回滚**（fluxcd / ssh / compose）：复用上一版不同 tag 成功记录的参数快照（`params_json`）重新执行。
-  - 老记录（v1.5.0 前，无参数快照）不支持回滚，自动跳过。
-- **回滚流式输出**：回滚改为 SSE 实时流式日志，ArgoCD / kubectl / helm / 停止兜底等回滚文案中英双语齐全。
-
-### 变更
-- 回滚同样经过审批闸门（由 `require_rollback_approval` 控制，默认开启）。
-- 新增权限点 `cd.deploy.approve`，控制审批动作与规则管理。
-
-### 新增数据库表
-- `cd_approval_rules` — 按项目（或 `*` 全局）的审批规则。
-- `cd_approvals` — 审批单（状态、申请人、审批人、部署参数快照）。
-
-### 新增文件
-- `backend/routers/approvals.py`、`backend/services/approval_service.py`、`backend/services/rollback_service.py`、`backend/services/deploy_executor.py`、`backend/services/k8s_deploy_service.py`
-- `frontend/src/views/ApprovalsView.vue`
-
----
-
-## v1.4.0 (2026-08-19) — Custom_Push 项目只读展示
-
-### 新增功能
-- **Custom_Push 项目适配** — 构建历史视图识别 `custom_push` 项目并只读展示：隐藏「触发构建」按钮并在动作层守卫禁止触发（custom_push 结果由用户 CI 推送，Devops-Glue 只接收回写）。
-- **完成时间列** — 构建记录改展示完成时间（`updated_at`）而非创建时间，契合推送式上报的生命周期。
-
-### 变更
-- **文案** — 「时间」→「完成时间」（中英双语）。
-
----
-
-## v1.3.1 (2026-08-17) — 部署取消机制 + 并发锁 + 结构化耗时 + UI 优化
-
-### 新增功能
-- **部署取消机制**：新增 `POST /api/deploy/cancel` 接口，支持用户手动取消进行中的部署。基于 `threading.Event` 内存信号，低层循环（ssh_exec_stream、k8s 子部署器）轮询信号及时中断长命令。`DeployCancelled` 继承 `BaseException` 以穿透 `except Exception` 兜底，冒泡到编排层统一按 `terminated` 落库。
-- **部署并发锁**：同一项目同时只允许一个 `running` 记录。部署前通过 `find_running_deploy` 检查；路由层同时拒绝 `deploy_type='k8s/*'` 混入 SSH/Compose 路线（API 签名不兼容），Service 层防御性抛 `ValueError`（在插入 running 记录之前）。
-- **结构化耗时与部署说明**：部署记录新增 `duration_ms`（总耗时）、`stage_times`（每台服务器每阶段耗时明细）、`deploy_note`（用户填写的自由文本说明，部署日志表新增"说明"列展示）。
-- **自定义确认弹窗**：用 promise-based 的 `useConfirm` 组合式 + 全局 `ConfirmModal` 组件替换原生浏览器 `confirm()`，覆盖部署停止/取消、日志页取消等操作。
-
-### 变更与优化
-- **SSH 部署页**：移除停止按钮（自定义 SSH 命令场景无停止语义）；取消按钮改为常驻显示（非部署中灰色禁用），不再中途消失。
-- **K8s 部署页**：移除"查看资源占用"按钮（跳转外部监控，价值低）；取消按钮同样常驻显示。
-- **Docker / K8s 停止**：保留，配合自定义确认弹窗做二次确认。
-
-### Bug 修复
-- **K8sSubDeployer 缺 `validate` 方法**：`deploy_type='k8s/kubectl'` 误调 SSH/Compose 接口时抛 `AttributeError`（K8s 子部署器继承链缺 validate）。在 `K8sSubDeployer` 补充双签名兼容的 `validate`。
-- **异常时 running 记录孤儿**：`_deploy_k8s_core` 和 `DeployService.execute` 只捕获 `DeployCancelled`，其他意外异常会让 running 记录残留，并发锁死锁。补 `except Exception` 兜底，将记录更新为 `failed`。
-- **`deploy_type='k8s/*'` 混入 SSH/Compose 路线**：registry 会为 SSH/Compose 路线创建 `KubectlDeployer`，但 `deploy()` 签名不兼容。路由层 + Service 层双拦截，在插入 running 记录之前就拒绝。
-- **`register()` 未重置 Event 状态**：`deploy_id` 复用（罕见）时历史取消信号可能泄漏到新部署。`register()` 现在始终 `ev.clear()`。
-
----
-
-## v1.3.0 (2026-08-13) - CI连接改用Devops-Glue的专用API Token，修复bug
-
-- **更新文档** CI_API_TOKEN 配置说明,修复ruff检测的L1/L2/L3级别bug
-
-## v1.2.2 (2026-08-08) — Webhook 接收端点 & CI 构建管理 & 类型安全加固 & 部署错误透传
-
-### 新增功能
-- **Webhook 接收端点**：新增 `/api/webhooks/receive/{token}` 公开接口，用于接收外部事件（如 CI 构建完成通知）。
-  - 支持 Jenkins / GitLab CI / 自定义 CI 的任意 POST 推送
-  - 自动持久化至 `cd_webhook_events` 表，支持分页浏览事件历史
-  - 可选通过关联 Bot 自动转发至钉钉/企微/自定义机器人，支持模板占位符
-  - 支持手动转发事件、启用/禁用 Webhook、删除事件
-  - 采用 32 位随机 Token 认证（URL 路径方式），无需登录
-- **CI 构建管理**：新增“构建管理”菜单，通过 HTTP API 代理 CI 服务。
-  - 支持触发构建、查看构建历史、查看构建日志（兼容 Jenkins/GitLab CI 双引擎）
-  - `backend/services/ci_client.py`：JWT Token 缓存 + 自动刷新 + 重试机制
-  - 后端路由：`/api/ci/*`（项目列表、构建历史、触发构建、构建日志、构建变量、分支列表、健康检查）
-- **公开信息接口**：`/api/info` 无需鉴权，返回应用名称、版本、数据库类型及连接状态、运行时长
-- **健康检查简化**：`/health` 改为纯 `{"status":"ok"}` 响应，适配 Docker/K8s 存活探针
-
-### 变更与优化
-- **部署错误透传**：`deploy` 路由层捕获 `ValueError`（无效 Docker Compose 路径、缺失 SSH 服务器等），通过 SSE 流实时向前端推送具体错误信息，不再吞掉异常
-- **类型安全加固**：全项目通过 Pyright 类型检查，统一数据库接口（SQLite/MySQL 占位符自动转换），修复一批 `Optional` 未检查、`None` 比较类型不匹配问题
-- **数据库接口统一**：新增 `conn.execute()` 内部封装，SQLite 的 `?` 占位符在 MySQL 驱动下自动转换为 `%s`，业务代码无需关心驱动差异
-- **CD 表索引补全**：为 `cd_servers.type`、`cd_deploy_logs.deploy_id`（复合索引）、`cd_alert_rules.enabled/created_at`、`cd_custom_monitors.enabled/created_at`、`cd_webhooks.enabled`、`cd_webhook_events.webhook_id/received_at` 添加索引
-- **错误处理增强**：后端异常体系统一使用 `error_key`，前端错误页据此展示对应文案；`cd_webhook_*` 异常系列全覆盖（未找到/已存在/创建失败/转发失败）
-- **前端国际化修复**：修复 `lang` 参数传递问题，Shell “Connected” 硬编码文本移入翻译文件，修复多处 UI 翻译遗漏
-- **Webhook 管理界面**：前端新增“通知接入”菜单（WebhookView），支持创建/编辑/删除/启停、查看事件、分页浏览、手动转发
-- **侧边栏导航**：新增 `ciBuild`、`webhook` 菜单项，统一归入 `cd.notification-manage` 权限控制
-- **测试环境优化**：消除 pytest 弃用警告（Pydantic `class Config`→`model_config`、FastAPI `on_event`→`lifespan`、安装 `httpx2`）
-- **部署文档完善**：管理员手册（中/英）新增 CI API 配置、Webhook 安全策略、三种部署策略详解
-- **版权信息修正**：前端页脚及 LICENSE 版权均由 `Blues.Inc` 统一为 `jeanslw`
-- **README 更新**：中/英 README 新增“相关项目”章节，GitHub 链接由 `Devops_Glue` 修正为 `Devops-Glue`
-- **部署配置简化**：`docker-compose.yml` 移除独立 `networks` 块，默认与 CI 同机合并部署，新增 `image: devops-cd:latest`
-
-### 新增数据库表
-
-| 表名 | 说明 |
-| :--- | :--- |
-| cd_webhooks | Webhook 接收配置（id/name/token/bot_id/enabled/created_at） |
-| cd_webhook_events | Webhook 事件日志（id/webhook_id/payload/received_at/forwarded/forwarded_at） |
-
-### 设计说明
-- **Webhook Token 认证**：采用 URL 路径 `{token}` 方式（非 Header），方便 Jenkins 等工具直接 POST 无需复杂签名。Token 为 32 位随机字符串（`secrets.token_urlsafe(24)`），数据库唯一索引约束
-- **自动转发机制**：接收事件 → 持久化至 DB → 若 `bot_id>0` 则自动调用 Bot Webhook → 标记 `forwarded=1`。失败不阻塞事件持久化，管理员可从 UI 手动重试
-- **消息占位符**：Bot 模板支持 `{project}{tag}{image}{status}{built_at}{target}{mode}`，无模板时默认按字段名格式化，无法解析时回退到原始 JSON 输出
-- **数据归属**：CD 仅读取 CI 数据库表（`ci_pipeline_tags`、`ci_job_git_map`），不写入；“构建管理”走 HTTP API，“Tag 列表/部署流程”仍走直连 DB 读取——两层互不干扰
-- **`/api/info`**：完全公开，无鉴权依赖，方便监控系统和外部工具查询 CD 运行状态
-- **`error_key`**：异常携带国际化键，前端可根据 key 映射对应语言的错误提示
-
-## v1.2.1 (2026-07-29) — RBAC 权限适配 & 部署日志优化
-
-### 变更
-- 适配 Devops-Glue API RBAC 权限体系（`enforce_deploy_perm` 部署二次鉴权）
-- 部署日志优化（部署成功/失败信息去重、运行版本对比展示）
-- 部分变量配置迁移至 `docker-compose.yml`
-- 文档同步更新
-
-### 新增/修改文件
-
-| 文件 | 变更 |
-| :--- | :--- |
-| backend/auth.py | 修改 — `enforce_deploy_perm` 服务层二次权限校验 |
-| backend/deployers/*.py | 修改 — 部署日志格式统一、运行版本对比 |
-| docker-compose.yml | 修改 — 配置变量迁移 |
-| docs/* | 修改 — 文档同步更新 |
-
-## v1.2.0 (2026-07-28) — Landing Page & 登录国际化 & CD/CI 权限隔离
-
-### 新增功能
-- **Landing Page**：粒子背景 + Hero 标题 + 6 个功能卡片 + 页脚，未登录时展示
-- **多语言支持**：中英文切换，Landing 页和登录页均有独立语言切换按钮
-- **CD/CI 登录隔离**：`admin_users` 表新增 `systems` 字段（逗号分隔），CD 侧校验 `systems` 包含 `"cd"` 才允许登录
-- **CD 权限收窄**：不可创建/删除/修改 admin 角色用户，admin 不在用户列表中展示；新建用户表单移除“Admin”选项
-- **前端 Vue3 重构**：完整替换旧 jQuery 前端，Vue 3.5 + Vite 6 + Vue Router 4
-
-### 修复
-- `locales/index.js` 运算符优先级 bug（`||` vs `&&`）
-- `vite.config.js` 补充 `/static` 代理路径
-- `.gitignore` 新增 `node_modules` 清理规则
-- `main.py` 移除废弃的 `ensure_role_column` 调用
-
-## v1.1.0 (2026-07-24) — Harbor 镜像仓库集成 & 配置增强
-
-### 新增功能
-- **Harbor 镜像仓库集成**：支持对接 Harbor 仓库，浏览项目/镜像/Tag、查看漏洞扫描报告、一键选择 Tag 用于部署
-- **可配置同步间隔**：前端下拉框 + API + DB 持久化 + 后台线程动态重启，无需重启服务
-- **Harbor 不可达友好提示**：新增 `HarborUnavailableError` 异常，路由层返回明确错误信息
+## v1.6.0 (2026-10-14)
+
+> **⚠️ 破坏性变更** — v1.6.0 与 v1.5.x 及更早版本不兼容，本地密码登录已移除、改为 Devops-Glue OIDC 单点登录。升级前须在根 `.env` 配置 `OIDC_ISSUER`、`CD_OIDC_SECRET`、`CD_OIDC_REDIRECT_URI`，并在 CI 后台「API集成服务 → 启用」开启 Devops-CD。要求 Devops-Glue 2.9.0 及以上。
+
+- **新增**
+  - 登录唯一入口为 OIDC 单点登录，本地密码登录已移除。
+  - 启用状态向 Glue 的契约端点查询；问不到时一律按 503 拒绝，不误报为「未启用」，也不回退读共享表。查询结果默认缓存 30 秒。
+  - 构建页的 ref 下拉同时列出 Git 标签与分支；Glue 版本过旧时只列分支。
+  - 部署日志经 HTTP 提供给 CI，入站静态 token 鉴权，支持筛选与分页（单页最多 100 条）。共享只读视图已删除。
+  - 自动建表模式下，首次连库建全 CD 表并补齐缺失的列与索引，随后做清单自检。
+- **修复**
+  - WebShell 鉴权与 REST 同口径：补齐访问权限与账号停用校验，权限分支改为 fail-closed。
+- **优化**
+  - 闸门判据为「契约状态 × 清单完整性」：「未启用」与「缺表」是两种不同的 503，后者会列出缺失的表名，提示按建表模式区分 —— 自动模式重启自愈，手动模式导入建表脚本。
+  - 手动模式零 DDL，仅保留对已存在表的幂等补列。
+  - 监控页服务器列表立即返回、逐台并发探测，单台不可达只影响该行。
+  - 出站连接可固定使用 IPv4 或 IPv6，不再优先尝试 IPv6。
+  - CD 不再对共享的 CI 表建索引，索引归属 Glue 的建库脚本。
+  - 前端构建告警清零。
+
+## v1.5.7 (2026-10-08)
+
+- **新增**
+  - 新增免认证指标端点，以 Prometheus 格式输出运行时长、版本、各状态部署计数与运行中的数量。
+  - 对可安全重跑的部署命令（`docker compose up -d`、`kubectl apply`）做有限次重试，消化瞬时 SSH / 网络抖动；重试次数与间隔可配，设为 1 即关闭。
+  - Compose 声明容器内存与 CPU 的限制和预留，可由环境变量覆盖。
+  - 登录同时支持 bcrypt 与 argon2id 密码哈希，CI 切换哈希算法不再导致 CD 登录崩溃。
+- **修复**
+  - 登录令牌改为不透明随机串，会话表只存 SHA-256 摘要；登出即删行、令牌即时失效，WebShell 握手也校验会话表。
+  - 登录下发 HttpOnly + SameSite Cookie，鉴权优先读 Cookie、回退 Bearer 头；前端不再把令牌放在 URL 或会话存储里。
+  - 响应统一附加内容类型、框架嵌套、来源策略与 CSP 响应头。
+  - 加密盐由部署密钥派生，取代所有部署共用的固定盐；历史密文仍可解密，包括短期盐文件方案写入的数据。
+  - 只读容器且未配置密钥时，给出中英双语的修复提示，不再抛裸的系统错误。
+  - 建表或迁移抛异常时，异常路径一律关闭数据库连接。
+- **优化**
+  - CD 表必须建全：少任何一张即 503 并列出表名，覆盖登录、所有需认证接口、公开 Webhook 接收端点与 WebShell 握手；闸门只报警不补建，也不计入登录失败锁定。
+  - 表清单是唯一真相源：SQLite 自动建表覆盖清单每一项，清单与建表逻辑漂移时首次连库即报错，补表提示按数据库驱动区分。
+  - 数据库故障单独返回 503 并带上驱动与底层原因，与「清单未建全」严格区分。
+  - 启动时以 ERROR 日志逐张列出缺失的表，不阻断健康检查、信息与指标端点。
+  - 容器加固：丢弃全部 capabilities、禁止提权、根文件系统只读 + `/tmp` 走 tmpfs、端口默认只绑回环地址。
+  - 预检对所有数据库模式强制要求密钥，并拒绝两个公开示例值。
+  - 账号 systems 字段为空时，可配置为拒绝登录；默认仍放行。
+  - compose 健康检查断言数据库可达，数据库挂掉不再误报绿灯。
+  - CI 接入全量测试与覆盖率、类型检查、lint，并把所有 workflow 动作钉到 commit SHA。
+
+## v1.5.6 (2026-10-05)
+
+- **新增**
+  - 新增只读视图，向Devops-Glue暴露部署日志的审计列；大字段与 CD 内部运维列不暴露。MySQL 原地替换，SQLite 启动时重建。
+
+## v1.5.5 (2026-10-03)
+
+- **修复**
+  - Docker Compose 部署映射到 Docker 部署权限，不再回退到单机部署权限。
+  - 未配置 namespace 时从 manifest 取生效 namespace，kubectl 的验证与重启不再查错 namespace。
+  - 停止接口拦截 Kubernetes 部署类型，与两个部署接口保持一致。
+  - 未选择服务器时，Kubernetes 集群不再被当作 SSH 或 Compose 目标。
+  - 首次部署的元数据改为本地解析 manifest 文件，不再向集群查询尚不存在的资源。
+  - Compose 命令模式与 Helm 的 namespace 参数对插值加引号。
+  - SSH 命令在远端静默时超时返回，不再永久阻塞部署线程。
+  - SSH 路径与 Kubernetes 路径返回一致的「部署中」错误；收尾兜底只更新该项目的运行中记录。
+
+## v1.5.4 (2026-09-23)
+
+- **优化**
+  - 配置分两层：根 env 文件只放部署配置 —— 数据库连接、密钥、Harbor 与 CI 凭据、监听地址、时区、反代跳数；业务参数随镜像发布。优先级为进程环境变量 > 根 env 文件 > 业务参数文件 > 代码默认值。
+  - 联合部署无需改动 Glue 的 compose 文件；单独部署与裸机部署都无需重建镜像即可覆盖业务参数。
+- **修复**
+  - 镜像同步时 Harbor 故障上报为「连接不可达」，不再假报「同步完成、0 个镜像」；单个仓库的非连接类错误仍保持容错。
+  - env 文件中的未知键不再中止启动。
+
+## v1.5.3 (2026-09-14)
+
+- **新增**
+  - 批准后仅申请人可领取并执行单据，支持同步与流式两种方式；移除后台自动执行轮询，重启恢复按部署记录实际状态收敛进行中的单据。
+  - 部署单据可带可选的定时时间，后台守护线程到点以申请人身份执行已批准的单据，有无审批规则均生效；时间格式非法返回 400。
+  - 部署记录关联审批单并回填历史数据；回滚支持自定义说明，ArgoCD 回滚摘要写入说明列。
+- **修复**
+  - 执行失败释放项目并发锁，不再卡死审批单。
+  - 撤销保留原审批人并触发撤销通知。
+  - 目标环境解析不再静默跳过审批；启动恢复不再重开已完成的部署。
+  - 审批规则匹配一次解析权限，消除 N+1；部署记录徽章按单据状态渲染。
+  - 移除遗留的默认审批角色，新规则不再预置审批角色。
+- **优化**
+  - 移除账户写接口与改密接口（统一在 Glue 管理），前端删除用户相关页面。
+
+## v1.5.2 (2026-09-13)
+
+- **新增**
+  - 所有部署入口按 OCI 字符集校验镜像 tag —— Compose、SSH、全部 Kubernetes 模式与手工指定 tag 的回滚 —— 在执行任何远程命令前以 400 拒绝非法 tag。
+  - 登录接入与 Glue 共享的失败锁定：同一 IP 与用户名 15 分钟内 5 次失败，验密前先查锁，成功清零。
+  - 申请人不能批准或驳回自己发起的单据（super_admin 也不例外），须由另一位审批人处理；批准后仍以申请人身份执行。
+  - 客户端 IP 默认取 TCP 对端，仅当配置了可信代理跳数才取转发头，伪造转发头不再能伪装来源。
+  - 新增预检容器：MySQL 连接配置缺失时以中英双语中止启动，密钥未配置时输出双语提醒。
+- **修复**
+  - Compose 部署器改写远端 env 文件不再使用 shell 插值，Docker / Compose / grep 参数全部加引号；FluxCD 调用同样全部加引号。
+  - Webhook 事件入库改用跨驱动的插入 ID，修复 SQLite 下写入失败。
+  - 空或纯空白用户名按凭据错误直接拒绝，不触碰锁定计数。
+- **优化**
+  - 两个公开示例密钥一律视为未配置，示例 env 文件不再提供默认密钥。
+
+## v1.5.1 (2026-09-10)
+
+- **优化**
+  - 启动时的共享库校验改为校验 Glue 的规范流水线制品表，替代已删除的 tag 表；要求 Glue 2.8.0 及以上。
+  - 建库脚本在该表上引导 CI 索引。
+  - 文档明确：CI 数据全部经 CI HTTP API 获取，不直读 CI 表。
+- **修复**
+  - 部分成功（partial）继续作为独立的终态保留，不被吞并为失败，聚合统计与界面徽章均独立展示。
+  - namespace 留空仍表示「不传 namespace 参数」，只有显式的 namespace 才会校验并透传给集群。
+  - 补齐制品字段缺失的 MySQL 迁移，老库无需手工补表。
+  - ArgoCD 回滚等待循环正确校验版本是否仍等于上一版本。
+
+## v1.5.0 (2026-08-31)
+
+- **新增**
+  - 规则化部署审批：按项目配置规则或一条全局默认规则，含启用开关、按服务器标签匹配的目标环境、按用户名或角色指定审批人、通知机器人。命中的部署生成待审批单据并通知审批人，批准后才执行。
+  - 单据状态：待审批、已批准、部署中、已部署、失败，另有驳回与撤销。批准是原子落库的状态迁移，执行在后台完成，重启后重新投放进行中的单据。
+  - 审批管理界面：单据列表 + 规则管理页签。
+  - 一键回滚，支持同步与流式：kubectl、Helm、ArgoCD 走原生回退；FluxCD、SSH、Compose 按上次成功记录存储的参数重放。无参数快照的老记录自动跳过。
+  - 新增两张审批表与部署审批权限点。
+- **优化**
+  - 回滚同样经过审批闸门，默认开启。
+
+## v1.4.0 (2026-08-19)
+
+- **新增**
+  - 构建历史视图识别 custom_push 项目并只读展示（隐藏触发按钮 + 动作层守卫）
+  - 构建记录改展示完成时间（updated_at）
+  - 前端构建产物重新生成；
+  
+- **优化**
+  - Harbor相关功能
+  - docker运行环境
+  - 固定Python版本依赖
+
+## v1.3.1 (2026-08-17)
+
+- **新增**
+  - 进行中的部署可取消；底层循环轮询取消信号，记录按「已终止」落库。
+  - 同一项目同时只允许一个运行中的部署：并发检查在插入记录之前执行，Kubernetes 部署类型在进入 SSH / Compose 路线前被拒绝。
+  - 部署记录持久化总耗时、每台服务器每阶段耗时与自由文本说明（日志表新增说明列）。
+  - 自定义确认弹窗替换浏览器原生 confirm，覆盖停止与取消操作。
+- **修复**
+  - Kubernetes 部署类型进入 SSH 路线不再抛属性错误。
+  - 未预期的异常把运行中记录置为失败，不再残留孤儿记录导致并发锁死锁。
+  - 复用的部署 ID 不再继承上一次的取消信号。
+- **优化**
+  - SSH 页移除停止按钮、Kubernetes 页移除外部监控入口，两者取消按钮改为常驻；Docker 与 Kubernetes 的停止保留，配二次确认弹窗。
+
+## v1.3.0 (2026-08-13)
+
+- **优化**
+  - CI 连接改用 Glue 的专用 API Token。
+  - 补充 Token 配置文档，修复 lint 检出的问题。
+
+## v1.2.2 (2026-08-08)
+
+- **新增**
+  - 公开 Webhook 接收端点，用 URL 路径中的随机令牌鉴权：事件持久化并可分页浏览，可按模板占位符自动转发到机器人，支持手动转发、启停与删除。
+  - CI 构建管理：触发、历史、日志、构建变量与分支列表，兼容两种 CI 引擎，令牌带缓存、自动刷新与重试。
+  - 公开信息接口返回应用名称、版本、数据库类型与连接状态、运行时长。
+  - 新增两张 Webhook 表、Webhook 管理界面与构建 / Webhook 两个菜单项，统一归入通知权限。
+- **修复**
+  - 部署校验错误经流式通道实时推送到前端，不再被吞掉。
+  - 全项目通过类型检查；数据库层在驱动间自动转换占位符，业务代码不感知驱动差异。
+  - 补全服务器、部署日志、告警规则、自定义监控与 Webhook 各表的缺失索引。
+  - 修复语言切换参数，硬编码界面文案移入语言包。
+  - 消除测试中的弃用警告。
+- **优化**
+  - 健康检查接口返回精简的 ok 状态，适配存活探针。
+  - 异常统一携带翻译键，前端据此展示对应语言文案，Webhook 相关异常全覆盖。
+  - 版权信息、README 链接与 compose 网络配置清理。
+
+## v1.2.1 (2026-07-29)
+
+- **优化**
+  - 部署在服务层二次校验 Glue 的 RBAC 权限。
+  - 部署日志去重成功与失败信息，并展示运行版本对比。
+  - 部分配置迁移到 compose 文件。
+
+## v1.2.0 (2026-07-28)
+
+- **新增**
+  - 未登录时的落地页。
+  - 中英文切换，落地页与登录页均有独立语言按钮。
+  - 账号新增 systems 字段，仅当包含 cd 时 CD 才允许登录。
+  - 前端重构为 Vue 3，替换旧 jQuery 前端。
+- **修复**
+  - 语言包的运算符优先级、开发服务器代理路径、依赖目录忽略规则，以及一处已失效的启动调用。
+- **优化**
+  - CD 不再能创建、修改或删除管理员角色账号；管理员不在用户列表展示，新建用户表单移除管理员选项。
+
+## v1.1.0 (2026-07-24)
+
+- **新增**
+  - Harbor 镜像仓库集成：浏览项目 / 镜像 / 标签、查看漏洞扫描报告、一键选择标签用于部署。
+  - 同步间隔可在界面配置，后台线程动态重启生效，无需重启服务。
+  - Harbor 不可达时返回明确错误，不再崩溃。
+  - 服务器口令与证书加密存储，并提供加密历史明文的脚本。
+  - 服务器标签：聚合端点 + 按标签过滤服务器。
+- **修复**
+  - 镜像仓库配置接口处理数据库异常，不再返回错误页面；配置表统一由建库脚本创建。
+
+## v1.0.0 (2026-07-23)
+
+- **新增**
+  - SSH、Docker Compose、Kubernetes 三种部署模式。
+  - 服务器管理（口令或证书登录）。
+  - 分页部署历史与实时日志查看。
+  - 钉钉与企业微信通知。
+  - 项目管理。
+  - 支持 SQLite、MySQL、MariaDB。
