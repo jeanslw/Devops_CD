@@ -58,13 +58,15 @@
 ```env
 # ── 数据库（必填，指向 CD 表所在的库：与 Glue 共库或 CD 专用库均可）──
 DB_DRIVER=sqlite
-DB_PATH=../Devops-Glue/config/data/data.db
-
+DB_PATH=config/data/data.db
+```
+mkdir -p config/data && chown 1000:1000 config/data
+```
 # MySQL 模式（推荐生产环境）：
 # DB_DRIVER=mysql
 # DB_HOST=127.0.0.1
 # DB_PORT=3306
-# DB_NAME=devops_glue
+# DB_NAME=devops_cd
 # DB_USER=root
 # DB_PASS=
 

@@ -96,8 +96,6 @@ services:
       dockerfile: Dockerfile
     image: devops-cd:latest
     container_name: devops-cd
-    volumes:
-      - cd-service-data:/home/appuser
     depends_on:
       env-check:
         condition: service_completed_successfully
@@ -122,12 +120,18 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # MySQL / MariaDB 模式(推荐)
+    # 若使用sqlite,需要配置 DB_DRIVER=sqlite 模式(可选,取消下面注释)
+    # environment:
+    #   DB_DRIVER: sqlite
+    #   DB_PATH: /data/data.db
     read_only: true
     tmpfs:
       - /tmp
     volumes:
       # 挂整个 home 而非 .cd_service 子目录:命名卷挂到镜像不存在的子目录时初始属主为 root,appuser(uid 1000) 无写权限
       - cd_known_hosts:/home/appuser
+      # - config/data:/data:rw      
     healthcheck:
       test: ["CMD", "python", "-c", "import sys, json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8081/api/info', timeout=3)); sys.exit(0 if d.get('status')=='running' and d.get('db_connected') else 1)"]
       interval: 30s
@@ -143,14 +147,6 @@ services:
         reservations:
           cpus: ${CD_CPU_RESERVE:-0.25}
           memory: ${CD_MEM_RESERVE:-256m}
-
-    # MySQL / MariaDB 模式(推荐)
-    # 若使用sqlite,需要配置 DB_DRIVER=sqlite 模式(可选,取消下面注释)
-    # environment:
-    #   DB_DRIVER: sqlite
-    #   DB_PATH: /data/data.db
-    # volumes:
-    #   - config/data:/data:rw
 
 volumes:
   cd_known_hosts:

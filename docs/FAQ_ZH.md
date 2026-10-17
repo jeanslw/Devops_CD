@@ -68,14 +68,14 @@ mysql -u root -p devops_glue < database/init_mysql.sql
 
 > **SQLite 模式**（开发/单机）：`provision='auto'` 时 CD 表随库文件自动创建，正常情况下不会缺表；若你手工 `DROP TABLE` 过，闸门会**立刻** 503（只报警、不补建），**重启服务即自动建全自愈**。若 CI 侧是 `manual` 而 CD 用 SQLite，CD 同样不建表 —— 请把 CI 改回自动迁移模式后重新启用，或由运维补建（提示语会这样说，**不会**叫你去导入 MySQL 脚本）。
 
-> **另一种 503 别搞混**：`errors.db_unavailable`（SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接）是**环境**问题 —— 查连接配置、数据目录写权限、磁盘空间，**不要**去重跑建表脚本（那修不了）。
+> **另一种 503 **：`errors.db_unavailable`（SQLite 库文件只读/磁盘满/被占用、库文件打不开、MySQL 取不到连接）是**环境**问题 —— 查连接配置、数据目录写权限、磁盘空间，**不要**去重跑建表脚本（那修不了）。
 
 ### Q: SQLite 模式下，部署容器后页面没数据？
 
 SQLite 模式下，容器需要挂载数据库文件所在目录为共享卷。在 `docker-compose.yml` 中确保：
 ```yaml
 volumes:
-  - /path/to/Devops-Glue/config/data:/shared_data
+  - config/data:/shared_data
 ```
 且 `.env` 中 `DB_PATH=/shared_data/data.db`
 
