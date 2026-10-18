@@ -7,37 +7,41 @@
         <button class="btn" @click="selectedWebhook = null">{{ $t('webhooks.back') }}</button>
       </div>
 
-      <table class="table" v-if="events.length">
-        <thead>
-          <tr>
-            <th>{{ $t('webhooks.payload') }}</th>
-            <th>{{ $t('webhooks.receivedAt') }}</th>
-            <th>{{ $t('webhooks.forwarded') }}</th>
-            <th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="eventsLoading"><td :colspan="4" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-          <tr v-for="e in events" :key="e.id">
-            <td style="max-width:500px">
-              <pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;margin:0">{{ formatPayload(e.payload) }}</pre>
-            </td>
-            <td style="white-space:nowrap">{{ e.received_at }}</td>
-            <td>
-              <span v-if="e.forwarded" style="color:#52c41a">{{ $t('webhooks.forwarded') }}</span>
-              <span v-else style="color:#999">{{ $t('webhooks.notForwarded') }}</span>
-            </td>
-            <td v-if="auth.canNotificationManage()">
-              <select v-if="!e.forwarded" v-model="forwardBotId[e.id]" style="font-size:12px;margin-right:4px">
-                <option value="">{{ $t('webhooks.selectBot') }}</option>
-                <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }}</option>
-              </select>
-              <button v-if="!e.forwarded" class="btn btn-xs btn-primary" :disabled="!forwardBotId[e.id]" @click="forwardEvent(e.id)">{{ $t('webhooks.forward') }}</button>
-              <button class="btn btn-xs btn-danger" style="margin-left:4px" @click="deleteEvent(e.id)">{{ $t('common.delete') }}</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-scroll" v-if="events.length">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ $t('webhooks.payload') }}</th>
+              <th>{{ $t('webhooks.receivedAt') }}</th>
+              <th>{{ $t('webhooks.forwarded') }}</th>
+              <th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="eventsLoading"><td :colspan="4" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+            <tr v-for="e in events" :key="e.id">
+              <td style="max-width:500px">
+                <pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;margin:0">{{ formatPayload(e.payload) }}</pre>
+              </td>
+              <td style="white-space:nowrap">{{ e.received_at }}</td>
+              <td>
+                <span v-if="e.forwarded" style="color:#52c41a">{{ $t('webhooks.forwarded') }}</span>
+                <span v-else style="color:#999">{{ $t('webhooks.notForwarded') }}</span>
+              </td>
+              <td v-if="auth.canNotificationManage()">
+                <div class="cell-actions">
+                  <select v-if="!e.forwarded" v-model="forwardBotId[e.id]" style="font-size:12px">
+                    <option value="">{{ $t('webhooks.selectBot') }}</option>
+                    <option v-for="b in bots" :key="b.id" :value="b.id">{{ b.name }}</option>
+                  </select>
+                  <button v-if="!e.forwarded" class="btn btn-xs btn-primary" :disabled="!forwardBotId[e.id]" @click="forwardEvent(e.id)">{{ $t('webhooks.forward') }}</button>
+                  <button class="btn btn-xs btn-danger" @click="deleteEvent(e.id)">{{ $t('common.delete') }}</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div v-else-if="!eventsLoading" class="empty">{{ $t('webhooks.noEvents') }}</div>
 
       <!-- 分页 -->
@@ -74,42 +78,46 @@
         </div>
       </div>
 
-      <table class="table" v-if="webhooks.length">
-        <thead>
-          <tr>
-            <th>{{ $t('webhooks.name') }}</th>
-            <th>{{ $t('webhooks.url') }}</th>
-            <th>{{ $t('webhooks.autoForward') }}</th>
-            <th>{{ $t('common.status') }}</th>
-            <th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 5 : 4" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-          <tr v-for="w in webhooks" :key="w.id">
-            <td>{{ w.name }}</td>
-            <td style="max-width:350px">
-              <code style="font-size:11px;word-break:break-all">{{ getWebhookUrl(w.token) }}</code>
-              <button class="btn btn-xs" style="margin-left:4px" @click="copyUrl(w.token)">{{ $t('webhooks.copyUrl') }}</button>
-            </td>
-            <td>{{ getBotName(w.bot_id) }}</td>
-            <td>
-              <span :style="w.enabled ? 'color:#52c41a' : 'color:#999'">{{ w.enabled ? $t('webhooks.enabled') : $t('webhooks.disabled') }}</span>
-            </td>
-            <td v-if="auth.canNotificationManage()">
-              <button class="btn btn-xs" @click="viewEvents(w)">{{ $t('webhooks.viewEvents') }}</button>
-              <button class="btn btn-xs" style="margin-left:4px" @click="toggleWebhook(w)">{{ w.enabled ? $t('webhooks.disabled') : $t('webhooks.enabled') }}</button>
-              <button class="btn btn-xs btn-danger" style="margin-left:4px" @click="del(w)">{{ $t('common.delete') }}</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-scroll" v-if="webhooks.length">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ $t('webhooks.name') }}</th>
+              <th>{{ $t('webhooks.url') }}</th>
+              <th>{{ $t('webhooks.autoForward') }}</th>
+              <th>{{ $t('common.status') }}</th>
+              <th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 5 : 4" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+            <tr v-for="w in webhooks" :key="w.id">
+              <td>{{ w.name }}</td>
+              <td style="max-width:350px">
+                <code style="font-size:11px;word-break:break-all">{{ getWebhookUrl(w.token) }}</code>
+                <button class="btn btn-xs" style="margin-left:4px" @click="copyUrl(w.token)">{{ $t('webhooks.copyUrl') }}</button>
+              </td>
+              <td>{{ getBotName(w.bot_id) }}</td>
+              <td>
+                <span :style="w.enabled ? 'color:#52c41a' : 'color:#999'">{{ w.enabled ? $t('webhooks.enabled') : $t('webhooks.disabled') }}</span>
+              </td>
+              <td v-if="auth.canNotificationManage()">
+                <div class="cell-actions">
+                  <button class="btn btn-xs" @click="viewEvents(w)">{{ $t('webhooks.viewEvents') }}</button>
+                  <button class="btn btn-xs" @click="toggleWebhook(w)">{{ w.enabled ? $t('webhooks.disabled') : $t('webhooks.enabled') }}</button>
+                  <button class="btn btn-xs btn-danger" @click="del(w)">{{ $t('common.delete') }}</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div v-else-if="!loading" class="empty">{{ $t('common.noData') }}</div>
 
       <!-- 使用说明 -->
       <div v-if="webhooks.length" style="margin-top:16px;padding:12px;background:#f0f5ff;border-radius:6px;font-size:12px;color:#555">
         <div style="font-weight:600;margin-bottom:4px">{{ $t('webhooks.testHint') }}</div>
-        <pre style="margin:0;font-size:11px">curl -X POST "https://your-cd-host/api/webhooks/receive/TOKEN" \
+        <pre style="margin:0;font-size:11px;white-space:pre-wrap;word-break:break-all">curl -X POST "https://your-cd-host/api/webhooks/receive/TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"project":"my-app","tag":"v1.0.0","image":"registry/my-app:v1.0.0","built_at":"2026-08-07 14:30:00"}'</pre>
       </div>
@@ -134,7 +142,6 @@ const loading = ref(true)
 const showCreate = ref(false)
 const createForm = reactive({ name: '', bot_id: 0 })
 
-// 事件列表
 const selectedWebhook = ref(null)
 const events = ref([])
 const eventsLoading = ref(false)

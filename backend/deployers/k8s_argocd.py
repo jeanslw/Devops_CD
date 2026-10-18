@@ -13,8 +13,7 @@ from backend.deployers.k8s_utils import check_cancelled
 
 logger = logging.getLogger(__name__)
 
-# ArgoCD 始终走 HTTPS;是否校验 TLS 证书由 settings.argocd_verify_tls 控制
-# (默认 False 兼容自签名证书环境;证书受信时设 True 防中间人截获 Bearer token)
+# ArgoCD 走 HTTPS;是否校验 TLS 证书由 settings.argocd_verify_tls 控制
 _VERIFY = settings.argocd_verify_tls
 
 
@@ -110,8 +109,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             prev_id = prev.get("id")
             prev_rev = prev.get("revision", "")
             rollback_summary = S("deploy_log.argocd_rollback_to", id=prev_id, revision=prev_rev)
-            # 目标版本说明结构性归入说明列(rollback_summary → deploy_note),不写入执行日志
-            # output(保持日志纯输出);仅经 callback 实时推送,让回滚进行中的 SSE 界面能看到目标
+            # 目标版本说明归入 rollback_summary(供写入 deploy_note),不写入 output;仅经 callback 实时推送
             if callable(callback):
                 callback(rollback_summary)
 
@@ -127,7 +125,7 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_rollback_failed", code=r.status_code, msg=r.text[:200]))
                 return {"success": False, "output": "\n".join(output)}
 
-            # ── 复用 health + sync 轮询等待回滚完成;必须确认 revision 已离开旧版本 ──
+            # 复用 health + sync 轮询等待回滚完成
             health = ""
             sync = ""
             for i in range(30):
@@ -301,8 +299,6 @@ class ArgoCDDeployer(K8sSubDeployer):
                 )
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
                 if health == "Healthy" and sync == "Synced":
-                    # image/tag 参数可以在不改变 Git revision 的情况下完成一次有效同步;
-                    # 因此普通部署不能要求 revision 必须变化.Healthy + Synced 才是成功条件.
                     log(S("deploy_log.argocd_healthy", sync=sync))
                     success = True
                     break

@@ -45,7 +45,6 @@ function statusClass(s) {
   })[s] || 'badge-pending'
 }
 
-// 列表只占一行高度:ISO 时间截到分钟
 function fmtTime(t) {
   if (!t) return ''
   return String(t).replace('T', ' ').slice(0, 16)

@@ -11,37 +11,41 @@
       <label style="display:inline;margin-right:4px">{{ $t('common.filter') }}</label>
       <input v-model="filter" :placeholder="$t('servers.filterPlaceholder')" style="width:auto;display:inline" @input="loadData">
     </div>
-    <table style="table-layout:fixed">
-      <colgroup>
-        <col style="width:12%">
-        <col style="width:23%">
-        <col style="width:7%">
-        <col style="width:22%">
-        <col style="width:8%">
-        <col style="width:28%">
-      </colgroup>
-      <thead><tr><th>{{ $t('servers.name') }}</th><th>{{ $t('servers.host') }}</th><th>{{ $t('servers.type') }}</th><th>{{ $t('servers.tags') }}</th><th>{{ $t('servers.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
-      <tbody>
-        <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-        <tr v-for="s in filteredServers" :key="s.id">
-          <td>{{ s.name }}</td>
-          <td>{{ s.host }}:{{ s.port }}</td>
-          <td>{{ s.type }}</td>
-          <td>
-            <span v-for="t in (s.tags||'').split(',').filter(Boolean)" :key="t" class="badge badge-gitlab" style="margin:1px">{{ t }}</span>
-          </td>
-          <td>
-            <span class="status-dot" :class="statusClass(s.id)"></span>
-            {{ statusText(s.id) }}
-          </td>
-          <td>
-            <button class="btn btn-edit btn-sm" style="margin-right:4px" @click="edit(s)">{{ $t('common.edit') }}</button>
-            <button class="btn btn-sm" style="margin-right:4px" @click="trustServer(s.id)">{{ $t('servers.trustHost') }}</button>
-            <button class="btn btn-red btn-sm" @click="del(s.id)">{{ $t('common.delete') }}</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-scroll table-scroll-wide">
+      <table style="table-layout:fixed">
+        <colgroup>
+          <col style="width:12%">
+          <col style="width:23%">
+          <col style="width:7%">
+          <col style="width:22%">
+          <col style="width:8%">
+          <col style="width:28%">
+        </colgroup>
+        <thead><tr><th>{{ $t('servers.name') }}</th><th>{{ $t('servers.host') }}</th><th>{{ $t('servers.type') }}</th><th>{{ $t('servers.tags') }}</th><th>{{ $t('servers.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+          <tr v-for="s in filteredServers" :key="s.id">
+            <td>{{ s.name }}</td>
+            <td>{{ s.host }}:{{ s.port }}</td>
+            <td>{{ s.type }}</td>
+            <td>
+              <span v-for="t in (s.tags||'').split(',').filter(Boolean)" :key="t" class="badge badge-gitlab" style="margin:1px">{{ t }}</span>
+            </td>
+            <td>
+              <span class="status-dot" :class="statusClass(s.id)"></span>
+              {{ statusText(s.id) }}
+            </td>
+            <td>
+              <div class="cell-actions">
+                <button class="btn btn-edit btn-sm" @click="edit(s)">{{ $t('common.edit') }}</button>
+                <button class="btn btn-sm" @click="trustServer(s.id)">{{ $t('servers.trustHost') }}</button>
+                <button class="btn btn-red btn-sm" @click="del(s.id)">{{ $t('common.delete') }}</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Form Card -->
@@ -221,7 +225,6 @@ async function edit(s) {
   tagInput.value = ''
   showFormCard.value = true
   await loadTags()
-  // Mark non-existing tags as custom
   form.tags.forEach(t => {
     if (!existingTags.value.includes(t) && !customTags.includes(t)) {
       customTags.push(t)

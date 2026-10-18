@@ -7,7 +7,7 @@
     <nav class="landing-nav">
       <div class="nav-brand">
         <img :src="logoUrl" alt="Logo" class="nav-logo" />
-        Devops-Glue CD
+        <span class="nav-brand-text">Devops-Glue CD</span>
       </div>
       <div class="nav-links">
         <a href="#">{{ $t('landing.nav.home') }}</a>
@@ -86,7 +86,6 @@ const cards = computed(() => [
   { key: 'notify',   icon: '🔔', title: t('landing.cards.notify.title'),   desc: t('landing.cards.notify.desc') },
 ])
 
-// 落地页"运行中"徽标:真实状态来自 GET /api/status(无需认证),每 30s 刷新一次.
 const STATUS_POLL_MS = 30000
 
 const statusInfo = computed(() => {

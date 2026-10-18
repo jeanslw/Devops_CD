@@ -1,4 +1,4 @@
-"""CI 构建管理路由 - 代理 CI API,CD 前端统一入口(对照 CI OpenAPI 实现)"""
+"""CI 构建管理路由 - 代理 CI API,CD 前端统一入口"""
 
 import logging
 import traceback
@@ -36,14 +36,9 @@ def list_projects(_user: str = Depends(require_perm("cd.build-manage"))):
         raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable") from e
 
 
-# ── 构建历史 ──
 @router.get("/projects/{project:path}/builds")
 def get_builds(project: str, _user: str = Depends(require_perm("cd.build-manage"))):
-    """获取项目构建历史 → CI GET /api/build/{path}/pipelines.
-
-    custom_push 项目也统一走该接口:Glue CustomPushBuildProvider::getPipelines
-    直读 ci_custom_builds(含 log_url),CD 不再直读该表.
-    """
+    """获取项目构建历史 → CI GET /api/build/{path}/pipelines.custom_push 项目同走该接口."""
     try:
         return _client().get_builds(project)
     except CiClientError as e:
@@ -64,7 +59,7 @@ def trigger_build(project: str, req: BuildTriggerRequest, _user: dict = Depends(
         ref = req.ref or ""
         variables = req.variables or None
         result = _client().trigger_build(project, ref, variables)
-        # 首页项目列表(30s 缓存)里的 latest_tag / latest_pipeline 立即作废,不必等窗口过期
+        # 使首页项目列表缓存(30s)中的 latest_tag / latest_pipeline 立即失效
         invalidate_projects_cache()
         return result
     except CiClientError as e:

@@ -5,10 +5,6 @@
     _log(callback, S('deploy_log.verifying_path'))
     _log(callback, S('deploy_log.path_ok', path='/opt/app'))
     _log(callback, S('deploy_log.deploy_error', error='部署执行失败'))
-
-设计约定:
-  - 只用于 SSE 流式输出(callback),不用于写入数据库的 result.output.
-  - 数据库 output 统一存英文(语言无关),SSE 实时推送通过前端 i18n 翻译为当前界面语言.
 """
 
 import json

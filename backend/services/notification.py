@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import ipaddress
 import time
 import urllib.parse
 from datetime import datetime
@@ -22,16 +23,31 @@ def _is_allowed_webhook(url: str) -> bool:
         return False
 
 
+def _is_private_address(url: str) -> bool:
+    """拒绝内网 / 本机目标;域名形式无法静态判定(DNS 解析结果可能变化),交由超时与网络策略兜底."""
+    host = (urlparse(url).hostname or "").strip().strip("[]")
+    if not host or host.lower() in ("localhost", "localhost.localdomain"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+
+
 def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
     """发送钉钉/企微/custom text 消息,失败不抛异常.
 
     bot_type: 机器人类型(dingtalk/wecom/feishu/custom 等).
-    仅当 bot_type 为 'custom' 时跳过域名白名单校验(自定义 webhook 可以是任意 URL).
-    其他类型(含默认)仍受 _ALLOWED_WEBHOOK_DOMAINS 白名单保护,防止 SSRF.
+    仅当 bot_type 为 'custom' 时跳过域名白名单校验(自定义 webhook 可以是任意 URL);
+    其他类型(含默认)必须在 _ALLOWED_WEBHOOK_DOMAINS 白名单内.
     """
     if not url or not message:
         return False
-    # custom 类型跳过白名单(用户在 Bot 管理中显式配置的自定义 webhook)
+    # 内网地址一律拒绝(custom 也适用):避免服务端被当成本机 / 内网探测代理
+    if _is_private_address(url):
+        return False
+    # custom 类型跳过域名白名单
     if (bot_type or "").lower() != "custom" and not _is_allowed_webhook(url):
         return False
     try:

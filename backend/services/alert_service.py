@@ -18,11 +18,9 @@ _cooldowns: dict[str, float] = {}
 # ── 持续超标追踪(内存): "rule_server_entity" → first_exceeded_ts ──
 _durations: dict[str, float] = {}
 
-# ── 后台线程 ──
 _runner: threading.Thread | None = None
 _stop = threading.Event()
 
-# ── 默认告警模板(中/英文)──
 _DEFAULT_TEMPLATES = {
     "system": {
         "zh": ("⚠️ [资源告警] {time}\n服务器：{server}({host})\n资源：{resource_name} ({value}%)\n阈值：{threshold}%"),
@@ -175,7 +173,12 @@ def _check_one(db, rule: dict):
         server = dict(server)
         sid = server["id"]
 
-        results = collect_alert_metrics(db, rule, server)
+        try:
+            results = collect_alert_metrics(db, rule, server)
+        except Exception as e:
+            # 采集失败 ≠ 未超标:跳过本台,保留持续时间追踪不被清零
+            logger.warning("Alert: skip server %s (rule %s), collection failed: %s", sid, rule_id, e)
+            continue
 
         if results:
             for r in results:
@@ -201,9 +204,7 @@ def _check_one(db, rule: dict):
                 for lang in ("zh", "en"):
                     _send_alert(rule, server, r, bot, template, lang, target_type)
         else:
-            # 无超标 -- 重置持续时间追踪(恢复正常),清除所有该规则+服务器的实体记录
             _clear_duration(rule_id, sid)
-            # 也清理旧的以服务器为 key 的记录(向后兼容)
             for k in list(_durations):
                 if k.startswith(f"{rule_id}_{sid}_"):
                     _durations.pop(k, None)
@@ -256,17 +257,27 @@ def _run_loop():
     """后台线程主循环"""
     interval = getattr(settings, "alert_check_interval", 60)
     logger.info(f"Alert checker started, interval={interval}s")
-    while not _stop.wait(interval):
+    try:
+        while not _stop.wait(interval):
+            try:
+                from backend.database import Database
+                from backend.dlock import acquire
+
+                # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
+                if not acquire(Database(), "alert_check", ttl_seconds=max(interval * 3, 90)):
+                    continue
+                check_all_rules()
+            except Exception as e:
+                logger.error(f"Alert check error: {e}")
+    finally:
+        # 线程退出时主动释放锁,避免 TTL 内其他实例无法接管告警检测
         try:
             from backend.database import Database
-            from backend.dlock import acquire
+            from backend.dlock import release
 
-            # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
-            if not acquire(Database(), "alert_check", ttl_seconds=max(interval * 3, 90)):
-                continue
-            check_all_rules()
-        except Exception as e:
-            logger.error(f"Alert check error: {e}")
+            release(Database(), "alert_check")
+        except Exception:
+            pass
 
 
 def start_alert_checker():

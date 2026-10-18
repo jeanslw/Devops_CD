@@ -16,12 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def split_image_ref(image: str) -> tuple[str, str]:
-    """把镜像引用拆成 (repo, tag).
-
-    用 rpartition 从最后一个冒号切分,正确处理 registry 带端口 / IPv6 等
-    含多个冒号的场景(如 hub.example.com:5000/project/app:v1.0).
-    无 tag 时返回 (image, '').
-    """
+    """把镜像引用拆成 (repo, tag):从最后一个冒号切分,无 tag 时返回 (image, '')."""
     repo, sep, tag = image.rpartition(":")
     if not sep:
         return image, ""
@@ -29,7 +24,7 @@ def split_image_ref(image: str) -> tuple[str, str]:
 
 
 # OCI Distribution / Docker tag 规范:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}
-# 所有部署器都必须在把 tag 拼进 shell 命令前过此校验(防御命令注入的第一道关).
+# 所有部署器在把 tag 拼进 shell 命令前都必须先过此校验.
 _TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
 
 
@@ -41,8 +36,6 @@ def validate_tag(tag: str) -> str:
     """校验镜像 tag,合法则原样返回,非法抛 InvalidTag.
 
     合法字符仅字母/数字/下划线/点/连字符,长度 1-128,首字符不能是点或连字符.
-    该集合天然不含任何 shell 元字符(空格 ; | & $ ` ' ' \\ 等),
-    因此通过校验的 tag 拼入 ssh 命令不会产生注入.
     """
     if not isinstance(tag, str) or not _TAG_RE.match(tag):
         raise InvalidTag(
@@ -104,10 +97,10 @@ def trust_ssh_host(
 ) -> dict:
     """信任 SSH 主机,获取并保存主机密钥.返回 {success, key_fingerprint, message}
 
-    使用 Transport 层直接握手取 host key,避免 AutoAddPolicy(消除中间人攻击告警).
+    使用 Transport 层直接握手取 host key,不使用 AutoAddPolicy.
     流程:
       1. 匿名 Transport 层握手 → 取 host key(无需凭据)
-      2. 保存 host key 到 known_hosts(信任主机的核心目的,到此已完成)
+      2. 保存 host key 到 known_hosts
       3. 有凭据则顺便验证可登录;无凭据或凭据失败仅附加 warning(不影响信任成功)
     """
     import base64
@@ -134,7 +127,6 @@ def trust_ssh_host(
         if not key:
             raise RuntimeError("无法获取远端 SSH 主机密钥")
 
-        # 计算指纹
         fp = sha256(key.asbytes()).digest()
         fingerprint = base64.b64encode(fp).decode().rstrip("=")
 
@@ -226,10 +218,9 @@ def trust_ssh_host(
 
 
 def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
-    """统一的 SSH 连接.
-    优先级: ssh_key > password > system 默认 key
-    全程使用 RejectPolicy + known_hosts,无 AutoAddPolicy(避免中间人攻击).
-    unknown host: 用户必须先调用 trust_ssh_host 把 host key 存入 ~/.cd_service/known_hosts.
+    """统一的 SSH 连接:优先级 ssh_key > password > system 默认 key.
+
+    全程使用 RejectPolicy + known_hosts,不使用 AutoAddPolicy.
     """
     import paramiko
 
@@ -295,10 +286,9 @@ def ssh_session(target: "DeployTarget", timeout: int):
 
 
 def _exec_on(ssh, cmd: str, timeout: int = 130) -> tuple[str, str, int]:
-    """在已建立的 SSH 连接上执行单条命令,返回 (stdout, stderr, exit_code)
+    """在已建立的 SSH 连接上执行单条命令,返回 (stdout, stderr, exit_code).
 
-    timeout 为 SSH 通道读超时(秒):远端挂死时 read() 抛 socket.timeout,
-    而非让部署线程永久阻塞.默认 130s,长命令由调用方传更大值(与 _exec_exit 一致).
+    timeout 为 SSH 通道读超时(秒),默认 130s;远端挂死时 read() 抛 socket.timeout.
     """
     _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)  # nosec
     o = stdout.read().decode(errors="replace").strip()
@@ -326,18 +316,14 @@ def retry_idempotent(
     delay: float = 2.0,
     log_fn: Callable[[int], None] | None = None,
 ) -> _RetryResult:
-    """幂等命令的有限重试入口.
-
-    仅用于可安全重跑的命令(docker compose up -d / kubectl apply)--
-    失败后重跑不会产生重复副作用,因此可以用重试消化瞬时 SSH/网络抖动.
+    """幂等命令的有限重试入口(仅用于可安全重跑的命令).
 
     - func: 无参可调用,返回 tuple,其**最后一个元素**必须是 exit_code(0=成功).
     - attempts: 含首次在内的最大执行次数(=1 即关闭重试).
     - delay: 两次尝试之间的间隔秒数.
     - log_fn: 可选回调 log_fn(retry_number),在每次重试前触发(供 SSE 输出提示).
 
-    全部失败时返回最后一次结果(不抛异常),由调用方按原逻辑判定成败,
-    保证重试只是'多给几次机会',不改变既有失败语义.
+    全部失败时返回最后一次结果(不抛异常),由调用方判定成败.
     """
     last: _RetryResult | None = None
     for attempt in range(1, attempts + 1):
@@ -375,11 +361,9 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
         buf_size = 65536
 
         def _clean(line: str) -> str:
-            # 去掉 ANSI 转义码,\r 分段智能去重:
-            # - 连续的进度条段(如 "[==>   ]" → "[====> ]")只保留最后一段
-            # - 其余所有内容全部保留,不写死任何关键词
+            # 去掉 ANSI 转义码,\r 分段去重:相邻进度条段只保留最后一段
             line = ANSI_RE.sub("", line)
-            # 快速路径:不含 \r 的普通行原样返回,避免误进分段逻辑
+            # 不含 \r 的普通行原样返回
             if "\r" not in line:
                 return line
             segments = [p.strip() for p in line.split("\r") if p.strip()]
@@ -436,9 +420,11 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
                 time.sleep(0.005)
 
         # 阻塞等待退出状态码接收完毕(确保远端已刷新所有 stdout/stderr)
-        exit_code = 0
-        with suppress(Exception):
+        # 取不到退出码时按失败处理:通道异常中断不能被误判为部署成功
+        try:
             exit_code = channel.recv_exit_status()
+        except Exception:
+            exit_code = 1
 
         # 补读残留数据,最多重试 5 次(含短暂延时,应对网络延迟导致的数据滞后到达)
         for _ in range(5):
@@ -483,7 +469,7 @@ class DeployTarget:
 
     K8s 模式:
       - apply: kubectl apply -f {path} (默认,有 path 时)
-      - setimage: kubectl set image (无 path 时兜底)
+      - setimage: kubectl set image (无 path 时使用)
     """
 
     host: str = ""
@@ -504,9 +490,7 @@ class DeployResult:
 
 
 class Deployer(ABC):
-    """部署器抽象基类 -- 所有部署策略实现此接口
-    对齐 PHP 项目的 BuildProviderInterface 设计模式
-    """
+    """部署器抽象基类 -- 所有部署策略实现此接口"""
 
     @abstractmethod
     def name(self) -> str:

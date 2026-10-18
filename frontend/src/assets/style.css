@@ -129,6 +129,73 @@ body {
   background: var(--accent);
   color: #fff;
 }
+/* ── 账号下拉菜单(点击账号 → 弹出退出) ── */
+.user-menu { position: relative; }
+button.user-tag {
+  cursor: pointer;
+  background: transparent;
+  font-family: inherit;
+  transition: all var(--transition);
+}
+button.user-tag:hover,
+button.user-tag[aria-expanded="true"] {
+  background: var(--bg-card-hover);
+  border-color: #3a3d47;
+  color: var(--text);
+}
+.user-caret {
+  margin-left: 2px;
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform var(--transition);
+}
+button.user-tag[aria-expanded="true"] .user-caret { transform: rotate(180deg); }
+.user-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 150px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  z-index: 200;
+  animation: dropdown-in 0.15s ease;
+}
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.dropdown-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.dropdown-user .user-name { font-weight: 600; color: var(--text); }
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.dropdown-item:hover { background: var(--bg-card-hover); color: var(--text); }
+.dropdown-item.is-danger:hover { color: var(--red); background: rgba(248,113,113,0.1); }
+.dropdown-icon { font-size: 13px; }
 .lang-toggle {
   display: flex;
   border: 1px solid var(--border);
@@ -210,6 +277,9 @@ body {
 }
 .content {
   flex: 1;
+  /* flex 子项默认 min-width:auto,宽表格会把它连同 .layout 一起撑宽 → 整页横向溢出。
+     置 0 后宽内容改为在各自的 .table-scroll 容器里横向滚动,不再顶破页面。 */
+  min-width: 0;
   padding: 22px 26px;
   overflow-y: auto;
   background: radial-gradient(ellipse at 50% 0%, rgba(74,222,128,0.02) 0%, transparent 60%);
@@ -240,6 +310,23 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+}
+/* 窄屏下给宽表格一个可横向滚动的容器:滚动条落在表格自身,页面不被撑宽 */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* table 不会被压缩到低于自身 min-content 宽度(th 有 white-space:nowrap),
+   所以显式给下限:低于此宽就横向滚动,而不是把内容挤成一团 */
+.table-scroll > table { min-width: 720px; }
+.table-scroll.table-scroll-wide > table { min-width: 1080px; }
+/* 单元格内的操作按钮组:保持横排,不因窄屏被挤成竖排。
+   表格是 auto layout,nowrap 的列宽会被自动撑开,不会溢出到表格外。 */
+.cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
 }
 th {
   text-align: left;
@@ -313,6 +400,8 @@ tbody tr:last-child td { border-bottom: none; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  /* 中文按单字断行:窄屏下按钮文字会被挤成竖排,按钮必须整词保持一行 */
+  white-space: nowrap;
 }
 .btn:hover { transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
@@ -518,21 +607,23 @@ label {
 }
 .nav-brand {
   display: flex; align-items: center; gap: 10px;
-  font-size: 20px; font-weight: 700;
+  font-size: 20px; font-weight: 700; flex-shrink: 0;
   background: linear-gradient(135deg,#00ff88,#00c6ff);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
+.nav-brand-text { white-space: nowrap; }
 .nav-logo { height: 32px; width: auto; flex-shrink: 0; }
-.nav-links { display: flex; gap: 24px; align-items: center; }
+.nav-links { display: flex; gap: 24px; align-items: center; flex-shrink: 0; }
 .nav-links > a {
   color: #8892b0; text-decoration: none; font-size: 14px; transition: color .3s;
 }
 .nav-links > a:hover { color: #00ff88; }
 .nav-lang {
-  display: flex; gap: 4px;
+  display: flex; gap: 4px; flex-shrink: 0;
 }
 .nav-lang button {
   padding: 2px 8px; font-size: 11px; font-weight: 600;
+  white-space: nowrap;
   background: transparent; color: var(--text-dim);
   border: 1px solid var(--border); border-radius: 4px;
   cursor: pointer; transition: all .2s;
@@ -544,7 +635,7 @@ label {
 .nav-btn {
   background: rgba(99, 102, 241, 0.15); color: #a5b4fc;
   padding: 5px 14px; border-radius: 5px; font-weight: 500;
-  font-size: 12px; text-decoration: none;
+  font-size: 12px; text-decoration: none; white-space: nowrap; flex-shrink: 0;
   border: 1px solid rgba(99, 102, 241, 0.4);
   transition: transform .2s, background .2s, box-shadow .2s;
 }
@@ -786,7 +877,12 @@ pre.output {
   .user-tag { padding: 3px 6px; gap: 3px; }
   .user-role { font-size: 9px; padding: 1px 4px; }
   .lang-btn { padding: 4px 8px; font-size: 11px; }
-  .logout-link { padding: 5px 8px; font-size: 12px; }
+  .user-dropdown { min-width: 130px; }
+  /* 落地页导航:小屏隐去品牌文字腾宽度,语言与登录按钮保持横排不被挤压 */
+  .nav-brand-text { display: none; }
+  .landing-nav { padding: 0 14px; }
+  .nav-links { gap: 12px; }
+  .nav-btn { padding: 5px 10px; }
   .menu-toggle { display: flex; }
   .layout { position: relative; }
   .sidebar {
@@ -808,6 +904,8 @@ pre.output {
     z-index: 15;
   }
   .content { padding: 14px 16px; width: 100%; }
+  .card { padding: 14px 16px; }
+  .card h3 { flex-wrap: wrap; }
   .grid2 { grid-template-columns: 1fr; }
   .grid3 { grid-template-columns: 1fr; }
 }

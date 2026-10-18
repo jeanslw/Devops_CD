@@ -31,8 +31,6 @@ const err = ref('')
 const logoUrl = '/static/logo.png'
 
 onMounted(() => {
-  // SSO 回跳失败时后端带 /login?error=errors.xxx 及 i18n 插值参数(如 &missing=...、
-  // &reason=...、&tables=...):复用 te(key)/t(key) 策略,随后清掉 query,避免刷新后旧错误反复出现.
   const key = route.query.error
   if (typeof key === 'string' && key) {
     const params = {}

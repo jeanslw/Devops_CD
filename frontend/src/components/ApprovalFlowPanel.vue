@@ -105,7 +105,6 @@ function stepLabel(s) {
   return t(s.label)
 }
 
-// ── 阶段条状态映射 ──
 function stepClass(key) {
   const s = status.value
   const map = {
@@ -139,7 +138,6 @@ function stepMark(key) {
   return ''
 }
 
-// 连接条:当前阶段之前的连线点亮
 function barDone(i) {
   const order = ['submit', 'wait', 'approve', 'run', 'done']
   const nextKey = order[i + 1]
@@ -155,7 +153,6 @@ const hintText = computed(() => {
   return t(`approvals.flowHint_${s}`) || ''
 })
 
-// ── 拉取 + 轮询 ──
 async function refresh() {
   const id = Number(props.approvalId)
   if (!id) return
@@ -182,7 +179,6 @@ watch(() => props.approvalId, async (v) => {
   if (!isTerminal.value) startTimer()
 })
 
-// ── 申请人本人执行(SSE 实时日志) ──
 async function doExecute() {
   const id = Number(props.approvalId)
   if (!id) return
@@ -198,11 +194,9 @@ async function doExecute() {
       refresh()
     },
   })
-  // 流结束后再兜底拉一次,确保状态/部署记录号及时刷新
   if (ok !== undefined) refresh()
 }
 
-// ── 撤销申请 ──
 async function doCancel() {
   const id = Number(props.approvalId)
   if (!id) return

@@ -1,18 +1,18 @@
 """Glue 身份与权限客户端 + 进程内 TTL 缓存 + 惰性复核
 
-OIDC 模式下 CD 在请求路径上**不再读任何共享表**:
+OIDC 模式下 CD 在请求路径上不读任何共享表:
   · 身份(role / systems / status)来自 GET /api/rbac/users/{username}
   · 权限(perm_key)来自 GET /api/rbac/roles/{role}/permissions
-其余判据都来自自有 cd_* 表.缓存只存进程内(单进程 uvicorn,见 §5:不落库,零 DDL).
+其余判据都来自自有 cd_* 表.缓存只存进程内(单进程 uvicorn:不写数据库,零 DDL).
 
-三条不可动摇的语义(都来自设计文档 §4.2 / §8.4):
-  1. **角色权限 404 ≠ 空权限**:查不到角色是'身份不可用',必须 fail-closed(拒绝),
-     不降级为空权限 -- 否则角色名写错/角色被删会变成一次**静默降权**(用户能登录,
+三条不可动摇的语义:
+  1. 角色权限 404 ≠ 空权限:查不到角色是'身份不可用',fail-closed(拒绝),
+     不降级为空权限 -- 角色名写错/角色被删会成为一次静默降权(用户能登录,
      界面正常,操作全 403,且没有任何诊断信号).
-  2. **软失败窗口**(OIDC_STALE_GRACE_SECONDS):Glue 短暂不可达时用 last-known-good 放行,
-     超过窗口即 fail-closed;但'身份已消失 / 角色悬空'这类**明确否定**永远立即生效,不进软失败.
-  3. **role 原样透传**(不 lower):Glue 侧 roleExists 精确匹配 roles.name,只 trim;
-     只有 username 需要 strip().lower()(§8.7 第 6,8 条).
+  2. 软失败窗口(OIDC_STALE_GRACE_SECONDS):Glue 短暂不可达时用 last-known-good 放行,
+     超过窗口即 fail-closed;'身份已消失 / 角色悬空'这类明确否定立即生效,不进软失败.
+  3. role 原样透传(不 lower):Glue 侧 roleExists 精确匹配 roles.name,只 trim;
+     只有 username 需要 strip().lower().
 """
 
 import logging
@@ -33,7 +33,7 @@ logger = logging.getLogger("glue_identity")
 _USERS_PATH = "/api/rbac/users/{username}"
 _ROLE_PERMS_PATH = "/api/rbac/roles/{role}/permissions"
 _HTTP_TIMEOUT = 10
-_WARN_INTERVAL = 60  # 同一 key 的 WARN 最短间隔(秒):避免降权瞬间刷日志
+_WARN_INTERVAL = 60  # 同一 key 的 WARN 最短间隔(秒):降权瞬间不刷日志
 
 _USERNAME_MAX_LEN = 128  # 与 Glue 侧 users.username 列宽同量级,超长即视为异常输入
 
@@ -80,7 +80,7 @@ _session.mount("https://", HTTPAdapter(max_retries=_retry))
 
 
 def _warn_throttled(key: str, message: str, *args: Any) -> None:
-    """按 key 限流地打 WARN:同一问题在一个窗口内只留一条日志(§8.4)."""
+    """按 key 限流地打 WARN:同一问题在一个窗口内只留一条日志."""
     with _lock:
         now = time.time()
         if now - _last_warn.get(key, 0.0) < _WARN_INTERVAL:
@@ -92,8 +92,8 @@ def _warn_throttled(key: str, message: str, *args: Any) -> None:
 def _glue_get(path: str) -> tuple[int, Any]:
     """GET Glue(Bearer dg_ 服务 token).
 
-    硬约束(§8.7 第 1,2 条):**不加 ?format=json**(加了响应会被包成 {"data":...}),
-    **不解析 message** 判错(message 是已翻译文本,不是稳定 key)-- 调用方只看状态码.
+    硬约束:**不加 ?format=json**(加了响应会被包成 {"data":...}),
+    **不解析 message** 判错(message 是已翻译文本,不是稳定 key) -- 调用方只看状态码.
     """
     base = (settings.ci_api_url or "").rstrip("/")
     if not base:
@@ -117,7 +117,7 @@ def _glue_get(path: str) -> tuple[int, Any]:
         raise _GlueUnavailable("Glue 响应不是合法 JSON") from exc
 
 
-# ── 角色权限(Glue 新增端点,P0;§8.4)──
+# ── 角色权限 ──
 
 
 def role_permissions(role: str) -> list[str]:
@@ -125,11 +125,11 @@ def role_permissions(role: str) -> list[str]:
 
     · 404 即 fail-closed(GlueIdentityError):角色名写错 / 角色行被删,不是'没有权限';
       同时写负缓存(窗口内不再打 Glue)并打一条含角色名的限流 WARN,便于定位'角色悬空';
-      `super_admin` 由 Glue 返回 ["*"],CD 侧按通配放行(见 backend/auth.py).
+      `super_admin` 由 Glue 返回 ["*"],CD 侧按通配放行.
     · 200 但 permissions 为空数组 即 真实事实(角色存在但零权限)即 正常返回 [],由调用方按 deny 处理.
     · 非 200/404 即 暂时性失败(_GlueUnavailable),交给软失败窗口.
     """
-    role = (role or "").strip()  # 只 trim,不 lower(§8.7 第 8 条:lower 会导致 404)
+    role = (role or "").strip()  # 只 trim,不 lower(lower 会导致 404)
     if not role:
         return []  # 无角色:deny-by-default(与 local 模式"无角色 = 空权限"同口径)
 
@@ -174,14 +174,14 @@ def role_permissions(role: str) -> list[str]:
     return list(resolved)
 
 
-# ── 身份(§8.3)──
+# ── 身份 ──
 
 
 def _fetch_identity(username: str) -> dict:
     """GET /api/rbac/users/{username} → {username, role, systems, status}.
 
-    · username 先 strip().lower()(Glue 侧 strtolower 归一,§8.7 第 6 条);
-    · role **原样透传**(不 lower,§8.7 第 8 条);
+    · username 先 strip().lower()(Glue 侧 strtolower 归一);
+    · role 原样透传(不 lower);
     · 404 即 身份已消失(明确否定,与角色 404 同等对待).
     """
     code, body = _glue_get(_USERS_PATH.format(username=quote(username, safe="")))
@@ -233,8 +233,8 @@ def get_identity(username: str, *, force: bool = False) -> dict:
 
     · 窗口内命中(< OIDC_REVALIDATE_SECONDS)即 零 Glue 调用,直接放行;
     · 超窗口 即 复核 /api/rbac/users/{username} + 刷新该角色权限:
-      身份 1 次调用/账号/窗口,权限按角色缓存 即 N 个同角色用户每窗口共摊 1 次(§3.2);
-    · 复核发现 status=0 / systems 不含 cd 即 由调用方(backend/auth.py)判拒并删会话行;
+      身份 1 次调用/账号/窗口,权限按角色缓存,N 个同角色用户每窗口共摊 1 次;
+    · 复核发现 status=0 / systems 不含 cd 即 由调用方判拒并删会话行;
       本函数只负责'身份事实',不做准入判断.
     """
     key = (username or "").strip().lower()
@@ -250,7 +250,7 @@ def get_identity(username: str, *, force: bool = False) -> dict:
         if cached["usable"]:
             return cached
         # 窗口内已知该账号身份不可用(角色悬空):零 Glue 调用继续 fail-closed,
-        # 避免"降权/悬空瞬间"把 Glue 打满(§8.4 的负缓存语义)
+        # "降权/悬空瞬间"不会把 Glue 打满
         raise GlueIdentityError(
             f"账号 {key!r} 的身份当前不可用（角色悬空，详见 WARN 日志）",
             status_code=401,
@@ -265,14 +265,14 @@ def get_identity(username: str, *, force: bool = False) -> dict:
     except _GlueUnavailable as exc:
         return _soft_fail_or_raise(key, cached, exc)
 
-    # 每个复核窗口都刷新一次该角色的权限:只看"角色名是否变化"是不够的 --
-    # 同角色被去掉某个 perm_key(用例 D)或角色行被删(用例 G)都必须在窗口内生效.
-    # 代价可忽略:权限按**角色**缓存,同一角色在同一窗口内只查一次(N 个用户共享 1 次调用).
+    # 每个复核窗口都刷新一次该角色的权限:只看"角色名是否变化"不够 --
+    # 同角色被去掉某个 perm_key 或角色行被删都必须在窗口内生效.
+    # 权限按角色缓存,同一角色在同一窗口内只查一次(N 个用户共享 1 次调用).
     try:
         permissions = role_permissions(ident["role"])
     except GlueIdentityError:
         # 角色悬空:写一份 usable=False 的负缓存(窗口内不再打 Glue),但每次都 fail-closed;
-        # 角色行恢复后 ≤1 个窗口自动恢复(§8.4 / 验收用例 G)
+        # 角色行恢复后 ≤1 个窗口自动恢复
         with _lock:
             _identity_cache[key] = {
                 **ident,

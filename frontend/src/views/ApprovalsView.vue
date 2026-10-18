@@ -29,64 +29,66 @@
           >{{ s.label }}</button>
         </div>
 
-        <table class="table" v-if="items.length">
-          <thead>
-            <tr>
-              <th>{{ $t('approvals.id') }}</th>
-              <th>{{ $t('approvals.project') }}</th>
-              <th>{{ $t('approvals.tag') }}</th>
-              <th>{{ $t('approvals.deployType') }}</th>
-              <th>{{ $t('approvals.envs') }}</th>
-              <th>{{ $t('approvals.requester') }}</th>
-              <th>{{ $t('approvals.status') }}</th>
-              <th>{{ $t('approvals.approver') }}</th>
-              <th>{{ $t('approvals.createdAt') }}</th>
-              <th>{{ $t('common.action') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="a in items" :key="a.id">
-              <td>#{{ a.id }}</td>
-              <td>{{ a.project }}</td>
-              <td>{{ a.tag || '—' }}</td>
-              <td>{{ a.deploy_type || '—' }}</td>
-              <td>{{ a.envs || '—' }}</td>
-              <td>{{ a.requester || '—' }}</td>
-              <td><span class="badge" :class="statusClass(a.status)">{{ statusLabel(a.status) }}</span>
-                <span
-                  v-if="a.scheduled_at"
-                  class="badge badge-sched"
-                  :title="$t('approvals.scheduleTip', { time: a.scheduled_at })"
-                  style="margin-left:4px"
-                >⏰ [{{ $t('approvals.scheduledBadge') }}] {{ a.scheduled_at.slice(0, 16) }}</span>
-              </td>
-              <td>{{ a.approver || '—' }}</td>
-              <td>{{ a.created_at }}</td>
-              <td class="actions">
-                <button
-                  v-if="a.status === 'pending' && a.can_approve"
-                  class="btn btn-sm btn-green"
-                  @click="openApprove(a)"
-                >{{ $t('approvals.approve') }}</button>
-                <button
-                  v-if="a.status === 'pending' && a.can_approve"
-                  class="btn btn-sm btn-red"
-                  @click="openReject(a)"
-                >{{ $t('approvals.reject') }}</button>
-                <button
-                  v-if="a.can_execute"
-                  class="btn btn-sm btn-blue"
-                  @click="goExecute(a)"
-                >{{ $t('approvals.execute') }}</button>
-                <button
-                  v-if="(a.status === 'pending' || a.status === 'approved') && a.can_cancel"
-                  class="btn btn-sm"
-                  @click="doCancel(a)"
-                >{{ $t('approvals.cancelApproval') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll table-scroll-wide" v-if="items.length">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ $t('approvals.id') }}</th>
+                <th>{{ $t('approvals.project') }}</th>
+                <th>{{ $t('approvals.tag') }}</th>
+                <th>{{ $t('approvals.deployType') }}</th>
+                <th>{{ $t('approvals.envs') }}</th>
+                <th>{{ $t('approvals.requester') }}</th>
+                <th>{{ $t('approvals.status') }}</th>
+                <th>{{ $t('approvals.approver') }}</th>
+                <th>{{ $t('approvals.createdAt') }}</th>
+                <th>{{ $t('common.action') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="a in items" :key="a.id">
+                <td>#{{ a.id }}</td>
+                <td>{{ a.project }}</td>
+                <td>{{ a.tag || '—' }}</td>
+                <td>{{ a.deploy_type || '—' }}</td>
+                <td>{{ a.envs || '—' }}</td>
+                <td>{{ a.requester || '—' }}</td>
+                <td><span class="badge" :class="statusClass(a.status)">{{ statusLabel(a.status) }}</span>
+                  <span
+                    v-if="a.scheduled_at"
+                    class="badge badge-sched"
+                    :title="$t('approvals.scheduleTip', { time: a.scheduled_at })"
+                    style="margin-left:4px"
+                  >⏰ [{{ $t('approvals.scheduledBadge') }}] {{ a.scheduled_at.slice(0, 16) }}</span>
+                </td>
+                <td>{{ a.approver || '—' }}</td>
+                <td>{{ a.created_at }}</td>
+                <td class="actions">
+                  <button
+                    v-if="a.status === 'pending' && a.can_approve"
+                    class="btn btn-sm btn-green"
+                    @click="openApprove(a)"
+                  >{{ $t('approvals.approve') }}</button>
+                  <button
+                    v-if="a.status === 'pending' && a.can_approve"
+                    class="btn btn-sm btn-red"
+                    @click="openReject(a)"
+                  >{{ $t('approvals.reject') }}</button>
+                  <button
+                    v-if="a.can_execute"
+                    class="btn btn-sm btn-blue"
+                    @click="goExecute(a)"
+                  >{{ $t('approvals.execute') }}</button>
+                  <button
+                    v-if="(a.status === 'pending' || a.status === 'approved') && a.can_cancel"
+                    class="btn btn-sm"
+                    @click="doCancel(a)"
+                  >{{ $t('approvals.cancelApproval') }}</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-else class="empty">{{ $t('approvals.noApprovals') }}</div>
 
         <div v-if="totalPages > 1" class="pager">
@@ -148,36 +150,38 @@
           </div>
         </div>
 
-        <table class="table" v-if="rules.length">
-          <thead>
-            <tr>
-              <th>{{ $t('approvals.project') }}</th>
-              <th>{{ $t('approvals.ruleEnabled') }}</th>
-              <th>{{ $t('approvals.ruleRequireEnvs') }}</th>
-              <th>{{ $t('approvals.ruleApproverRole') }}</th>
-              <th>{{ $t('approvals.ruleApprovers') }}</th>
-              <th>{{ $t('common.action') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in rules" :key="r.id">
-              <td>{{ r.project }}</td>
-              <td>{{ r.enabled ? '✅' : '—' }}</td>
-              <td>{{ r.require_envs || '—' }}</td>
-              <td><span class="badge badge-role">{{ roleName(r.approver_role) }}</span></td>
-              <td>
-                <template v-if="r.approvers">
-                  <span v-for="u in splitCsv(r.approvers)" :key="u" class="badge badge-user">{{ u }}</span>
-                </template>
-                <template v-else>—</template>
-              </td>
-              <td class="actions">
-                <button class="btn btn-sm" @click="editRule(r)">{{ $t('common.edit') }}</button>
-                <button class="btn btn-sm btn-red" @click="deleteRule(r)">{{ $t('common.delete') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll" v-if="rules.length">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ $t('approvals.project') }}</th>
+                <th>{{ $t('approvals.ruleEnabled') }}</th>
+                <th>{{ $t('approvals.ruleRequireEnvs') }}</th>
+                <th>{{ $t('approvals.ruleApproverRole') }}</th>
+                <th>{{ $t('approvals.ruleApprovers') }}</th>
+                <th>{{ $t('common.action') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in rules" :key="r.id">
+                <td>{{ r.project }}</td>
+                <td>{{ r.enabled ? '✅' : '—' }}</td>
+                <td>{{ r.require_envs || '—' }}</td>
+                <td><span class="badge badge-role">{{ roleName(r.approver_role) }}</span></td>
+                <td>
+                  <template v-if="r.approvers">
+                    <span v-for="u in splitCsv(r.approvers)" :key="u" class="badge badge-user">{{ u }}</span>
+                  </template>
+                  <template v-else>—</template>
+                </td>
+                <td class="actions">
+                  <button class="btn btn-sm" @click="editRule(r)">{{ $t('common.edit') }}</button>
+                  <button class="btn btn-sm btn-red" @click="deleteRule(r)">{{ $t('common.delete') }}</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-else class="empty">{{ $t('approvals.noRules') }}</div>
       </div>
     </div>
@@ -349,7 +353,6 @@ function goExecute(a) {
   if (url) router.push(url)
 }
 
-// ── 规则 ──
 async function loadBots() {
   try {
     const r = await fetch('/api/bots', { headers: auth.A() })
@@ -373,7 +376,7 @@ async function loadUsers() {
   } catch (e) {}
 }
 
-// 审批角色显示名:直接读 CI(Glue) 的 description,与 CI 侧保持一致(空则回退 name)
+// 审批角色显示名:读 CI 的 description,空则回退 name
 function roleLabel(r) {
   return r.description || r.name
 }

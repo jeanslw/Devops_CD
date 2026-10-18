@@ -1,14 +1,13 @@
 """审批服务 - 规则评估 + 审批单状态机(申请 → 批准 → 申请人手动执行).
 
-v1.5.3 流程(批准不再自动部署):
 1. 规则评估:cd_approval_rules 按项目('*' 为全局默认)配置是否需要审批,
    哪些环境(require_envs,命中目标服务器 tags 才审批),审批人
-   (approvers 显式用户名优先,approver_role 兜底).
+   (approvers 显式用户名优先,其次 approver_role 角色).
 2. 审批单状态机:
      pending → approved → deploying → deployed / failed
      pending → rejected / cancelled
      approved → cancelled(申请人撤销)
-   批准只把 pending 原子改成 approved(落库即不丢);部署何时执行由申请人
+   批准只把 pending 原子改成 approved(写入数据库即不丢);部署何时执行由申请人
    凭已批准单手动触发(execute / execute-stream 接口),严格限本人,一次性.
 3. 崩溃恢复:进程重启后 recover_on_startup 清僵尸 running 部署锁,并把
    deploying 审批单重置回 approved,由申请人重新执行(参数快照不丢).
@@ -83,7 +82,7 @@ def _parse_scheduled_at(s: str) -> str:
 
 
 def list_all_rules(db) -> list[dict]:
-    """取全部审批规则(ORDER BY id).列表页批量匹配用,避免逐行查库的 N+1."""
+    """取全部审批规则(ORDER BY id),供列表页批量匹配(替代逐行查库)."""
     with db.conn() as conn:
         rows = conn.execute("SELECT * FROM cd_approval_rules ORDER BY id").fetchall()
     return [dict(r) for r in rows]
@@ -116,8 +115,8 @@ def get_rule(db, project: str) -> dict | None:
 def resolve_target_envs(db, server_ids: str = "") -> set[str]:
     """解析目标服务器的环境标签(cd_servers.tags,逗号分隔).server_ids 空 → 全部服务器.
 
-    防御(fail-closed):server_ids 非空但解析不出任何合法 id 时抛 ValidationError,
-    不静默返回空集合--空交集会让 require_envs 规则失效,审批被静默跳过.
+    fail-closed:server_ids 非空但解析不出任何合法 id 时抛 ValidationError,
+    不静默返回空集合(空交集会使 require_envs 规则失效,审批被静默跳过).
     """
     server_ids = (server_ids or "").strip()
     if not server_ids:
@@ -164,7 +163,7 @@ def create_approval(
     """创建审批单,返回审批单 id.
 
     scheduled_at 由申请人在提交部署时指定(空=立即).默认创建 pending 待审批单;
-    无审批规则但指定了定时时,调用方传入 status=APPROVED 直接落一张'已批准'定时单
+    无审批规则但指定了定时时,调用方传入 status=APPROVED 直接写入一张'已批准'定时单
     (无人工审批人,approver 留空),由后台调度器到点自动执行.
     """
     with db.conn() as conn:
@@ -241,7 +240,7 @@ def list_approvals(
     if requester:
         where.append("requester=?")
         args.append(requester)
-    # 部署形态过滤:避免 Docker 页的活跃单串显到 K8s 页(反之亦然).
+    # 部署形态过滤:隔离 Docker 页与 K8s 页的活跃单(互不串显).
     # ssh/compose 精确匹配;k8s 匹配所有 k8s/<cd_type> 子形态.
     kind = (deploy_kind or "").strip().lower()
     if kind in ("ssh", "compose"):
@@ -255,7 +254,6 @@ def list_approvals(
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     # active 场景(部署页恢复进度)只取最需要用户行动的一条:
     # deploying(执行中)> approved(待执行)> pending(待审批),同优先级再按新到旧.
-    # 否则较新的 pending 单会挡住较早的 approved 单,导致申请人无法执行已批准的部署.
     if active:
         order_sql = (
             "ORDER BY CASE status "
@@ -284,9 +282,8 @@ def list_approvals(
 def _is_super(user: dict) -> bool:
     """超管判定:角色名命中 settings.super_admin_role,或持通配 "*".
 
-    OIDC 下 Glue 只给 super_admin 通配(其权限由代码授予),CD 必须认这个通配 —— 否则运维把
-    SUPER_ADMIN_ROLE 改名、或 Glue 侧角色改名,超管在业务层就失能了(接口层 require_perm 已认通配,
-    两处判据必须一致).local 模式的权限永不含 "*",对既有行为零影响.
+    OIDC 下 Glue 只给 super_admin 通配,CD 必须认这个通配;与接口层 require_perm 判据一致.
+    local 模式的权限永不含 "*",对既有行为零影响.
     """
     return (user.get("role") or "") == settings.super_admin_role or WILDCARD_PERM in (user.get("permissions") or [])
 
@@ -294,8 +291,7 @@ def _is_super(user: dict) -> bool:
 def can_approve(approval: dict, rule: dict, user: dict) -> bool:
     """审批权限:super_admin(含通配 "*",见 _is_super)或持 cd.deploy.approve 或 ∈ approvers 或 role == approver_role.
 
-    通配与 cd.deploy.approve 同级放行:接口层 require_perm 已据此放行,业务层必须同口径,
-    否则会出现"接口放行、业务层 403"两套判据.
+    通配与 cd.deploy.approve 同级放行,与接口层 require_perm 同口径.
     """
     role = user.get("role") or ""
     username = user.get("username") or ""
@@ -405,7 +401,7 @@ def cancel(db, approval_id, user: dict) -> dict:
             error_key="errors.approval_cancel_perm",
         )
     # pending 与已批准未执行(approved)均可撤销;一旦 deploying 即不可撤销.
-    # 不写 approver 字段:保留原审批人身份,撤销人经通知消息留痕(避免覆盖丢失审批人信息).
+    # 不写 approver 字段:保留原审批人身份;撤销人经通知消息留痕.
     ok = _transition(db, approval_id, [PENDING, APPROVED], CANCELLED)
     if not ok:
         return {"success": False, "message": "仅待审批或已批准未执行的单据可撤销"}
@@ -425,9 +421,9 @@ def gate_deploy(
 
     for_rollback=True 时按 require_rollback_approval 规则判断(回滚是否需要审批).
     scheduled_at 由申请人在提交部署时指定(可选定时发布);非法格式抛 ValidationError.
-    - 需要审批 → 创建 pending 审批单(定时字段随单落库,批准后到点自动执行).
+    - 需要审批 → 创建 pending 审批单(定时字段随单写入数据库,批准后到点自动执行).
     - 无需审批但指定了定时 → 直接创建'已批准'定时单(无人工审批人),由后台调度器到点执行,
-      保证定时发布在无审批规则的项目同样生效,而非被静默忽略成立即发布.
+      定时发布在无审批规则的项目同样生效.
     """
     sched = _parse_scheduled_at(scheduled_at)
     rule = approval_required(db, project, server_ids, for_rollback=for_rollback)
@@ -488,14 +484,13 @@ def _resolve_display_image(db, project: str, tag: str) -> str:
 
 
 def _enforce_execute_perm(params: dict, user: dict) -> None:
-    """按审批单快照复核执行人当前权限(防御深度:账号权限可能已被收回).
+    """按审批单快照复核执行人当前权限.
 
     回滚快照要求 cd.deploy-manage(与普通部署同口径:super_admin / 通配 "*" / blanket 权限均放行);
     普通部署按 deploy_type 映射子权限(enforce_deploy_perm 同时允许 cd.deploy-manage blanket 与 super_admin).
     """
     if bool(params.get("_rollback")):
-        # 超管(含通配 "*",见 _is_super)与 cd.deploy-manage 同级放行:与 enforce_deploy_perm 判定对齐,
-        # 避免 Glue 侧角色改名后回滚单被误拒
+        # 超管(含通配 "*",见 _is_super)与 cd.deploy-manage 同级放行,与 enforce_deploy_perm 判定对齐
         if _is_super(user) or "cd.deploy-manage" in (user.get("permissions") or []):
             return
         raise AppException(
@@ -535,9 +530,12 @@ def claim_for_execution(db, approval_id, user: dict) -> tuple[dict, dict]:
             "审批单当前状态不可执行（仅已批准待执行的单据可执行）",
             error_key="errors.approval_not_executable",
         )
-    # 实时重建身份(与旧后台执行一致)并按快照复核当前权限
+    # 实时重建身份并按快照复核当前权限
     exec_user = load_user_context(db, approval["requester"] or "")
-    params = json.loads(approval.get("params_json") or "{}")
+    try:
+        params = json.loads(approval.get("params_json") or "{}")
+    except (TypeError, ValueError) as e:
+        raise ValidationError("审批单执行参数已损坏", error_key="errors.approval_params_invalid") from e
     _enforce_execute_perm(params, exec_user)
     # 原子领取:并发/重复请求仅一个成功
     if not _transition(db, approval_id, [APPROVED], DEPLOYING):
@@ -560,7 +558,7 @@ def run_approval(db, approval_id: int, user: dict, callback=None) -> dict:
     if not row or row.get("status") != DEPLOYING:
         return {"status": "failed", "deploy_id": 0, "output": "approval status changed before execution"}
     params = json.loads(row.get("params_json") or "{}")
-    # 回滚审批:还原原生回滚标志(rollback_service 在 params 里埋了 _rollback)
+    # 回滚审批:还原原生回滚标志(params 快照中的 _rollback 字段)
     rollback = bool(params.pop("_rollback", False))
     approval_id_in_params = int(params.pop("_approval_id", 0) or 0)
     if approval_id_in_params and approval_id_in_params != approval_id:
@@ -573,7 +571,7 @@ def run_approval(db, approval_id: int, user: dict, callback=None) -> dict:
     elif status == "busy":
         # 项目锁冲突:退回 approved,不消耗单据,申请人稍后可重试
         _transition(db, approval_id, [DEPLOYING], APPROVED)
-        # 防御:若 pending 行已被领取,退回 pending 并释放锁(常规路径 busy 发生在领取前)
+        # 若 pending 行已被领取,退回 pending 并释放锁(常规路径 busy 发生在领取前)
         try:
             reset_pending_deploy_record(db, approval_id)
         except Exception:
@@ -589,8 +587,8 @@ def run_approval(db, approval_id: int, user: dict, callback=None) -> dict:
 def recover_on_startup(db):
     """进程重启恢复:清僵尸 running 部署锁 + deploying 审批单按关联部署记录的实际状态收敛.
 
-    - 关联部署记录已终态(ok/failed)→ 审批单收敛到对应终态(deployed/failed,含 deploy_id 回填):
-      堵住'部署记录已写终态但审批单还没更新'的崩溃窗口,避免申请人重复执行造成重复部署;
+    - 关联部署记录已终态(ok/failed)→ 审批单收敛到对应终态(deployed/failed,含 deploy_id 回填),
+      覆盖"部署记录已写终态但审批单还没更新"的崩溃窗口;
     - 其余(部署记录已被标记 interrupted)→ 审批单退回 approved 等待申请人重跑,
       interrupted 行退回 pending 以便申请人重新执行时能再次领取.
     """
@@ -598,7 +596,7 @@ def recover_on_startup(db):
 
     recovered_logs = recover_stale_running(db)
     with db.conn() as conn:
-        # 崩溃窗口兜底:部署记录已终态的 DEPLOYING 审批单,按记录状态收敛(不退回 approved)
+        # 崩溃窗口:部署记录已终态的 DEPLOYING 审批单,按记录状态收敛(不退回 approved)
         cur = conn.execute(
             "UPDATE cd_approvals SET status=?, updated_at=?, deploy_id=("
             "SELECT id FROM cd_deploy_logs WHERE approval_id=cd_approvals.id AND status='ok' ORDER BY id DESC LIMIT 1) "
@@ -613,9 +611,13 @@ def recover_on_startup(db):
             (FAILED, _now(), DEPLOYING),
         )
         converged_failed = getattr(cur, "rowcount", 0) or 0
-        # 剩余 DEPLOYING(部署记录为 interrupted)→ approved 等待申请人重跑
+        # 剩余 DEPLOYING(部署记录为 interrupted)→ approved 等待申请人重跑.
+        # 排除仍有 running 部署记录的单据:那是本实例/其他副本正在执行的,回退会撕裂执行中的单据
+        # 并让申请人重复领取(claim)执行.
         cur = conn.execute(
-            "UPDATE cd_approvals SET status=?, updated_at=? WHERE status=?", (APPROVED, _now(), DEPLOYING)
+            "UPDATE cd_approvals SET status=?, updated_at=? WHERE status=? "
+            "AND NOT EXISTS (SELECT 1 FROM cd_deploy_logs WHERE approval_id=cd_approvals.id AND status='running')",
+            (APPROVED, _now(), DEPLOYING),
         )
         recovered_approvals = getattr(cur, "rowcount", 0) or 0
         # 这些审批单关联的部署记录已被上面标记为 interrupted:退回 pending,
@@ -644,7 +646,7 @@ def count_todo(db, user: dict) -> dict:
       排除本人发起的单(四眼原则,自己的单不能自己审批);
     - to_execute:本人发起,已批准待执行(申请人手动执行模型下的行动项).
 
-    轻量:pending 一次查询(LIMIT 200 兜底)+ 待执行一次 count + 一次规则列表,内存判定.
+    轻量:pending 一次查询(LIMIT 200 上限)+ 待执行一次 count + 一次规则列表,内存判定.
     """
     username = (user or {}).get("username") or ""
     with db.conn() as conn:
@@ -698,7 +700,7 @@ def _notify_result(db, rule, approval, result, approver="", note=""):
     notify_approval(db, bot_id, msg)
 
 
-# ── 定时发布调度器(v1.5.3)──
+# ── 定时发布调度器 ──
 # 到点以申请人身份自动执行已批准的定时单据:claim_for_execution 内部实时重建
 # 申请人身份并按快照复核权限,审计链(谁申请/谁批/谁执行)与手动执行完全一致.
 
@@ -713,8 +715,8 @@ def run_due_scheduled(db) -> int:
     每单独立隔离:
     - ConflictError(项目锁占用/并发领取)→ 保留定时,下一轮重试;
     - 权限缺失/账号被删等永久性失败 → 清空 scheduled_at(单据保持 approved,
-      申请人可手动执行),避免每轮重试刷日志;
-    - 意外异常(领取成功但执行抛异常)→ 单据退回 approved 并释放项目锁,避免卡死.
+      申请人可手动执行),不再每轮重试;
+    - 意外异常(领取成功但执行抛异常)→ 单据退回 approved 并释放项目锁.
     """
     now = _now()
     with db.conn() as conn:
@@ -752,7 +754,7 @@ def run_due_scheduled(db) -> int:
                 )
         except Exception:
             # 领取成功但执行抛意外异常:把仍 deploying 的单据退回 approved 并释放项目锁,
-            # 避免单据卡死,项目被锁到进程重启(与手动执行路径的兜底一致).
+            # 与手动执行路径的处理一致.
             logger.exception("scheduled approval %s execution failed unexpectedly", aid)
             with suppress(Exception):
                 _transition(db, aid, [DEPLOYING], APPROVED)
@@ -768,7 +770,7 @@ def _sched_run_loop():
     while not _sched_stop.is_set():
         try:
             # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
-            # (分布式锁防止多头扫描调度;单据本身的原子领取状态机兜底不重复部署)
+            # (分布式锁串行化扫描;单据由原子领取状态机保证不重复执行)
             if acquire(Database(), "scheduled_executor", ttl_seconds=120):
                 try:
                     db = Database()

@@ -32,7 +32,6 @@ export function useSseStream() {
           const block = buffer.substring(0, idx)
           buffer = buffer.substring(idx + 2)
 
-          // SSE 事件块可能含多行 data:,收集所有 data: 行拼接
           const lines = block.split('\n')
           const dataLines = []
           for (const ln of lines) {
@@ -61,7 +60,6 @@ export function useSseStream() {
           } else if (data === '.') {
             continue
           } else if (data.startsWith('STATUS:')) {
-            // i18n message from backend: parse JSON and translate
             try {
               const msg = JSON.parse(data.substring(7))
               output.value += t(msg.key, msg) + '\n'

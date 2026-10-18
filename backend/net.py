@@ -1,12 +1,7 @@
 """出站地址族优先级(HTTP_IP_FAMILY=ipv4 | ipv6 | auto,默认 ipv4).
 
-install_ip_family() 把 socket.getaddrinfo 换成下面这版:按 _preferred_family 稳定重排结果,
-目标族排最前(同族内保持系统返回顺序),条目不增不减;auto 不替换任何函数.
-
-覆盖面:进程内所有经 socket.getaddrinfo 解析的出站连接(requests / urllib3、http.client、
-paramiko SSH).未覆盖:asyncio 连接入口(loop.create_connection / asyncio.open_connection)
-用事件循环自带的解析器,不受此处替换影响 —— CD 当前出站全为同步,将来引入异步 HTTP 客户端
-时需在这里补上对应的连接入口.
+install_ip_family() 替换 socket.getaddrinfo,按目标族稳定重排解析结果,条目不增不减;
+auto 不替换任何函数。仅覆盖经 socket.getaddrinfo 解析的同步连接,不覆盖 asyncio 连接入口。
 """
 
 import logging

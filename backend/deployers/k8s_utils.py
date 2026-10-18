@@ -1,6 +1,7 @@
 """K8S 部署共享工具函数 - Pod 轮询 + YAML 渲染"""
 
 import re
+import shlex
 
 import yaml
 
@@ -17,10 +18,9 @@ def check_cancelled() -> None:
 
 
 def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:
-    """执行 SSH 命令并返回 (stdout, stderr, exit_code)
+    """执行 SSH 命令并返回 (stdout, stderr, exit_code).
 
-    与 _ssh_cmd 的区别:检查命令的退出码,用于需要判断成功/失败的场景.
-    channel.recv_exit_status() 有 try/except 保护,防止 channel 已关闭抛异常.
+    channel 异常关闭时按退出码 1 处理.
     """
     _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
     out = stdout.read().decode(errors="replace").strip()
@@ -35,14 +35,15 @@ def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:
 
 def _kubectl_pods(ssh, deploy_name="", namespace=""):
     """获取 K8S pod 列表,按 Deployment 名前缀匹配,不盲猜子串"""
-    ns_flag = f"-n {namespace} " if namespace else ""
+    # namespace 可能来自用户请求 / YAML 声明,必须转义后再拼进远程 shell 命令
+    ns_flag = f"-n {shlex.quote(namespace)} " if namespace else ""
     cmd = (
         f"kubectl get pods {ns_flag}-o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,"
         "STATUS:.status.phase,REASON:.status.reason,DELETING:.metadata.deletionTimestamp --no-headers 2>/dev/null"
     )
     if deploy_name:
         # 前缀匹配:K8s Pod 命名规则 = {deploy}-{rs-hash}-{pod-hash}
-        # grep "^{name}-" 避免 app 误匹配 app-backend
+        # grep "^{name}-" 锚定带 hash 的前缀,app 不匹配 app-backend
         cmd += f" | grep -E '^{re.escape(deploy_name)}-[a-f0-9]'"
     return _ssh_cmd(ssh, cmd)
 
@@ -78,9 +79,8 @@ def _parse_pod_line(line: str) -> dict | None:
 def _rename_deployment_in_yaml(yaml_content: str, new_name: str) -> tuple[str, str]:
     """解析 YAML,将 Deployment 名称替换为项目短名.
 
-    返回 (修改后的 yaml_content, 原 deployment 名).
-    若 YAML 中无 Deployment 定义,则返回原内容 + 空字符串.
-    用行级精确替换,只改 name:/app: 的值位置,不误伤镜像名或其他字段.
+    返回 (修改后的 yaml_content, 原 deployment 名);无 Deployment 定义则返回原内容 + 空字符串.
+    行级精确替换,只改 name:/app: 的值位置.
     """
     try:
         docs = list(yaml.safe_load_all(yaml_content))
@@ -155,7 +155,7 @@ def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
 
     if "{IMAGE}:{TAG}" in yaml_content:
         yaml_content = yaml_content.replace("{IMAGE}:{TAG}", final_image)
-    # 注意:{IMAGE} 顺序必须在 {IMAGE_NAME} 之前,避免误替换
+    # 注意:{IMAGE} 必须先于 {IMAGE_NAME} 替换
     return yaml_content.replace("{IMAGE}", final_image).replace("{IMAGE_NAME}", final_image_name).replace("{TAG}", tag)
 
 

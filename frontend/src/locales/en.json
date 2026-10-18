@@ -112,6 +112,7 @@
     "ssoHint": "Single sign-on (OIDC) — you will be returned to this system automatically after signing in."
   },
   "topbar": {
+    "account": "Account",
     "logout": "Logout",
     "menu": "Menu"
   },

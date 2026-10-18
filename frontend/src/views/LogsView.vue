@@ -1,51 +1,53 @@
 <template>
   <div class="card">
     <h3>{{ $t('logs.title') }}</h3>
-    <table>
-      <thead><tr><th>{{ $t('logs.id') }}</th><th class="col-time">{{ $t('logs.time') }}</th><th class="col-project">{{ $t('logs.project') }}</th><th class="col-tag">{{ $t('logs.tag') }}</th><th class="col-method">{{ $t('logs.method') }}</th><th class="col-status">{{ $t('logs.status') }}</th><th class="col-duration">{{ $t('logs.duration') }}</th><th class="col-operator">{{ $t('logs.operator') }}</th><th class="col-detail">{{ $t('logs.detail') }}</th><th class="col-note">{{ $t('logs.note') }}</th></tr></thead>
-      <tbody>
-        <tr v-if="loading"><td colspan="10" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-        <template v-else-if="logs.length === 0">
-          <tr><td colspan="10" style="text-align:center;color:#888">{{ $t('logs.noRecords') }}</td></tr>
-        </template>
-        <template v-else v-for="(l, idx) in logs" :key="l.id">
-          <tr style="cursor:pointer" @click="toggleDetail(idx)">
-            <td>
-              <div class="log-id-cell">
-                <span style="color:#81c784;font-weight:bold">#{{ l.deploy_id }}</span>
-                <div
-                  v-if="l.approval_id"
-                  class="approval-badge"
-                  :class="approvalBadgeClass(l)"
-                  :title="approvalTip(l)"
-                >
-                  {{ approvalBadgeText(l) }}
+    <div class="table-scroll table-scroll-wide">
+      <table>
+        <thead><tr><th>{{ $t('logs.id') }}</th><th class="col-time">{{ $t('logs.time') }}</th><th class="col-project">{{ $t('logs.project') }}</th><th class="col-tag">{{ $t('logs.tag') }}</th><th class="col-method">{{ $t('logs.method') }}</th><th class="col-status">{{ $t('logs.status') }}</th><th class="col-duration">{{ $t('logs.duration') }}</th><th class="col-operator">{{ $t('logs.operator') }}</th><th class="col-detail">{{ $t('logs.detail') }}</th><th class="col-note">{{ $t('logs.note') }}</th></tr></thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="10" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+          <template v-else-if="logs.length === 0">
+            <tr><td colspan="10" style="text-align:center;color:#888">{{ $t('logs.noRecords') }}</td></tr>
+          </template>
+          <template v-else v-for="(l, idx) in logs" :key="l.id">
+            <tr style="cursor:pointer" @click="toggleDetail(idx)">
+              <td>
+                <div class="log-id-cell">
+                  <span style="color:#81c784;font-weight:bold">#{{ l.deploy_id }}</span>
+                  <div
+                    v-if="l.approval_id"
+                    class="approval-badge"
+                    :class="approvalBadgeClass(l)"
+                    :title="approvalTip(l)"
+                  >
+                    {{ approvalBadgeText(l) }}
+                  </div>
                 </div>
-              </div>
-            </td>
-            <td class="col-time">{{ l.created_at }}</td>
-            <td class="col-project">{{ l.project }}</td>
-            <td class="col-tag">{{ l.tag }}</td>
-            <td class="col-method">{{ l.deploy_type }}</td>
-            <td class="col-status">
-              <span class="badge" :class="badgeClass(l.status)">{{ statusText(l.status) }}</span>
-              <button v-if="l.status === 'running'" class="btn btn-sm btn-orange" style="margin-left:6px" @click.stop="cancelRun(l)">{{ $t('deploy.cancel') }}</button>
-            </td>
-            <td class="col-duration">{{ fmtDuration(l.duration_ms) }}</td>
-            <td class="col-operator">{{ l.triggered_by || '-' }}</td>
-            <td><div class="output-preview">{{ renderOutput(l.output || '') }}</div></td>
-            <td><div class="note-preview" :title="renderNote(l.deploy_note || '')">{{ l.deploy_note ? renderNote(l.deploy_note) : '-' }}</div></td>
-          </tr>
-          <tr v-if="expandedIdx === idx" class="log-detail">
-            <td colspan="10">
-              <div class="target-block">
-                <pre class="output-code">{{ escapeHtml(renderOutput(l.output || $t('logs.noOutput'))) }}</pre>
-              </div>
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
+              </td>
+              <td class="col-time">{{ l.created_at }}</td>
+              <td class="col-project">{{ l.project }}</td>
+              <td class="col-tag">{{ l.tag }}</td>
+              <td class="col-method">{{ l.deploy_type }}</td>
+              <td class="col-status">
+                <span class="badge" :class="badgeClass(l.status)">{{ statusText(l.status) }}</span>
+                <button v-if="l.status === 'running'" class="btn btn-sm btn-orange" style="margin-left:6px" @click.stop="cancelRun(l)">{{ $t('deploy.cancel') }}</button>
+              </td>
+              <td class="col-duration">{{ fmtDuration(l.duration_ms) }}</td>
+              <td class="col-operator">{{ l.triggered_by || '-' }}</td>
+              <td><div class="output-preview">{{ renderOutput(l.output || '') }}</div></td>
+              <td><div class="note-preview" :title="renderNote(l.deploy_note || '')">{{ l.deploy_note ? renderNote(l.deploy_note) : '-' }}</div></td>
+            </tr>
+            <tr v-if="expandedIdx === idx" class="log-detail">
+              <td colspan="10">
+                <div class="target-block">
+                  <pre class="output-code">{{ escapeHtml(renderOutput(l.output || $t('logs.noOutput'))) }}</pre>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
     <div v-if="totalPages > 1" class="log-pager">
       <span class="log-pager-info">{{ $t('logs.totalInfo', { total, pages: totalPages }) }}</span>
       <button v-if="page > 1" class="btn btn-sm log-pager-btn" @click="loadData(page - 1)">{{ $t('common.prev') }}</button>
@@ -97,7 +99,6 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// 后端日志/说明里的 STATUS:{json} 结构化消息按当前界面语言翻译,其余文本原样保留
 function translateStatusToken(token) {
   if (!token.startsWith('STATUS:')) return token
   try {
@@ -108,13 +109,10 @@ function translateStatusToken(token) {
   }
 }
 
-// output 为多行日志,逐行翻译
 function renderOutput(s) {
   return String(s || '').split('\n').map(translateStatusToken).join('\n')
 }
 
-// 说明为单行混合串(STATUS 摘要 + 普通文本).STATUS 的 JSON 内部可能含空格,
-// 故用正则整体匹配扁平对象后翻译,其余文本原样保留
 function renderNote(s) {
   return String(s || '').replace(/STATUS:(\{[^{}]*\})/g, (whole, json) => {
     try {
@@ -126,10 +124,6 @@ function renderNote(s) {
   })
 }
 
-// 审批徽章按审批单状态渲染(list_logs 挂载的 approval 带 status);
-// 无 status(旧接口/兼容场景)时回退 approver 判断.
-// failed 也归入"已批准":部署失败的单据审批已通过(批准事实由 approver/approved_at 承载),
-// 部署成败由状态列展示,徽章只表达审批是否发生.
 function approvalState(l) {
   const a = l.approval || {}
   const st = a.status || ''
@@ -154,7 +148,6 @@ function approvalBadgeClass(l) {
   return 'approval-badge--pending'
 }
 
-// 审批徽章 tooltip:已批准显示审批人+批准时间;已撤销/已驳回/申请中给出对应提示
 function approvalTip(l) {
   const st = approvalState(l)
   if (st === 'cancelled') return t('logs.approvalTipCancelled', { id: l.approval_id })
@@ -170,7 +163,6 @@ function approvalTip(l) {
   })
 }
 
-// 部署状态翻译成界面语言;未知状态原样展示
 function statusText(status) {
   const key = ({
     ok: 'logs.statusOk',

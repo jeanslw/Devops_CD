@@ -1,7 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
-// LoginView 由 App.vue 的登录门静态渲染(未登录分支),这里再懒加载无法拆出独立 chunk,
-// 故改为静态引入,与 App.vue 同源,避免 Vite 告警「dynamically imported but also statically imported」.
 import LoginView from '@/views/LoginView.vue'
 
 const routes = [
@@ -163,10 +161,7 @@ const router = createRouter({
   routes
 })
 
-// 导航守卫:检查认证
-// OIDC 模式下登录成功是整页跳转(Glue → 302 /api/auth/oidc/callback → /),sessionStorage 的
-// 本地标志不会保留 即 深链首次进入时先向服务端自举一次,否则已登录用户会被误踢到 /401.
-// local 模式下仅多一次 /api/me 探测(无 cookie 即 401),结果与改动前一致.
+// 导航守卫:未登录且非公开路径时先自举一次,仍失败则跳 /401.
 router.beforeEach(async (to) => {
   const { state, bootstrap } = useAuth()
   // 允许未登录访问的公开路径:登录页,错误页,首页(显示介绍页)

@@ -141,7 +141,7 @@ def list_resource_types(
                 for m in metrics
             ],
         }
-        # 没有子指标时,value 自身就是可选资源(兼容旧逻辑)
+        # 没有子指标时,value 自身就是可选资源
         custom.append(group)
 
     return {

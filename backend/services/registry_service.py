@@ -14,9 +14,7 @@ logger = logging.getLogger("registry")
 
 
 class RegistryService:
-    """镜像仓库服务:定时同步 + CRUD + 扫描报告
-    注意:建表由 database.py (SQLite) 和 database/init_mysql.sql (MySQL) 统一管理.
-    """
+    """镜像仓库服务:定时同步 + CRUD + 扫描报告"""
 
     _instance = None
     _lock = threading.Lock()
@@ -61,7 +59,7 @@ class RegistryService:
 
     @property
     def _harbor(self):
-        """延迟初始化 HarborClient,避免纯数据库查询时触发 API 探测"""
+        """延迟初始化 HarborClient:纯数据库查询不触发 API 探测"""
         if self._harbor_client is None:
             try:
                 self._harbor_client = HarborClient()
@@ -84,7 +82,7 @@ class RegistryService:
         Harbor 返回的 push_time/pull_time 是 UTC(如 '2026-07-17T07:17:04.737Z').
         优先用 fromisoformat 解析,可正确处理 Z 与数值时区偏移(如 +08:00);
         3.10 的 fromisoformat 只认 3/6 位小数秒,而 Harbor 用 Go RFC3339Nano
-        去尾零后小数位数不定,解析失败时回退旧的字面量截断逻辑兜底.
+        去尾零后小数位数不定,解析失败时回退字面量截断.
         """
         if not iso_str:
             return ""
@@ -102,7 +100,7 @@ class RegistryService:
     # ── 从 CI 映射获取待同步仓库 ──
 
     def _get_ci_repos(self) -> list[dict]:
-        """从 CI 映射获取所有已配置 Harbor 仓库的项目(经 API,不再直读 ci_job_git_map)"""
+        """从 CI 映射获取所有已配置 Harbor 仓库的项目(经 API)"""
         projects = get_ci_client().get_projects() or []
         return [
             {"project": p["job_name"], "repo": p["harbor_repository"]}
@@ -131,13 +129,10 @@ class RegistryService:
             raw = self._harbor.list_artifacts(repo)
             logger.info(f"Harbor 返回 {len(raw)} 条 artifacts: {repo}")
         except HarborUnavailableError:
-            # 连接层不可达(HARBOR_BASE_URL 错 / 网络不通 / Harbor 未启动)必须上抛:
-            # 一旦被下面的兜底分支当成"0 条",sync_all 会返回 ok=true,前端显示"同步完成",
-            # 把故障伪装成"同步成功但没数据".上抛后由 sync_all / sync_for_project 转成
-            # {ok: false, error_key: errors.harbor_unavailable},界面即可提示"连接不可达".
+            # 连接层不可达上抛,由 sync_all / sync_for_project 转 errors.harbor_unavailable
             raise
         except Exception as e:
-            # 单个仓库的非连接类错误(404 / 解析异常等)保持容错,不打断其他仓库的同步
+            # 非连接类错误(404 / 解析异常等)保持容错,不打断其他仓库的同步
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
@@ -200,8 +195,8 @@ class RegistryService:
             count += 1
 
         # 清理 Harbor 已不存在的 tag(sync 只做 upsert,需补"删 gone"才对齐真值源)
-        # 安全守卫:list_artifacts 返回空列表既可能是"仓库确实空"也可能是"404/分页异常",
-        # 客户端无法区分,故仅在拿到非空 tag 列表时才做差集删除,宁可保守不误删.
+        # list_artifacts 返回空列表既可能是"仓库确实空"也可能是"404/分页异常",
+        # 客户端无法区分,仅在拿到非空 tag 列表时才做差集删除,宁可保守不误删.
         current_tags = {art["tag"] for art in raw if art.get("tag")}
         if current_tags:
             placeholders = ",".join("?" for _ in current_tags)
@@ -219,7 +214,7 @@ class RegistryService:
                 ci_repos = self._get_ci_repos()
                 mapped = {(r["project"], r["repo"]) for r in ci_repos}
 
-                # 清理已不在 ci_job_git_map 中的历史脏数据
+                # 清理已不在 ci_job_git_map 中的数据
                 all_repos = conn.execute("SELECT id, project_name, repo_name FROM cd_registry_repositories").fetchall()
                 for r in all_repos:
                     if (r["project_name"], r["repo_name"]) not in mapped:
@@ -433,7 +428,7 @@ class RegistryService:
                 "fixable": row["vuln_fixable"] or 0,
             }
 
-            # 实时请求 Harbor 获取最新详情(不依赖数据库数量,解决旧缓存数据为 0 的问题)
+            # 实时请求 Harbor 获取最新详情(数据库缓存可能为 0)
             harbor_unavailable = False
             try:
                 live = self._harbor.get_scan_report(row["repo_name"], tag)
@@ -465,7 +460,7 @@ class RegistryService:
             return result
 
     def trigger_scan(self, repo_id: int, tag: str) -> dict:
-        """触发 Harbor 重新扫描该 artifact(v2 用 tag,参照 PHP 实现)"""
+        """触发 Harbor 重新扫描该 artifact(v2 用 tag)"""
         with self._db.conn() as conn:
             try:
                 row = conn.execute(
@@ -515,12 +510,12 @@ class RegistryService:
             if not artifact_row:
                 return {"ok": False, "error": "Tag 不存在"}
 
-            # 安全校验 1:是否在线运行
+            # 校验 1:是否在线运行
             running = self._check_running(conn, repo_row["project_name"], tag)
             if running:
                 return {"ok": False, "error": f"该 Tag 正在线上运行（{running}），请先回滚到其他版本"}
 
-            # 安全校验 2:最近 3 个 Tag 保护
+            # 校验 2:最近 3 个 Tag 保护
             recent = conn.execute(
                 "SELECT tag FROM cd_registry_artifacts WHERE repo_id=? ORDER BY push_time DESC LIMIT 3", (repo_id,)
             ).fetchall()
@@ -539,9 +534,10 @@ class RegistryService:
 
     def _check_running(self, conn, project: str, tag: str) -> str | None:
         """检查 Tag 是否在线上运行"""
+        # 终态取值必须与部署记录写入口径一致(status='ok'),否则该闸门永不命中
         rows = conn.execute(
             "SELECT target, deploy_type, created_at FROM cd_deploy_logs "
-            "WHERE project=? AND tag=? AND status='success' "
+            "WHERE project=? AND tag=? AND status='ok' "
             "ORDER BY created_at DESC LIMIT 5",
             (project, tag),
         ).fetchall()
@@ -564,28 +560,36 @@ def _default_db_factory():
 
 def _sync_worker(db_factory, interval_minutes: int):
     """后台线程:定时全量同步"""
-    while not _sync_stop.is_set():
-        _sync_stop.wait(interval_minutes * 60)
-        if _sync_stop.is_set():
-            break
-        try:
-            from backend.dlock import acquire
+    try:
+        while not _sync_stop.is_set():
+            _sync_stop.wait(interval_minutes * 60)
+            if _sync_stop.is_set():
+                break
+            try:
+                from backend.dlock import acquire
 
-            # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
-            if not acquire(db_factory(), "registry_sync", ttl_seconds=max(interval_minutes * 180, 120)):
-                continue
-            svc = RegistryService(db_factory())
-            result = svc.sync_all()
-            if result.get("ok"):
-                logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")
-            else:
-                # Harbor / CI 不可达时 sync_all 返回 ok=False,此时不能再打"完成",
-                # 否则日志与真实状态不符(和界面上"显示同步完成"是同一个坑)
-                logger.warning(f"定时同步中止: {result.get('error') or '未知原因'}")
-        except HarborUnavailableError as e:
-            logger.warning(f"定时同步跳过（Harbor 不可达）: {e}")
-        except Exception as e:
-            logger.error(f"定时同步异常: {e}")
+                # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
+                if not acquire(db_factory(), "registry_sync", ttl_seconds=max(interval_minutes * 180, 120)):
+                    continue
+                svc = RegistryService(db_factory())
+                result = svc.sync_all()
+                if result.get("ok"):
+                    logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")
+                else:
+                    # Harbor / CI 不可达时 sync_all 返回 ok=False:打"完成"会与真实状态不符
+                    logger.warning(f"定时同步中止: {result.get('error') or '未知原因'}")
+            except HarborUnavailableError as e:
+                logger.warning(f"定时同步跳过（Harbor 不可达）: {e}")
+            except Exception as e:
+                logger.error(f"定时同步异常: {e}")
+    finally:
+        # 线程退出时主动释放锁;否则要等 TTL(最长 interval*180 秒)过期,期间其他实例无法接管同步
+        try:
+            from backend.dlock import release
+
+            release(db_factory(), "registry_sync")
+        except Exception:
+            pass
 
 
 def start_background_sync(db_factory, interval: int | None = None):

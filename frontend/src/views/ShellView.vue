@@ -94,7 +94,6 @@ function connect() {
     term.writeln(t('shell.connecting'))
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    // token 由 HttpOnly cookie 自动随 WS 握手携带,不再放进 URL(避免泄漏进日志/历史)
     shellWs = new WebSocket(`${proto}://${location.host}/ws/terminal/${sid}`)
 
     let firstData = false

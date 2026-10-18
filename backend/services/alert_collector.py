@@ -195,7 +195,6 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
             raw = (_ssh_cmd(ssh, custom["command"]) or "").strip()
             metrics_list = [dict(m) for m in metrics]
 
-            # 用统一解析器解析
             parsed = parse_output(raw, custom.get("output_format", "auto"), metrics_list)
 
             for item in parsed:
@@ -231,7 +230,9 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                     )
 
     except Exception as e:
-        logger.warning(f"Alert: metric collection failed for {server['host']}: {e}")
+        # 采集失败必须上抛:否则"取不到数据"会被上层当成"未超标",清零持续时间后静默漏报
+        logger.error(f"Alert: metric collection failed for {server['host']}: {e}")
+        raise
     finally:
         with suppress(Exception):
             ssh.close()

@@ -25,41 +25,43 @@
     <div v-if="selectedProject">
       <div v-if="buildsLoading" class="loading-text">{{ $t('common.loading') }}</div>
       <template v-else>
-        <table v-if="builds.length">
-          <thead>
-            <tr>
-              <th>{{ $t('ciBuild.pipelineId') }}</th>
-              <th>{{ $t('ciBuild.ref') }}</th>
-              <th>{{ $t('ciBuild.status') }}</th>
-              <th>{{ $t('ciBuild.created') }}</th>
-              <th>{{ $t('common.action') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="b in pagedBuilds" :key="b.id">
-              <td><strong>#{{ b.id || b.iid }}</strong></td>
-              <td>{{ b.ref || b.branch || '—' }}</td>
-              <td><span class="badge" :class="statusClass(b.status)">{{ b.status }}</span></td>
-              <td class="time-cell">{{ formatTime(b.updated_at) }}</td>
-              <td class="action-cell">
-                <!-- custom_push:log_url 非必报,有则点链接,空则显示"日志无" -->
-                <template v-if="buildProvider === 'custom_push'">
-                  <a v-if="b.log_url" :href="b.log_url" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-blue">{{ $t('ciBuild.viewLog') }}</a>
-                  <span v-else class="no-log">{{ $t('ciBuild.logEmpty') }}</span>
-                </template>
-                <button v-else class="btn btn-sm btn-blue" @click="viewLog(b)">{{ $t('ciBuild.viewLog') }}</button>
-                <template v-if="buildProvider === 'gitlab_ci' && auth.canTriggerBuild()">
-                  <button class="btn btn-sm" @click="retryBuild(b)" :disabled="actionLoading === b.id">
-                    🔄 {{ $t('ciBuild.retry') }}
-                  </button>
-                  <button class="btn btn-sm btn-red" @click="cancelBuild(b)" :disabled="actionLoading === b.id">
-                    ⏹ {{ $t('ciBuild.cancel') }}
-                  </button>
-                </template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll" v-if="builds.length">
+          <table>
+            <thead>
+              <tr>
+                <th>{{ $t('ciBuild.pipelineId') }}</th>
+                <th>{{ $t('ciBuild.ref') }}</th>
+                <th>{{ $t('ciBuild.status') }}</th>
+                <th>{{ $t('ciBuild.created') }}</th>
+                <th>{{ $t('common.action') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="b in pagedBuilds" :key="b.id">
+                <td><strong>#{{ b.id || b.iid }}</strong></td>
+                <td>{{ b.ref || b.branch || '—' }}</td>
+                <td><span class="badge" :class="statusClass(b.status)">{{ b.status }}</span></td>
+                <td class="time-cell">{{ formatTime(b.updated_at) }}</td>
+                <td class="action-cell">
+                  <!-- custom_push:log_url 非必报,有则点链接,空则显示"日志无" -->
+                  <template v-if="buildProvider === 'custom_push'">
+                    <a v-if="b.log_url" :href="b.log_url" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-blue">{{ $t('ciBuild.viewLog') }}</a>
+                    <span v-else class="no-log">{{ $t('ciBuild.logEmpty') }}</span>
+                  </template>
+                  <button v-else class="btn btn-sm btn-blue" @click="viewLog(b)">{{ $t('ciBuild.viewLog') }}</button>
+                  <template v-if="buildProvider === 'gitlab_ci' && auth.canTriggerBuild()">
+                    <button class="btn btn-sm" @click="retryBuild(b)" :disabled="actionLoading === b.id">
+                      🔄 {{ $t('ciBuild.retry') }}
+                    </button>
+                    <button class="btn btn-sm btn-red" @click="cancelBuild(b)" :disabled="actionLoading === b.id">
+                      ⏹ {{ $t('ciBuild.cancel') }}
+                    </button>
+                  </template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-else class="empty-hint">{{ $t('ciBuild.noBuilds') }}</div>
 
         <!-- 分页 -->
@@ -83,7 +85,7 @@
           <label>{{ $t('ciBuild.branch') }} <span class="required">*</span></label>
           <select v-model="triggerRef" class="field">
             <option value="">{{ hasRefs ? $t('ciBuild.pleaseSelect') : $t('ciBuild.loadingBranch') }}</option>
-            <!-- 分支 / Tag 名称可能重名(如 v1.5.0),分组后才能分清选的是哪一个 -->
+            <!-- 分支 / Tag 名称可能重名,分组渲染便于区分 -->
             <optgroup v-if="refs.branches.length" :label="$t('ciBuild.branchGroup')">
               <option v-for="b in refs.branches" :key="'br-' + b" :value="b">{{ b }}</option>
             </optgroup>
@@ -180,12 +182,10 @@ const selectedProject = ref('')
 const loading = ref(false)
 const error = ref('')
 
-// 构建历史
 const builds = ref([])
 const buildsLoading = ref(false)
 const buildProvider = ref('')
 const actionLoading = ref(null)  // 正在执行重试/取消的 build id
-// 分页
 const currentPage = ref(1)
 const pageSize = ref(10)
 const totalPages = computed(() => Math.max(1, Math.ceil(builds.value.length / pageSize.value)))
@@ -194,15 +194,14 @@ const pagedBuilds = computed(() => {
   return builds.value.slice(start, start + pageSize.value)
 })
 
-// 触发构建
 const showTrigger = ref(false)
 const triggerRef = ref('')
 const triggerVars = reactive([])
 const triggering = ref(false)
-// ref 候选值:分支 + Tag 两组(来源 Glue GET /api/git/{path}/refs;名称可能重名,故分组渲染)
+// ref 候选值:分支 + Tag 两组,分组渲染
 const refs = reactive({ branches: [], tags: [] })
 const hasRefs = computed(() => refs.branches.length > 0 || refs.tags.length > 0)
-const loadingParams = ref(true)  // 初始为 true,避免弹窗首帧闪现"未定义参数"
+const loadingParams = ref(true)  // 初始为 true:弹窗参数区先渲染加载态
 // 当前项目的 CI 提供商(jenkins / gitlab_ci / custom_push)
 const selectedProjectProvider = computed(() => {
   const p = projects.value.find(p => p.job_name === selectedProject.value)
@@ -211,12 +210,10 @@ const selectedProjectProvider = computed(() => {
 // custom_push 项目完全以用户上报为准,CD 端只读,不触发
 const isCustomPush = computed(() => selectedProjectProvider.value === 'custom_push')
 
-// 构建日志
 const showLog = ref(false)
 const logBuildId = ref('')
 const logContent = ref('')
 
-// ── 加载项目列表 ──
 async function loadProjects() {
   loading.value = true
   error.value = ''
@@ -243,13 +240,11 @@ async function loadProjects() {
   }
 }
 
-// ── 刷新(项目列表 + 当前项目的构建历史)──
 async function refreshAll() {
   await loadProjects()
   if (selectedProject.value) await onProjectChange()
 }
 
-// ── 切换项目 → 加载构建历史 ──
 async function onProjectChange() {
   builds.value = []
   currentPage.value = 1
@@ -273,7 +268,6 @@ async function onProjectChange() {
   }
 }
 
-// ── 打开触发弹窗时加载分支列表和参数 ──
 watch(showTrigger, async (val) => {
   if (val && selectedProject.value) {
     triggerRef.value = ''
@@ -281,7 +275,7 @@ watch(showTrigger, async (val) => {
     refs.branches = []
     refs.tags = []
 
-    // 并行加载 ref 候选值和参数(先标 loading,避免瞬时闪现"未定义参数")
+    // 并行加载 ref 候选值和参数(先标 loading,参数区先渲染加载态)
     loadingParams.value = true
     const proj = encodeURIComponent(selectedProject.value)
     const [refR, paramR] = await Promise.allSettled([
@@ -289,7 +283,7 @@ watch(showTrigger, async (val) => {
       fetch(`/api/ci/projects/${proj}/variables`, { headers: auth.A() }),
     ])
 
-    // ref 候选值:Glue 返回 {branches: [...], tags: [...]}(老 Glue 回退到 /branches 时 tags 为空)
+    // ref 候选值:Glue 返回 {branches: [...], tags: [...]}(回退到 /branches 时 tags 为空)
     if (refR.status === 'fulfilled' && refR.value.ok) {
       const data = await refR.value.json()
       refs.branches = Array.isArray(data?.branches) ? data.branches : []
@@ -338,11 +332,10 @@ watch(showTrigger, async (val) => {
   }
 })
 
-// ── 执行触发 ──
 async function doTrigger() {
   // custom_push 项目不触发:以用户上报为准
   if (isCustomPush.value) return
-  // GitLab CI 必须有 ref;Jenkins 不需要(分支由参数中的 git 参数指定)
+  // GitLab CI 必须有 ref;Jenkins 不需要
   if (selectedProjectProvider.value === 'gitlab_ci' && !triggerRef.value) {
     toast(t('ciBuild.needBranch'), 'warn')
     return
@@ -356,7 +349,7 @@ async function doTrigger() {
 
   triggering.value = true
   try {
-    // Jenkins 模式下不发送 ref(CI 那边不生效),只发 variables
+    // Jenkins 模式只发 variables
     const body = {}
     if (selectedProjectProvider.value !== 'jenkins') {
       body.ref = triggerRef.value
@@ -385,7 +378,6 @@ async function doTrigger() {
   }
 }
 
-// ── 查看日志 ──
 async function viewLog(b) {
   logBuildId.value = b.id || b.iid
   showLog.value = true
@@ -409,7 +401,6 @@ async function loadLog() {
 
 function refreshLog() { loadLog() }
 
-// ── 重试 / 取消 Pipeline(仅 GitLab CI)──
 async function retryBuild(b) {
   const id = b.id || b.iid
   actionLoading.value = id
@@ -440,7 +431,6 @@ async function cancelBuild(b) {
   finally { actionLoading.value = null }
 }
 
-// ── 辅助 ──
 function statusClass(status) {
   if (!status) return ''
   const s = status.toLowerCase()

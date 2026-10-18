@@ -1,6 +1,5 @@
 import { reactive } from 'vue'
 
-// 全局确认弹窗状态(模块级单例,ConfirmModal 组件监听此 state)
 const state = reactive({
   show: false,
   title: '',
@@ -27,7 +26,6 @@ export function confirm(opts = {}) {
   })
 }
 
-// 供 ConfirmModal 组件调用
 export function resolveConfirm(val) {
   state.show = false
   state.resolve?.(val)

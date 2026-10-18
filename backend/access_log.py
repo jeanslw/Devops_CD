@@ -1,17 +1,6 @@
-"""访问日志脱敏 -- SSO 回跳 URL 里的 code / state 不进日志.
+"""访问日志脱敏:指定路径的 code / state / token 等参数值替换为 <masked>。
 
-uvicorn 的 access log 会打印完整请求行,其中三类 URL 自带凭据:
-  · `/api/auth/oidc/callback?code=...&state=...`:code 是 Glue 发的一次性授权码(60s 失效,只能兑换一次),
-    state 是本次登录的 CSRF 凭据;
-  · `/api/auth/oidc/start?state=...`(签发时)以及 `?retry=1` 的静默重试;
-  · `/ws/terminal/{id}?token=...`:旧客户端的回退写法里 token 是会话凭据(现在浏览器走 cookie).
-
-"凭据类参数不落盘"是安全不变量(§10),但访问日志本身是排障刚需,所以这里不做整条丢弃,
-只把**敏感参数的值**替换成 `<masked>`:路径,其余 query,状态码,耗时全部照常记录.
-
-挂载方式:`install_access_log_filter()` 在 `main.py` 导入期调用一次即生效,
-`uvicorn main:app` / `python main.py` / `--workers N` 三种启动方式都覆盖
-(uvicorn 自身调用 dictConfig 时会重建 handler/level,但**不会清空 logger 上已注册的 filters**).
+记录本身保留,路径、其余 query、状态码、耗时照常输出。
 """
 
 import logging
@@ -23,15 +12,15 @@ SENSITIVE_KEYS = frozenset(
     {"code", "state", "nonce", "token", "id_token", "access_token", "refresh_token", "code_verifier", "session"}
 )
 
-# 只对这几类路径做参数级脱敏;其余路由原样输出(避免误伤业务参数)
+# 只对这几类路径做参数级脱敏;其余路由原样输出
 MASK_PATH_PREFIXES = ("/api/auth/oidc/", "/ws/terminal")
 
 
 def mask_query(path: str) -> str:
-    """把敏感参数的值换成 <masked>,其余部分逐字符保留(便于排障时对比 URL 形状)."""
+    """把敏感参数的值换成 <masked>,其余部分逐字符保留."""
     base, sep, query = path.partition("?")
     if not sep or not base.startswith(MASK_PATH_PREFIXES):
-        return path  # 非目标路由 / 无 query:原样返回(调用方据此跳过改写)
+        return path  # 非目标路由 / 无 query:原样返回
     kept = []
     for chunk in query.split("&"):
         key, key_sep, _value = chunk.partition("=")
@@ -40,9 +29,9 @@ def mask_query(path: str) -> str:
 
 
 class MaskCredentialQueryFilter(logging.Filter):
-    """uvicorn 访问日志过滤器:兼容 http(tuple args)与 websocket(dict args)两种记录形态.
+    """uvicorn 访问日志过滤器:兼容 http(tuple args)与 websocket(dict args)两种记录形态。
 
-    只在**确实有敏感参数**时才改写 record(访问日志每请求一条,普通路由走零分配快路径).
+    仅在命中敏感参数时改写 record。
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - logging.Filter 约定名
@@ -63,7 +52,7 @@ class MaskCredentialQueryFilter(logging.Filter):
 
 
 def install_access_log_filter(logger_name: str = "uvicorn.access") -> None:
-    """幂等安装(模块被重复导入 / 测试反复调用都不会叠加多个 filter)."""
+    """幂等安装,不叠加多个 filter."""
     logger = logging.getLogger(logger_name)
     if not any(isinstance(f, MaskCredentialQueryFilter) for f in logger.filters):
         logger.addFilter(MaskCredentialQueryFilter())
@@ -88,11 +77,7 @@ class SuppressTracebackFilter(logging.Filter):
 
 
 def install_console_log_filter() -> None:
-    """幂等安装:filter 挂到根 / uvicorn / uvicorn.error logger 与 lastResort handler.
-
-    uvicorn 与 Starlette 直接记到 uvicorn.error;应用(backend.* / main)logger 无 handler,
-    经根 logger 落到 lastResort(uvicorn 的 LOGGING_CONFIG 不配 root),都挂上.
-    """
+    """幂等安装:挂到根 / uvicorn / uvicorn.error logger 与 lastResort handler."""
     for name in ("", "uvicorn", "uvicorn.error"):
         logger = logging.getLogger(name)
         if not any(isinstance(f, SuppressTracebackFilter) for f in logger.filters):

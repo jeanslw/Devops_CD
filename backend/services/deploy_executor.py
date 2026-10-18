@@ -1,10 +1,10 @@
 """部署执行器 - 把持久化的部署参数反序列化并重新执行.
 
 审批批准后的执行,回滚重放都走这里,统一复用 DeployService.execute 和
-K8s 专用流程 _deploy_k8s_core,避免维护两套执行逻辑.
+K8s 专用流程 _deploy_k8s_core,只有一套执行逻辑.
 
 参数快照约定:params dict 必须含 'deploy_type' 路由判别;
-以 'k8s/' 开头走 K8s 流程,否则走 SSH/Compose 流程.
+以 'k8s/' 开头走 K8s 流程,其余走 SSH/Compose 流程.
 """
 
 import json

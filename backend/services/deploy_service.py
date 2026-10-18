@@ -13,6 +13,7 @@ from backend.deploy_log import S
 from backend.exceptions import ValidationError
 from backend.deploy_run import (
     DeployCancelled,
+    cancel_checker_for,
     claim_pending_deploy_record,
     clear_cancel_checker,
     deploy_run_manager,
@@ -71,7 +72,7 @@ class DeployService:
             else:
                 # server_ids 为空 = 部署到全部可用服务器;K8S 集群(type=k8s/argocd/fluxcd)
                 # 只能走 /api/deploy-k8s(cluster_id 指定),不属于本 SSH/Compose 路线,
-                # 须过滤掉,否则空选择会误把 K8S 集群当 SSH/Compose 目标导致签名错位.
+                # 须过滤掉(空选择会把 K8S 集群误当 SSH/Compose 目标,签名错位).
                 rows = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name").fetchall()
 
             return [
@@ -136,15 +137,16 @@ class DeployService:
         user 参数:当前登录用户信息 dict(含 role / permissions / username),
                  用于部署前的二次权限校验与审计日志 triggered_by 字段,
                  传入 None 时跳过校验(仅限内部可信调用).
-        v1.3.1 起:部署开始插入 running 记录(并发锁 + 取消依据),结束时更新
-                 状态 / 耗时 / 分阶段耗时 / 说明."""
-        # K8S 子模式必须走 _deploy_k8s_core,禁止走 SSH/Compose 路线(API 签名不兼容)
+        部署开始插入 running 记录(并发锁 + 取消依据),结束时更新
+        状态 / 耗时 / 分阶段耗时 / 说明.
+        """
+        # K8S 子模式必须走 _deploy_k8s_core
         if deploy_type.startswith("k8s/"):
             raise ValueError(
                 f"部署类型 '{deploy_type}' 不属于 SSH/Compose 路线，"
                 "请使用 DeployService 之外的 K8S 专用流程（routers/k8s_deploy._deploy_k8s_core）"
             )
-        # ── 部署时二次权限校验(防御深度)──
+        # ── 部署时二次权限校验 ──
         if user is not None:
             enforce_deploy_perm(user, deploy_type)
         # ── tag 白名单校验(必须在任何 SSH 命令拼接之前;非法 tag 直接拒绝)──
@@ -211,7 +213,7 @@ class DeployService:
         )
 
         # ── 领取/插入部署记录 + 注册取消信号 ──
-        # 经审批单执行:复用申请阶段的 pending 记录(v1.5.3 前的旧已批准单无记录时回退新建)
+        # 经审批单执行:复用申请阶段的 pending 记录(无记录时回退新建)
         try:
             deploy_id = claim_pending_deploy_record(self._db, project=project_key, approval_id=approval_id)
             if not deploy_id:
@@ -231,7 +233,7 @@ class DeployService:
             # 唯一索引冲突(同项目已有 running)= busy,包装为与 K8S 路径一致的语义异常
             raise ValidationError(str(e), error_key="errors.deploy_busy") from e
         deploy_run_manager.register(deploy_id)
-        set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
+        set_cancel_checker(cancel_checker_for(self._db, deploy_id))
 
         results = []
         stage_times = []
@@ -395,8 +397,7 @@ class DeployService:
         """查询部署记录(分页).
 
         列表页只取渲染所需列,剔除 params_json(完整请求快照)/ stage_times(阶段耗时 JSON)
-        两个大字段:前端日志页不消费它们(回滚重放由 rollback_service 直接查库),
-        避免每页把 15 行的快照/耗时 JSON 无谓传给浏览器(日志瘦身/截断).
+        两个大字段(前端日志页不消费).
         """
         page = max(page, 1)
         page_size = max(min(page_size, 100), 1)
@@ -423,7 +424,7 @@ class DeployService:
                     (page_size, offset),
                 ).fetchall()
             items = [dict(r) for r in rows]
-            # 批量挂载审批信息(approval_id>0 的记录),避免 N+1
+            # 批量挂载审批信息(approval_id>0 的记录),一次查询代替逐行查
             approval_ids = list({r["approval_id"] for r in items if r.get("approval_id")})
             if approval_ids:
                 ph = ",".join("?" * len(approval_ids))

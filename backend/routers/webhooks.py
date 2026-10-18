@@ -10,12 +10,15 @@ from fastapi import APIRouter, Depends, Request
 from backend.auth import cd_deploy_gate, get_db, require_perm, verify_token
 from backend.crypto import ENCRYPT_PREFIX, decrypt, encrypt
 from backend.database import Database
-from backend.exceptions import ConflictError, DatabaseError, NotFoundError
+from backend.exceptions import ConflictError, DatabaseError, NotFoundError, ValidationError
 from backend.models import WebhookForwardRequest, WebhookRequest
 from backend.responses import ok
 from backend.services.notification import send_webhook
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+# 单次接收的 payload 上限,避免超大 body 撑爆事件表与转发链路
+_MAX_BODY_BYTES = 1024 * 1024
 
 
 def _generate_token() -> str:
@@ -34,20 +37,13 @@ def _decrypt_webhook_token(stored: str) -> str:
 
 
 def _find_enabled_webhook_by_token(conn, plain_token: str):
-    """用明文 URL token 匹配数据库中的加密 token.
-
-    Fernet 密文是随机化的,不能 WHERE 密文等值查询;这里逐行解密后常量时间比较.
-    Webhook 配置量小,且该接口为低频机器调用,可接受 O(n).
-    """
+    """用明文 URL token 匹配数据库中的加密 token:逐行解密后常量时间比较."""
     rows = conn.execute("SELECT * FROM cd_webhooks WHERE enabled=1").fetchall()
     for row in rows:
         candidate = _decrypt_webhook_token(row["token"])
         if candidate and secrets.compare_digest(candidate, plain_token):
             return row
     return None
-
-
-# ── Webhook 配置管理 ──
 
 
 @router.get("")
@@ -63,7 +59,6 @@ def list_webhooks(
         result = []
         for r in rows:
             item = dict(r)
-            # 列表/前端 URL 展示仍用明文;非密文存量数据按无效置空,强制重新创建
             item["token"] = _decrypt_webhook_token(item.get("token") or "")
             result.append(item)
         return result
@@ -84,7 +79,6 @@ def create_webhook(
                 "INSERT INTO cd_webhooks (name, token, bot_id, enabled) VALUES (?,?,?,?)",
                 (req.name, encrypted_token, req.bot_id, 1),
             )
-            # 创建响应仍返回明文一次,便于前端立即展示/复制完整 URL
             return ok(data={"token": token}, message=f"Webhook '{req.name}' 已创建")
         except pymysql.err.IntegrityError as e:
             raise ConflictError(
@@ -153,9 +147,6 @@ def toggle_webhook(
         return ok(data={"enabled": new_val})
 
 
-# ── 事件查看 ──
-
-
 @router.get("/{wid}/events")
 def list_events(
     wid: int,
@@ -200,9 +191,6 @@ def delete_event(
         return ok(message="事件已删除")
 
 
-# ── 手动转发 ──
-
-
 @router.post("/events/{eid}/forward")
 def forward_event(
     eid: int,
@@ -220,7 +208,6 @@ def forward_event(
         if not bot:
             raise NotFoundError("Bot 不存在", error_key="errors.bot_not_found")
 
-        # 构造消息:尝试从 payload 中提取关键字段,否则原样输出 JSON
         try:
             data = json.loads(event["payload"])
         except Exception:
@@ -242,37 +229,31 @@ def forward_event(
         return ok(message="已转发到 Bot")
 
 
-# ── 公开接收端点(无需登录验证,靠 token 鉴权)──
-
-
 @router.post("/receive/{token}")
 async def receive_webhook(
     token: str,
     request: Request,
     db: Database = Depends(get_db),
 ):
-    """CI / 外部系统 POST 到此端点,靠 token 匹配 Webhook 配置.
-    收到后存记录,若配了 bot_id 则自动转发."""
-    # 部署闸门:CD 表没建全时这里必然缺表(cd_webhooks / cd_webhook_events)写不进去,
-    # 统一按 503 拒绝(而非 500),与登录/其它接口口径一致.
+    """CI / 外部系统 POST 到此端点,靠 token 匹配配置;存记录,配了 bot_id 则自动转发."""
     cd_deploy_gate(db)
     with db.conn() as conn:
         wh = _find_enabled_webhook_by_token(conn, token)
         if not wh:
             raise NotFoundError("Webhook 不存在或已禁用", error_key="errors.webhook_not_found")
 
-        # 读取原始 body
         body = await request.body()
+        if len(body) > _MAX_BODY_BYTES:
+            raise ValidationError("Webhook payload 过大", error_key="errors.webhook_payload_too_large")
         payload_str = body.decode("utf-8") if body else "{}"
 
-        # 存事件记录(lastrowid 同时兼容 SQLite 与 pymysql,不能用 MySQL 专属的 LAST_INSERT_ID())
+        # lastrowid 兼容 SQLite 与 pymysql
         cur = conn.execute(
             "INSERT INTO cd_webhook_events (webhook_id, payload) VALUES (?,?)",
             (wh["id"], payload_str),
         )
         event_id = cur.lastrowid
 
-        # 自动转发
         bot_id = wh["bot_id"]
         if bot_id:
             bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
@@ -282,23 +263,22 @@ async def receive_webhook(
                 except Exception:
                     data = {}
                 msg = _format_event_message(data, bot)
-                send_webhook(bot["webhook_url"], msg)
+                # 只在真的投递成功时标记 forwarded,失败留作可重试
+                sent = send_webhook(bot["webhook_url"], msg, bot["type"])
                 conn.execute(
-                    "UPDATE cd_webhook_events SET forwarded=1, forwarded_at=? WHERE id=?",
-                    (datetime.now(), event_id),
+                    "UPDATE cd_webhook_events SET forwarded=?, forwarded_at=? WHERE id=?",
+                    (1 if sent else 0, datetime.now(), event_id),
                 )
 
         return ok(message="received")
 
 
 def _format_event_message(data: dict, bot) -> str:
-    """从 payload 中提取关键字段,配合 Bot 模板生成消息.
-    如果 Bot 有自定义模板则用模板,否则用默认格式."""
+    """从 payload 提取关键字段生成消息;Bot 有自定义模板则用模板,否则用默认格式."""
     tpl_raw = bot.get("template", "")
     tpl = (tpl_raw or "").strip()
 
     if tpl:
-        # 用户自定义模板:支持 {project} {tag} {image} {status} {time} 等占位符
         try:
             return tpl.format(
                 time=data.get("built_at", data.get("time", "")),
@@ -310,9 +290,8 @@ def _format_event_message(data: dict, bot) -> str:
                 mode=data.get("mode", ""),
             )
         except (KeyError, IndexError):
-            pass  # 模板变量不匹配,回退到默认格式
+            pass
 
-    # 默认格式:提取关键字段拼成可读消息
     parts = []
     for key in ("project", "tag", "image", "status", "built_at"):
         val = data.get(key)
@@ -320,5 +299,4 @@ def _format_event_message(data: dict, bot) -> str:
             parts.append(f"{key}: {val}")
     if parts:
         return "\n".join(parts)
-    # 兜底:原样 JSON
     return json.dumps(data, ensure_ascii=False, indent=2)

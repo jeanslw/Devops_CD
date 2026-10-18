@@ -5,7 +5,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 
-// 全屏粒子背景(登录页 / 落地页共用):绿青色微光粒子,随视口缩放,切后台暂停以省电.
 const canvasRef = ref(null)
 let animId = null
 let particles = []

@@ -1,15 +1,19 @@
 """监控工具函数 - SSH 测试 + 缓存 + 目标构造(被 monitor 路由和 alert_service 共用)"""
 
+import threading
 import time
 
 from backend.config import settings
 from backend.crypto import decrypt
 from backend.deployers.base import DeployTarget, _ssh_cmd
 
-# ── 简易内存缓存 ──
+
 _cache: dict[str, tuple[float, object]] = {}
 
-# TTL 从配置读取,可按类型在 .env 中覆盖
+# 监控接口由多个请求线程并发读写同一份缓存,过期检查与写入需要串行
+_cache_lock = threading.Lock()
+
+
 _CACHE_TTL: dict[str, int] = {}
 
 
@@ -30,19 +34,21 @@ def _get_cache_ttl() -> dict[str, int]:
 
 
 def _cache_get(key: str) -> object | None:
-    entry = _cache.get(key)
-    if entry is None:
-        return None
-    ts, data = entry
-    ttl = _get_cache_ttl().get(key.split(":")[0], 30)
-    if time.time() - ts > ttl:
-        del _cache[key]
-        return None
-    return data
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        ts, data = entry
+        ttl = _get_cache_ttl().get(key.split(":")[0], 30)
+        if time.time() - ts > ttl:
+            del _cache[key]
+            return None
+        return data
 
 
 def _cache_set(key: str, data: object):
-    _cache[key] = (time.time(), data)
+    with _cache_lock:
+        _cache[key] = (time.time(), data)
 
 
 def clear_server_cache():
@@ -56,9 +62,6 @@ def clear_server_cache():
             or key.startswith("pods:")
         ):
             del _cache[key]
-
-
-# ── 工具函数 ──
 
 
 def _parse_kubectl_top(text: str, has_header: bool = False) -> list[dict]:

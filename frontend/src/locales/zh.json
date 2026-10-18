@@ -112,6 +112,7 @@
     "ssoHint": "统一登录（oidc），认证后自动返回本系统。"
   },
   "topbar": {
+    "account": "账号",
     "logout": "退出",
     "menu": "菜单"
   },
