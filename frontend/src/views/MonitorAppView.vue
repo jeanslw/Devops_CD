@@ -7,23 +7,25 @@
     <template v-else>
       <div class="card" style="margin-bottom:12px">
         <h3>{{ $t('monitor.selectServer') }}</h3>
-        <table>
-          <thead><tr><th>{{ $t('monitor.name') }}</th><th>{{ $t('monitor.host') }}</th><th>{{ $t('monitor.type') }}</th><th>{{ $t('monitor.capability') }}</th><th>{{ $t('monitor.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
-          <tbody>
-            <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-            <tr v-for="s in servers" :key="s.id">
-              <td><strong>{{ s.name }}</strong></td>
-              <td>{{ s.host }}:{{ s.port }}</td>
-              <td>{{ typeLabel(s) }}</td>
-              <td v-html="capHtml(s)"></td>
-              <td><span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span></td>
-              <td>
-                <button v-if="s.status==='available'" class="btn btn-blue btn-sm" @click="viewDetail(s)">{{ $t('monitor.viewApp') }}</button>
-                <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ s.status === 'unknown' ? $t('monitor.checking') : $t('monitor.unavailable') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>{{ $t('monitor.name') }}</th><th>{{ $t('monitor.host') }}</th><th>{{ $t('monitor.type') }}</th><th>{{ $t('monitor.capability') }}</th><th>{{ $t('monitor.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
+            <tbody>
+              <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+              <tr v-for="s in servers" :key="s.id">
+                <td><strong>{{ s.name }}</strong></td>
+                <td>{{ s.host }}:{{ s.port }}</td>
+                <td>{{ typeLabel(s) }}</td>
+                <td v-html="capHtml(s)"></td>
+                <td><span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span></td>
+                <td>
+                  <button v-if="s.status==='available'" class="btn btn-blue btn-sm" @click="viewDetail(s)">{{ $t('monitor.viewApp') }}</button>
+                  <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ s.status === 'unknown' ? $t('monitor.checking') : $t('monitor.unavailable') }}</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- K8S App Detail -->
@@ -56,21 +58,23 @@
             </div>
           </div>
           <div style="max-height:400px;overflow-y:auto">
-            <table>
-              <thead><tr><th>{{ $t('monitor.namespace') }}</th><th>{{ $t('monitor.pod') }}</th><th>{{ $t('monitor.cpu') }}</th><th>{{ $t('monitor.memory') }}</th><th>{{ $t('monitor.status') }}</th><th>{{ $t('monitor.restarts') }}</th><th>{{ $t('monitor.node') }}</th></tr></thead>
-              <tbody>
-                <tr v-if="podsLoading"><td colspan="7" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-                <tr v-else v-for="p in filteredPods" :key="p.name" style="cursor:pointer" @click="showPodDetail(p)" title="点击查看详情">
-                  <td>{{ p.namespace }}</td>
-                  <td><strong>{{ p.name }}</strong></td>
-                  <td style="color:#ffab40">{{ p.cpu || '?' }}</td>
-                  <td style="color:#81c784">{{ p.memory || '?' }}</td>
-                  <td><span class="badge" :class="p.status==='Running'?'badge-ok':p.status==='Pending'?'badge-pend':'badge-err'">{{ p.status }}</span></td>
-                  <td>{{ p.restarts || '0' }}</td>
-                  <td style="font-size:11px;color:#888">{{ p.node || '?' }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>{{ $t('monitor.namespace') }}</th><th>{{ $t('monitor.pod') }}</th><th>{{ $t('monitor.cpu') }}</th><th>{{ $t('monitor.memory') }}</th><th>{{ $t('monitor.status') }}</th><th>{{ $t('monitor.restarts') }}</th><th>{{ $t('monitor.node') }}</th></tr></thead>
+                <tbody>
+                  <tr v-if="podsLoading"><td colspan="7" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+                  <tr v-else v-for="p in filteredPods" :key="p.name" style="cursor:pointer" @click="showPodDetail(p)" title="点击查看详情">
+                    <td>{{ p.namespace }}</td>
+                    <td><strong>{{ p.name }}</strong></td>
+                    <td style="color:#ffab40">{{ p.cpu || '?' }}</td>
+                    <td style="color:#81c784">{{ p.memory || '?' }}</td>
+                    <td><span class="badge" :class="p.status==='Running'?'badge-ok':p.status==='Pending'?'badge-pend':'badge-err'">{{ p.status }}</span></td>
+                    <td>{{ p.restarts || '0' }}</td>
+                    <td style="font-size:11px;color:#888">{{ p.node || '?' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </template>
@@ -81,19 +85,21 @@
         <template v-else-if="dockerContainers.length">
           <h3 style="margin:0 0 8px 0">🐳 {{ $t('monitor.podTitle') }}</h3>
           <div style="max-height:400px;overflow-y:auto">
-            <table>
-              <thead><tr><th>{{ $t('monitor.containerName') }}</th><th>{{ $t('monitor.cpu') }}</th><th>{{ $t('monitor.memory') }}</th><th>{{ $t('monitor.memPercent') }}</th><th>{{ $t('monitor.netIO') }}</th><th>{{ $t('monitor.diskIO') }}</th></tr></thead>
-              <tbody>
-                <tr v-for="c in dockerContainers" :key="c.name">
-                  <td><strong>{{ c.name }}</strong></td>
-                  <td style="color:#ffab40">{{ c.cpu }}</td>
-                  <td style="color:#81c784">{{ c.memory }}</td>
-                  <td>{{ c.memory_percent }}</td>
-                  <td style="font-size:11px;color:#888">{{ c.net_io }}</td>
-                  <td style="font-size:11px;color:#888">{{ c.block_io }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>{{ $t('monitor.containerName') }}</th><th>{{ $t('monitor.cpu') }}</th><th>{{ $t('monitor.memory') }}</th><th>{{ $t('monitor.memPercent') }}</th><th>{{ $t('monitor.netIO') }}</th><th>{{ $t('monitor.diskIO') }}</th></tr></thead>
+                <tbody>
+                  <tr v-for="c in dockerContainers" :key="c.name">
+                    <td><strong>{{ c.name }}</strong></td>
+                    <td style="color:#ffab40">{{ c.cpu }}</td>
+                    <td style="color:#81c784">{{ c.memory }}</td>
+                    <td>{{ c.memory_percent }}</td>
+                    <td style="font-size:11px;color:#888">{{ c.net_io }}</td>
+                    <td style="font-size:11px;color:#888">{{ c.block_io }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </template>
         <div v-else style="color:#888;padding:8px 0">{{ $t('monitor.noContainers') }}</div>
@@ -141,10 +147,8 @@ const detailName = ref('')
 const currentType = ref('')
 
 const TYPE_LABELS = { k8s: '☸️ K8S', docker: '🐳 Docker', ssh: '🖥️ Linux' }
-// 单台探测的并发上限:列表一次拉回后并行探测,避免同时开太多 SSH
 const PROBE_CONCURRENCY = 4
 
-// K8S
 const nodesLoading = ref(false)
 const nodes = ref([])
 const nodesError = ref('')
@@ -154,7 +158,6 @@ const namespaces = ref([])
 const nsFilter = ref('')
 const podSearch = ref('')
 
-// Docker
 const dockerLoading = ref(false)
 const dockerContainers = ref([])
 
@@ -186,7 +189,6 @@ function capHtml(s) {
   return `<span style="color:#667;font-size:12px">${t('monitor.seeSystemResources')}</span>`
 }
 
-// 状态 → 文案/徽章样式:'unknown' 表示尚未探测(列表只读库,不等 SSH)
 function statusText(s) {
   if (s.status === 'available') return t('monitor.available')
   if (s.status === 'unavailable') return t('monitor.unavailable')
@@ -225,8 +227,6 @@ async function loadServers() {
   } catch (e) {} finally { loading.value = false }
 }
 
-// 逐台探测:列表先渲染,单台结果回来就回填该行;某台不可达只影响自己那一行,
-// 不再让整页等所有主机返回.并发上限避免同时开太多 SSH.
 async function probeAll() {
   const ids = servers.value.map(s => s.id)
   let cursor = 0
@@ -254,7 +254,6 @@ function applyProbe(id, patch) {
   if (i >= 0) servers.value[i] = { ...servers.value[i], ...patch }
 }
 
-// ?clusterId= 来自 K8s 部署页跳转:探测完成且该集群可用时自动打开详情
 function openClusterFromQuery() {
   if (!route.query.clusterId) return
   const sid = parseInt(route.query.clusterId)

@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
     """Merge patch for Flux's `spec.images`, preserving unrelated overrides.
 
-    `kubectl patch --type=merge` treats arrays as a single replacement, so we must
-    rebuild the array with the current entries and update/append the target image.
+    `kubectl patch --type=merge` replaces arrays wholesale; rebuild the array from
+    the current entries and update/append the target image.
     """
     current = list(existing_images or [])
     patched = []
@@ -177,7 +177,7 @@ class FluxCDDeployer(K8sSubDeployer):
                         "output": f"Flux path patch failed:\n{path_err or path_out or f'exit code {path_ec}'}",
                     }
 
-            # 安全构造 patch JSON,防止 tag 注入;Kustomization 的数组必须保留已有 override
+            # 构造 patch JSON;Kustomization 的数组必须保留已有 override
             _log(callback, S("deploy_log.flux_update"))
             if flux_kind == "helmrelease":
                 patch_data = json.dumps({"spec": {"values": {"image": {"tag": tag}}}})
@@ -334,7 +334,7 @@ class FluxCDDeployer(K8sSubDeployer):
                 )
                 return {"success": False, "output": result[: settings.log_truncate_chars]}
             else:
-                # 没找到 Deployment 时,不能把"patch 成功"当成"部署成功";必须要求 Flux 真正完成
+                # 未找到 Deployment 时按失败处理
                 status_text = f"当前 Pod: {running_count} 个 Running"
                 _log(callback, S("deploy_log.flux_fail_error"))
                 result = (

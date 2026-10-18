@@ -1,6 +1,6 @@
-"""K8S 部署执行核心 - 从 routers/k8s_deploy.py 抽取,供路由与审批/回滚执行器共用.
+"""K8S 部署执行核心 - 供路由与审批/回滚执行器共用.
 
-避免 services 层反向依赖 routers 层.包含:
+包含:
 - K8sDeployRequest 请求模型
 - 集群 / 镜像解析
 - 部署核心流程(并发锁 + running 记录 + 取消 + 耗时 + 参数快照)
@@ -17,6 +17,7 @@ from backend.config import settings
 from backend.crypto import decrypt
 from backend.deploy_run import (
     DeployCancelled,
+    cancel_checker_for,
     clear_cancel_checker,
     claim_pending_deploy_record,
     deploy_run_manager,
@@ -99,7 +100,7 @@ def _deploy_k8s_core(
     """执行 K8S 部署核心流程:并发锁 + running 记录 + 取消 + 耗时 + 参数快照.
 
     返回 deployer 的结果 dict(含 deploy_id);被取消时返回 {'success': False, 'cancelled': True}.
-    通知由调用方负责(区分同步/流式),避免阻塞 SSE 结束信号.
+    通知由调用方负责(区分同步/流式),不阻塞 SSE 结束信号.
 
     rollback=True 时走 deployer 原生回滚(kubectl rollout undo / helm rollback),
     而非重放旧 tag 的普通部署.
@@ -125,7 +126,7 @@ def _deploy_k8s_core(
     deploy_type = f"k8s/{req.cd_type}"
     # 参数快照(含 deploy_type 路由判别),供回滚重放
     params_json = json.dumps({"deploy_type": deploy_type, **req.model_dump()}, ensure_ascii=False)
-    # 经审批单执行:复用申请阶段的 pending 记录(v1.5.3 前的旧已批准单无记录时回退新建)
+    # 经审批单执行:复用申请阶段的 pending 记录(无记录时回退新建)
     try:
         deploy_id = claim_pending_deploy_record(db, project=project_key, approval_id=int(approval_id or 0))
         if not deploy_id:
@@ -144,7 +145,7 @@ def _deploy_k8s_core(
     except ValueError as e:
         raise ValidationError(str(e), error_key="errors.deploy_busy") from e
     deploy_run_manager.register(deploy_id)
-    set_cancel_checker(lambda: deploy_run_manager.is_cancelled(deploy_id))
+    set_cancel_checker(cancel_checker_for(db, deploy_id))
     started = time.time()
 
     try:

@@ -102,9 +102,13 @@ class HarborClient:
     def _get(self, path: str) -> dict | list:
         r = self._get_raw(path)
         if r.status_code == 404:
+            logger.debug("Harbor 404 %s", path)
             return [] if path.endswith("s") else {}
         r.raise_for_status()
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as e:
+            raise HarborUnavailableError(f"Harbor 返回非 JSON：{e}") from e
 
     def _post(self, path: str) -> bool:
         try:
@@ -339,7 +343,7 @@ class HarborClient:
                 f"/repositories/{urllib.parse.quote(repo, safe='')}"
                 f"/artifacts/{urllib.parse.quote(digest, safe='')}?tab=vulnerabilities"
             )
-            # 构造和前端兼容的报告格式
+            # 构造报告格式
             report = {
                 "scan_status": scan.get("scan_status", ""),
                 "severity": scan.get("severity", ""),
@@ -358,7 +362,7 @@ class HarborClient:
                     f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}"
                     f"/artifacts/{encoded_tag}/additions/vulnerabilities"
                 )
-                # Harbor v2 把漏洞数据包在 MIME type key 里,需要解出来(参考 PHP 实现)
+                # Harbor v2 把漏洞数据包在 MIME type key 里,需要解出来
                 if isinstance(raw, dict):
                     for key, value in raw.items():
                         if "vulnerability" in key and isinstance(value, dict):

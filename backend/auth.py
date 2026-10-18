@@ -1,6 +1,7 @@
 """认证模块 - 会话校验 + Glue 身份 / 权限"""
 
 import hashlib
+import logging
 import secrets
 import time
 
@@ -11,11 +12,11 @@ from backend.config import settings
 from backend.database import Database, cd_deploy_hint, cd_not_enabled_hint
 from backend.services import glue_identity
 
+logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
-# 通配权限:Glue 对 super_admin 返回 ["*"](该角色权限由代码授予,不落 role_permissions 表),
-# CD 侧必须认这个通配 -- 只靠角色名判断会在 Glue 侧角色改名后失能.
+# 通配权限:Glue 对 super_admin 返回 ["*"];CD 侧识别该通配,不依赖角色名判断.
 WILDCARD_PERM = "*"
 # 两种拒绝措辞必须分开:先说"没启用"(去 CI 后台开开关),再说"表没建全"(按 provision 补表)
 CD_NOT_ENABLED_MSG = "CD 服务未启用：请在 Devops-Glue 后台「API集成服务」中启用 Devops-CD"
@@ -26,14 +27,13 @@ SESSION_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) ≈ 43 字符,256 位熵
 
 
 def _hash_token(token: str) -> str:
-    """会话 token 只存 SHA-256 摘要:数据库泄露不会暴露可用的明文 token."""
+    """会话 token 只存 SHA-256 摘要."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _create_session(conn, username: str) -> str:
-    """创建登录会话:生成不透明随机 token,库内只存其 SHA-256 摘要.
-    返回原始 token(仅此一次交给客户端,之后无法从库内反推).
-    顺带清理所有用户的过期会话(不限当前登录者),避免表无限增长."""
+    """创建登录会话:生成随机 token,库内只存其 SHA-256 摘要,返回原始 token.
+    同时清理所有过期会话."""
     token = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
     now = int(time.time())
     expires = now + settings.auth_token_ttl_hours * 3600
@@ -59,7 +59,7 @@ def _delete_session(conn, token: str) -> None:
 
 
 def _extract_token(request: Request, credentials: HTTPAuthorizationCredentials | None) -> str | None:
-    """提取 token:优先 HttpOnly cookie(浏览器同源自动携带),回退 Bearer 头(兼容 API 客户端 / 脚本)."""
+    """提取 token:优先 HttpOnly cookie,回退 Bearer 头."""
     cookie_token = request.cookies.get("cd_token")
     if cookie_token:
         return cookie_token
@@ -70,8 +70,7 @@ def _extract_token(request: Request, credentials: HTTPAuthorizationCredentials |
 
 def _has_system(systems: str | None, target: str) -> bool:
     """检查 systems 字段是否包含指定系统(逗号分隔,trim 后精确匹配).
-    systems 为 None/空时按 settings.allow_empty_systems 决定:默认放行(兼容旧数据),
-    可置 False 改为 deny-by-default(空 systems 即无 CD 权限)."""
+    systems 为 None/空时按 settings.allow_empty_systems 决定."""
     if not systems:
         return settings.allow_empty_systems
     return target in [s.strip() for s in systems.split(",")]
@@ -83,30 +82,20 @@ def get_db() -> Database:
 
 
 def cd_deploy_gate(db: Database) -> None:
-    """部署闸门:CD 必须'已启用'且'表建全'才放行,否则禁止一切操作.
+    """部署闸门:CD 已启用且表建全才放行.
 
-    判据 = Glue 的契约端点答复(见 database.py 顶部注释):
-    1) 未启用(enabled<>1)→ 503 errors.cd_not_enabled,用户可见提示只留 CD_NOT_ENABLED_MSG,
-       动作细节(cd_not_enabled_hint)随 detail.hint 与启动日志下发;
-    2) 已启用但清单没建全 → 503 errors.cd_not_deployed,带缺失表明细 + 按 provision 给动作
-       (auto:重启自愈;manual:导入 database/init_mysql.sql);
-    3) 两者都满足才放行.
-
-    覆盖:OIDC 登录(start / callback)+ 所有带 verify_token / get_current_user 的接口 +
-    公开 Webhook 接收端点 + WebShell 的 WS 握手;无认证的探活接口(/health,/api/info,/metrics)
-    保持可用. 契约端点问不到抛 ContractUnavailableError(503 errors.ci_contract_unreachable),
-    数据库当前不可用抛 DatabaseUnavailableError(503 errors.db_unavailable).
+    1) 未启用 → 503 errors.cd_not_enabled;
+    2) 已启用但表缺失 → 503 errors.cd_not_deployed,带缺失表明细;
+    3) 契约端点不可达 → 503 errors.ci_contract_unreachable;数据库不可用 → 503 errors.db_unavailable.
     """
     from backend.exceptions import AppException
 
     state = db.cd_integration_state()
     if not state.enabled:
         raise AppException(
-            # 用户可见文案只留这一句;动作细节(cd_not_enabled_hint)走 detail.hint(启动日志也打印同一份).
+            # 动作细节走 detail.hint,不进入用户提示框
             CD_NOT_ENABLED_MSG,
             status_code=503,
-            # 动作细节(cd_not_enabled_hint)走 detail.hint:useError 只渲染"字符串型"detail,
-            # dict 不进提示框;curl / 脚本排查仍能拿到完整指引(启动日志也已打印同一份).
             detail={"hint": cd_not_enabled_hint()},
             error_key="errors.cd_not_enabled",
             error_params={"service": CD_SYSTEM},
@@ -127,7 +116,7 @@ def cd_deploy_gate(db: Database) -> None:
 
 
 def _oidc_session(db: Database, token: str) -> dict:
-    """校验服务端会话行(cd_sessions 是 CD 自有表),返回 {username, expires_at}."""
+    """校验服务端会话,返回 {username, expires_at}."""
     with db.conn() as conn:
         sess = _lookup_session(conn, token)
         if sess is None:
@@ -139,16 +128,16 @@ def _oidc_session(db: Database, token: str) -> dict:
 
 
 def _revoke_session_quietly(db: Database, token: str) -> None:
-    """删除会话行(踢下线).清理动作不得盖住原始错误,故吞掉异常."""
+    """删除会话行(踢下线).清理失败仅记录日志,不抛出."""
     try:
         with db.conn() as conn:
             _delete_session(conn, token)
     except Exception:
-        pass
+        logger.warning("revoke session failed", exc_info=True)
 
 
 def _identity_disabled(ident: dict) -> bool:
-    """status=0 即 已停用(None / 缺值时按启用处理,兼容旧数据)."""
+    """status=0 即已停用;None / 缺值时按启用处理."""
     status = ident.get("status")
     if status is None:
         return False
@@ -162,10 +151,10 @@ def _oidc_identity(db: Database, token: str, username: str) -> dict:
     """惰性复核 + 准入(每 OIDC_REVALIDATE_SECONDS 至多 1~2 次 Glue 调用),返回身份 dict:
     {username, role, systems, status, permissions, usable, checked_at, last_ok_at}.
 
-    · status=0 / systems 不含 cd → 删会话行 + 401(停用即刻踢下线,前端 handle401 → logout);
-    · 账号被删 / 角色悬空 → 删会话行 + 401 errors.identity_unavailable(明确否定,不进软失败);
-    · Glue 不可达且超出软失败窗口 → 503 errors.service_unavailable(fail-closed);
-    · 窗口内命中进程内缓存 → 零 Glue 调用(见 backend/services/glue_identity.py).
+    · status=0 / systems 不含 cd → 删会话行 + 401;
+    · 账号被删 / 角色悬空 → 删会话行 + 401 errors.identity_unavailable;
+    · Glue 不可达且超出软失败窗口 → 503 errors.service_unavailable;
+    · 窗口内命中进程内缓存 → 零 Glue 调用.
     """
     from backend.exceptions import AppException
 
@@ -191,14 +180,12 @@ def verify_token(
     db: Database = Depends(get_db),
 ) -> str:
     """从 cookie / Bearer token 验证用户身份,返回 username.
-    服务端会话表 + 不透明 token:token 本身不携带用户信息,校验即查 cd_sessions
-    (O(1) 哈希查找),logout 删行即时失效;再经 Glue 复核 systems 是否允许 CD 访问."""
+    校验 cd_sessions 会话表,再经 Glue 复核 systems 是否允许 CD 访问."""
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
 
-    # 部署闸门:CD 表没建全时,会话校验必然缺表 500;统一 503 并提示补齐(见 cd_deploy_gate).
-    # 放在会话查询之前:不依赖 cd_sessions 是否存在,缺表时也能给出可操作的错误.
+    # 部署闸门先于会话查询:缺表时返回 503 而非 500
     cd_deploy_gate(db)
 
     sess = _oidc_session(db, token)
@@ -211,7 +198,7 @@ def verify_inbound_api_token(
 ) -> None:
     """CI→CD 入站静态 token 校验(Authorization: Bearer CD_API_TOKEN).
 
-    常量时间比较防时序侧信道;CD_API_TOKEN 留空或 token 缺失 / 错误一律 401.
+    使用常量时间比较;CD_API_TOKEN 留空或 token 缺失 / 错误一律 401.
     """
     token = credentials.credentials if credentials is not None else ""
     if not settings.cd_api_token or not token or not secrets.compare_digest(token, settings.cd_api_token):
@@ -224,12 +211,12 @@ def get_current_user(
     db: Database = Depends(get_db),
 ) -> dict:
     """获取当前登录用户完整信息 {username, role, systems, permissions}.
-    同 verify_token:服务端会话校验 + Glue 身份复核."""
+    校验流程同 verify_token."""
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
 
-    # 部署闸门:与 verify_token 一致 -- CD 未部署/表不全时禁止任何已登录操作(503).
+    # 部署闸门:与 verify_token 一致
     cd_deploy_gate(db)
 
     sess = _oidc_session(db, token)
@@ -251,7 +238,6 @@ def require_perm(perm_key: str):
         if user.get("role") == settings.super_admin_role:
             return user
         perms = user.get("permissions", [])
-        # 通配放行:OIDC 模式下超管权限来自 Glue(["*"]),SUPER_ADMIN_ROLE / Glue 角色改名后依然放行(§7.2)
         if WILDCARD_PERM in perms or perm_key in perms:
             return user
         raise HTTPException(403, f"Permission denied: {perm_key} required")
@@ -263,9 +249,7 @@ def require_perm(perm_key: str):
 # 顶层 blanket 权限 cd.deploy-manage 隐含所有子权限(super_admin 也隐含所有)
 _DEPLOY_PERM_MAP: dict = {
     "ssh": "cd.deploy.single",
-    # Docker/Compose 部署:前端(DockerDeployView)与部署器注册名均为 "compose",
-    # 权限键是 cd.deploy.docker.此前误写为 "docker" 键,导致 resolve_deploy_perm("compose")
-    # 匹配不上而回退到 cd.deploy.single(少权用户 403 / 单机权限用户反可部署 Docker).
+    # 前端与部署器注册名为 "compose",权限键为 cd.deploy.docker
     "compose": "cd.deploy.docker",
     "docker": "cd.deploy.docker",  # 兼容历史入参(老记录/外部脚本可能仍发 "docker")
     "k8s/kubectl": "cd.deploy.k8s",
@@ -291,9 +275,9 @@ def resolve_deploy_perm(deploy_type: str, cd_type: str = "") -> str:
 
 
 def enforce_deploy_perm(user: dict, deploy_type: str, cd_type: str = "") -> None:
-    """部署执行前的二次权限校验(防御深度:API 层 + Service 层双保险).
-    既无 blanket 级 cd.deploy-manage 也无对应 deploy_type 子权限则抛 403.
-    super_admin 直接放行;通配权限 '*'(OIDC 下 Glue 授予超管的权限)同样放行(同 require_perm)."""
+    """部署执行前的二次权限校验.
+    既无 cd.deploy-manage 也无对应 deploy_type 子权限则抛 403.
+    super_admin 与通配权限 '*' 直接放行."""
     role = user.get("role") or ""
     if role == settings.super_admin_role:
         return
@@ -315,19 +299,15 @@ def revoke_session(db: Database, token: str) -> None:
 def load_user_context(db: Database, username: str) -> dict:
     """按用户名加载执行上下文 {username, role, permissions}.
 
-    用于审批单 / 回滚后台执行时重建执行身份(无 token 场景).角色与权限同 get_current_user,
-    执行时仍做部署权限二次校验(防御深度).账号已停用(status=0)抛 AppException(403):
-    手动执行路径登录即被拦,后台 / 定时执行路径由此处拦截,保证停用账号的已批准定时单不会被执行.
-    身份 / 权限来自 Glue(get_identity,与请求路径同源、同缓存、同 fail-closed 语义);
-    停用 / systems 不含 cd 一律 403(本路径不删会话:下一次请求复核自会 401 清会话).
+    用于审批单 / 回滚后台执行时重建执行身份(无 token 场景).账号已停用(status=0)或
+    systems 不含 cd 时抛 AppException(403);身份 / 权限来自 Glue.
     """
     from backend.exceptions import AppException
 
     ident = glue_identity.get_identity(username)
     if _identity_disabled(ident):
         raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
-    # 与请求路径 _oidc_identity 同判据(防御深度):Glue 侧 systems 去掉 cd 即拒绝执行,
-    # 不依赖下一次请求的兜底 401;此处不删会话,故用 403.
+    # 与 _oidc_identity 同判据;本路径不删会话,用 403
     if not _has_system(ident.get("systems"), CD_SYSTEM):
         raise AppException(
             "该账号无 CD 访问权限，请联系管理员",

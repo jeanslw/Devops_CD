@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from backend.auth import WILDCARD_PERM, get_current_user, get_db, require_perm
 from backend.config import settings
 from backend.database import Database
+from backend.deploy_run import reset_pending_deploy_record
 from backend.exceptions import AppException, NotFoundError, ServiceUnavailableError, ValidationError
 from backend.models import RollbackRequest
 from backend.services import approval_service as svc
@@ -35,10 +36,7 @@ class ApprovalRuleRequest(BaseModel):
 
 
 def _is_manager(user: dict) -> bool:
-    """是否具备查看所有审批单的权限(super_admin / 通配 "*" / 审批人 cd.deploy.approve).
-
-    通配 "*"(OIDC 下 Glue 只授给 super_admin)必须认,否则超管在审批列表里被当作普通用户只看自己.
-    """
+    """是否具备查看所有审批单的权限(super_admin / 通配 "*" / 审批人 cd.deploy.approve)."""
     if (user.get("role") or "") == settings.super_admin_role:
         return True
     perms = user.get("permissions") or []
@@ -48,7 +46,7 @@ def _is_manager(user: dict) -> bool:
 def _enrich(db, item: dict, user: dict, rules: list[dict] | None = None) -> dict:
     """为审批单补充当前用户的操作权限标志(供前端渲染按钮).
 
-    rules 可传入 svc.list_all_rules() 的结果复用(列表页批量匹配,避免逐行查库的 N+1).
+    rules 可传入 svc.list_all_rules() 的结果复用(列表页批量匹配).
     """
     if rules is None:
         rules = svc.list_all_rules(db)
@@ -76,9 +74,9 @@ def list_approvals(
 ):
     """审批单列表.管理者可见全部;普通用户仅见自己发起的申请.
 
-    active=1 时只返回活跃单据(pending/approved/deploying),供部署页恢复进度.
-    deploy_kind=ssh|compose|k8s 时按部署形态过滤(部署页只显示本形态的活跃单).
-    mine=1 时强制只返回当前用户本人发起的单据(部署页场景,审批人身份也不例外).
+    active=1 时只返回活跃单据(pending/approved/deploying).
+    deploy_kind=ssh|compose|k8s 时按部署形态过滤.
+    mine=1 时强制只返回当前用户本人发起的单据.
     """
     requester = user.get("username", "") if mine else ("" if _is_manager(user) else user.get("username", ""))
     result = svc.list_approvals(
@@ -103,7 +101,7 @@ def approvals_badge(
 ):
     """侧边栏审批菜单红点计数:待我审批 + 我的待执行(轻量轮询端点).
 
-    注意:必须声明在 /approvals/{approval_id} 之前,否则 'badge' 会被当作 id 解析.
+    路由顺序约束:必须声明在 /approvals/{approval_id} 之前.
     """
     return svc.count_todo(db, user)
 
@@ -129,7 +127,7 @@ def approve(
     db: Database = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    # 定时发布时间由申请人在提交部署时指定;批准只放行(无 body,兼容旧调用方/API token)
+    # 批准只放行(无 body);定时发布时间由申请人在提交部署时指定
     return svc.approve(db, approval_id, user)
 
 
@@ -168,8 +166,7 @@ def execute_approval(
     try:
         result = svc.run_approval(db, approval_id, exec_user)
     except Exception:
-        # 双保险:与 execute-stream 的兜底一致.领取后单据已是 deploying,关联部署记录 running
-        # 持有项目并发锁,异常时必须置 failed 并退回 pending 释放锁,否则该项目被锁到进程重启.
+        # 领取后单据已是 deploying 且持有项目并发锁:异常时置 failed 并退回 pending 释放锁
         logger.error("Approval execute failed id=%s", approval_id, exc_info=True)
         with suppress(Exception):
             svc._transition(db, approval_id, [svc.DEPLOYING], svc.FAILED)
@@ -222,9 +219,12 @@ async def execute_approval_stream(
         except Exception as e:
             logger.error("Approval execute stream failed id=%s", approval_id, exc_info=e)
             exec_result = {"success": False, "error": str(e)}
-            # 双保险:异常时把仍 deploying 的单据置 failed,避免卡住
+            # 异常时把仍 deploying 的单据置 failed
             with suppress(Exception):
                 svc._transition(db, approval_id, [svc.DEPLOYING], svc.FAILED)
+            # 同时释放 running 记录的项目锁:否则要等心跳过期才回收,期间该项目无法再部署
+            with suppress(Exception):
+                reset_pending_deploy_record(db, approval_id)
         finally:
             with suppress(Exception):
                 log_queue.put(None)
@@ -239,7 +239,7 @@ async def execute_approval_stream(
                 if msg is None:
                     break
                 msg_id += 1
-                # 多行消息需要每行都加 data: 前缀,否则 SSE 只解析第一行
+                # 多行消息按 SSE 协议逐行加 data: 前缀
                 safe_msg = msg.replace("\n", "\ndata: ")
                 yield f"id: {msg_id}\nretry: 3000\ndata: {safe_msg}\n\n"
             except queue.Empty:
@@ -267,10 +267,10 @@ def list_rules(db: Database = Depends(get_db), _user: dict = Depends(require_per
 
 
 def _validate_rule(project: str, req: ApprovalRuleRequest) -> None:
-    """审批规则写入前校验,防止悬空引用导致审批判定静默失效.
+    """审批规则写入前校验.
 
     - project 非空且不超过列宽(VARCHAR(255),'*' 表示全局默认);
-    - approver_role 必须存在(查 Glue /api/rbac/roles;悬空角色会让角色匹配永不命中且无告警);
+    - approver_role 必须存在(查 Glue /api/rbac/roles);
     - approvers 用户名必须存在(查 Glue /api/rbac/users;上游不可达时跳过该项校验).
     """
     project = (project or "").strip()
@@ -291,8 +291,7 @@ def _validate_rule(project: str, req: ApprovalRuleRequest) -> None:
 def _glue_read(call, label: str):
     """调 Glue RBAC 只读接口;不可达 / 未配置时返回 None(调用方据此跳过该项校验).
 
-    注意异常只包住**调用本身**:调用方对返回值的判定(ValidationError)必须原样抛出,
-    不能被这里吞成"跳过校验".
+    异常只包住**调用本身**:调用方对返回值的判定(ValidationError)必须原样抛出.
     """
     try:
         return call()
@@ -304,9 +303,7 @@ def _glue_read(call, label: str):
 def _validate_rule_via_glue(approver_role: str, approvers: list[str]) -> None:
     """经 Glue RBAC 只读接口校验引用,不直读共享表.
 
-    Glue 不可达 / 未配置时跳过校验(fail-open):悬空引用只会让审批"无人能批"而卡死部署,
-    不构成越权;阻断规则写入的代价更高.
-    但"Glue 可达且返回空列表"是**权威空**,悬空引用照常拒绝 —— fail-open 只针对不可达.
+    Glue 不可达 / 未配置时跳过校验(fail-open);Glue 可达且返回空列表为权威空,悬空引用照常拒绝.
     """
     if approver_role:
         roles = _glue_read(lambda: get_ci_client().list_roles(), "roles")
@@ -320,7 +317,7 @@ def _validate_rule_via_glue(approver_role: str, approvers: list[str]) -> None:
     if approvers:
         users = _glue_read(lambda: get_ci_client().list_users(), "users")
         if users is not None:
-            # username 可能为 None(Glue 侧脏数据 / 空行):按空串落集合,避免一行脏数据把校验打成 500
+            # username 可能为 None(Glue 侧脏数据 / 空行):按空串处理
             found = {(u.get("username") or "").lower() for u in users if isinstance(u, dict)}
             missing = [a for a in approvers if a.lower() not in found]
             if missing:
@@ -501,7 +498,7 @@ async def rollback_deploy_stream(
                 if msg is None:
                     break
                 msg_id += 1
-                # 多行消息需要每行都加 data: 前缀,否则 SSE 只解析第一行
+                # 多行消息按 SSE 协议逐行加 data: 前缀
                 safe_msg = msg.replace("\n", "\ndata: ")
                 yield f"id: {msg_id}\nretry: 3000\ndata: {safe_msg}\n\n"
             except queue.Empty:

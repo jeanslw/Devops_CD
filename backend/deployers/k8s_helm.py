@@ -56,7 +56,7 @@ class HelmDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.rollback_start", name=release_name))
             ssh = ssh_connect(target, settings.ssh_timeout)
 
-            # 先确认 release 存在(用 _exec_exit 防 helm 挂了静默失败)
+            # 先确认 release 存在
             _, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
             if list_ec != 0:
                 return {"success": False, "output": f"helm list failed (exit {list_ec}):\n{list_err or 'no output'}"}
@@ -88,6 +88,7 @@ class HelmDeployer(K8sSubDeployer):
         ns = req.k8s_ns
         ns_flag = f" -n {shlex.quote(ns)}" if ns else ""
 
+        ssh = None
         try:
             _log(callback, S("deploy_log.helm_connecting"))
             ssh = ssh_connect(target, settings.ssh_timeout)
@@ -95,7 +96,7 @@ class HelmDeployer(K8sSubDeployer):
             # ── Release 名:直接用项目短名 ──
             helm_release = project.split("/")[-1]
 
-            # 检查 release 是否已存在(用 _exec_exit 防 helm 挂了静默失败)
+            # 检查 release 是否已存在
             existing, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
             if list_ec != 0:
                 _log(
@@ -120,7 +121,7 @@ class HelmDeployer(K8sSubDeployer):
                 _log(callback, S("deploy_log.current_version_none"))
 
             # ── 执行 helm upgrade --install ──
-            # 所有用户输入均通过 shlex.quote() 防 shell 注入
+            # 所有用户输入均经 shlex.quote()
             _log(callback, S("deploy_log.helm_start"))
             helm_cmd = (
                 f"helm upgrade --install {shlex.quote(helm_release)} {shlex.quote(chart)} "
@@ -140,7 +141,7 @@ class HelmDeployer(K8sSubDeployer):
             if after.strip():
                 _log(callback, after)
 
-            # helm status 可能也挂(release 没创建成功),用 _exec_exit 兜底
+            # helm status 也可能失败(release 未创建成功),用 _exec_exit 取退出码
             status_out, status_err, status_ec = _exec_exit(
                 ssh, f"helm status {shlex.quote(helm_release)}{ns_flag}", timeout=settings.ssh_timeout
             )
@@ -169,3 +170,10 @@ class HelmDeployer(K8sSubDeployer):
             logger.error("Helm deploy failed", exc_info=e)
             _log(callback, S("deploy_log.helm_fail", error=str(e)))
             return {"success": False, "output": str(e)}
+        finally:
+            # 提前 return / 抛异常的路径都要收口连接
+            if ssh is not None:
+                try:
+                    ssh.close()
+                except Exception:
+                    pass

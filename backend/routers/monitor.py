@@ -1,7 +1,6 @@
 """资源监控路由 - 统一 K8S / Docker / SSH 服务器资源查看
 
-服务器列表分两步:GET /servers 只读库(不做 SSH,页面立即渲染),
-GET /servers/{id}/probe 单台探测(前端并发调用,逐行回填状态).
+GET /servers 只读库返回列表;GET /servers/{id}/probe 单台探测,结果写入缓存.
 """
 
 import logging
@@ -55,10 +54,9 @@ def list_monitor_servers(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.resource-monitor")),
 ):
-    """返回所有服务器的监控状态(按类型区分).
+    """返回所有服务器的监控状态(按类型区分):只读库 + 合并已缓存的单台探测结果.
 
-    只读库 + 合并已缓存的单台探测结果,不做 SSH 探测:探测过的服务器直接带状态,
-    其余为 "unknown",由前端并行调 /servers/{id}/probe 逐台回填(页面不再等所有主机).
+    未探测过的服务器状态为 "unknown",由前端并行调 /servers/{id}/probe 逐台回填.
     """
     if not settings.monitoring_enabled:
         return {"enabled": False, "servers": []}

@@ -9,7 +9,6 @@ export function useError() {
   /** 根据 Response 或 body 显示错误提示 */
   async function showError(responseOrBody) {
     let body = responseOrBody
-    // 如果是 Response 对象(fetch 未解析),先解析
     if (body && typeof body.json === 'function') {
       try {
         body = await body.json()
@@ -21,11 +20,9 @@ export function useError() {
 
     const errorKey = body?.error_key
     if (errorKey) {
-      // 有 i18n key → 优先翻译
       const params = body?.error_params || {}
       toast(t(errorKey, params), false)
     } else if (body?.error) {
-      // 兜底:原始 error 字段
       toast(body.error, false)
     } else if (body?.detail && typeof body.detail === 'string') {
       toast(body.detail, false)

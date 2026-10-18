@@ -11,14 +11,13 @@ import { fetchActiveApprovals } from '@/utils/approvalTarget'
  * - refreshActive(): 项目确定/切换/面板关闭后查询活跃单
  *
  * @param kind 部署形态 ssh|compose|k8s:只查询/展示本形态的审批单,
- *             防止 Docker(compose) 申请串显到 K8s 页(反之亦然).
+ *             Docker(compose) 与 K8s 页互不串显.
  */
 export function useApprovalPanel(auth, selectedProject, kind = '') {
   const { t } = useI18n()
   const panelApprovalId = ref(0)
   const activeApprovals = ref([])
 
-  // 最需要处理的一条(部署中 > 待执行 > 待审批),后端已按此排序
   const activeApproval = computed(() => activeApprovals.value[0] || null)
 
   const bannerText = computed(() => {
@@ -51,7 +50,6 @@ export function useApprovalPanel(auth, selectedProject, kind = '') {
     await refreshActive()
   }
 
-  // 切换项目时复位(旧项目的面板/列表不应带过来)
   function resetPanel() {
     panelApprovalId.value = 0
     activeApprovals.value = []

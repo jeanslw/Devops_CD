@@ -11,9 +11,9 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger("ci_client")
 
-# Glue 无 /refs 路由(版本过旧)时的负缓存窗口(秒):窗口内不再重试该端点,直接走 /branches.
-# 404 无法区分"路由不存在"(老 Glue)与"仓库映射缺失"(新 Glue 的 git.query_failed),故一律按
-# 前者处理:负缓存避免每次开弹窗都白吃一次 404;真故障时 /branches 会同样失败,错误照旧上抛.
+# Glue 无 /refs 路由时的负缓存窗口(秒):窗口内走 /branches.
+# 404 无法区分"路由不存在"(老 Glue)与"仓库映射缺失"(新 Glue 的 git.query_failed),一律按前者处理;
+# 真故障时 /branches 会同样失败,错误照旧上抛.
 _REFS_MISSING_TTL = 300.0
 # 契约读(GET /api/integration/services/{service})的超时(秒):在请求路径上,问不到即快速失败.
 _CONTRACT_TIMEOUT = 5.0
@@ -78,7 +78,7 @@ class CiClient:
         self._static_token: bool = bool(token)
         self._token_expiry: float = 0
         self._lock = threading.Lock()
-        # 已知该 Glue 没有 /refs 路由时的截止时间戳(秒):窗口内直接走 /branches(见 get_refs).
+        # 已知该 Glue 没有 /refs 路由时的截止时间戳(秒):窗口内直接走 /branches.
         # 只读写一个 float,竞态无害(最坏情况是多发一次 404).
         self._refs_missing_until: float = 0.0
 
@@ -132,7 +132,7 @@ class CiClient:
     # ── 通用请求 ──
 
     def _get(self, url: str, params: dict | None = None, timeout: float | None = None) -> Any:
-        """GET + 解析 JSON.timeout 只在个别'请求路径上'的调用点收紧(见 get_service_contract)."""
+        """GET + 解析 JSON.timeout 可在请求路径上的调用点收紧."""
         self._ensure_token()
         budget = timeout or self._timeout
         try:
@@ -150,6 +150,12 @@ class CiClient:
             raise CiClientError(
                 f"CI API GET 失败 [{url}]: {remote or e}", status_code=status, remote_message=remote
             ) from e
+        except requests.RequestException as e:
+            # 超时 / 连接中断 / DNS 失败等,不再是裸异常穿透到 500
+            raise CiClientError(f"CI 请求失败 [{url}]: {e}") from e
+        except ValueError as e:
+            # 响应体非 JSON(代理错误页 / 网关 HTML)时 resp.json() 抛 ValueError
+            raise CiClientError(f"CI API 返回非 JSON [{url}]: {e}") from e
 
     def _post(self, url: str, body: dict) -> Any:
         self._ensure_token()
@@ -272,9 +278,9 @@ class CiClient:
     def get_refs(self, project: str) -> dict:
         """GET /api/git/{path}/refs → {"branches": [...], "tags": [...]}(Glue ≥ 2.9.0).
 
-        构建页的 ref 下拉要的是"分支 + Tag"全量候选值(只列分支时无法用 Tag 触发构建),故走 Glue 的
-        合并端点:一次 job→仓库映射解析,两组值来自同一仓库快照. **不加 ?format=json**(Glue 的
-        output() 只在该参数下才把响应包成 {"data": ...}),与 /api/build/* 的调用方式一致.
+        构建页 ref 下拉需要"分支 + Tag"全量候选值,走 Glue 的合并端点:一次 job→仓库映射解析,
+        两组值来自同一仓库快照. **不加 ?format=json**(Glue 的 output() 只在该参数下才把响应
+        包成 {"data": ...}),与 /api/build/* 的调用方式一致.
 
         回退:Glue 版本过旧(无该路由 → 404/405)时退回 GET /api/build/{path}/branches,响应形状对齐
         (tags 为空数组),调用方不必分叉. 真实故障(5xx / 鉴权失败 / 网络异常)照旧抛出,不伪装成空表.
@@ -315,20 +321,20 @@ class CiClient:
     def get_service_contract(self, service: str) -> Any:
         """GET /api/integration/services/{service} → {service, enabled, provision, token_active, updated_at}.
 
-        契约(CD 是否被授权、以哪种建表方式授权)的窄只读端点,Glue ≥ 2.9.0 提供. 硬约束与
-        glue_identity._glue_get 一致:**不加 ?format=json**;**不解析 message 判错**(message 是已翻译
-        文本,不是稳定标识),调用方只看状态码与字段.
+        契约(CD 是否被授权、以哪种建表方式授权)的窄只读端点,Glue ≥ 2.9.0 提供. 硬约束:
+        **不加 ?format=json**;**不解析 message 判错**(message 是已翻译文本,不是稳定标识),
+        调用方只看状态码与字段.
 
         状态码语义:
           - 200     → enabled / provision 以响应为准;token_active 仅供展示,不作闸门条件;
           - 404     → 服务名不在 Glue 白名单;
           - 401/403 → token 被撤销 / scope 不足(Glue 停用集成服务时也会撤销 CD 的 token).
-        本方法不吞异常;调用方(database._fetch_contract_http)把任何失败按"问不到"→ 503 处理.
+        本方法不吞异常;任何失败由调用方按"问不到"→ 503 处理.
         timeout 收紧到 _CONTRACT_TIMEOUT:本调用在请求路径上,快速失败.
         """
         result = self._get(self._url(API["service_contract"], service=service), timeout=_CONTRACT_TIMEOUT)
         if isinstance(result, dict) and isinstance(result.get("data"), dict):
-            return result["data"]  # 防御:万一被包了一层
+            return result["data"]  # 响应可能被包一层 {"data": ...}
         return result
 
     def retry_pipeline(self, project: str, build_id: int | str) -> Any:

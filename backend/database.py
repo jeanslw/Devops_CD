@@ -46,20 +46,8 @@ class ContractUnavailableError(AppException):
 
 _Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
 
-# ── CD 部署闸门:集成服务契约 × 唯一表清单 ──────────────────────────────────────
-# 「CD 启用了没有」唯一判据 = Glue 的契约端点 GET /api/integration/services/cd:
-#   - 问不到 → 503 errors.ci_contract_unreachable(fail-closed,不当「未启用」);
-#   - enabled<>1 → 未启用:零 DDL,登录与所有已持有会话的请求统一 503 errors.cd_not_enabled;
-#   - enabled=1 且 provision='auto'   → 首次连库自动建全清单 + 补缺失列 + 补索引;
-#   - enabled=1 且 provision='manual' → 零 DDL,只认运维预建表(MySQL 导入 database/init_mysql.sql);
-#     后两种缺表统一 503 errors.cd_not_deployed.闸门见 backend.auth.cd_deploy_gate.
-#
-# 增删一张 CD 表 = 四处同步(清单是唯一真相源:闸门 / 错误文案 / 张数自动跟随):
-#   1. 下面的 CD_REQUIRED_TABLES(唯一清单,顺序 = 错误提示里的展示顺序)
-#   2. database/init_mysql.sql(manual 模式:管理员导入的建表脚本)
-#   3. backend/database.py::_MYSQL_TABLE_DDL(auto 模式:MySQL 自动建表 DDL)
-#   4. backend/database.py::_ensure_cd_tables(auto 模式:SQLite 自动建表;结尾自检当场拦截漏改)
-# 1/2/3 由 backend/tests/test_cd_deploy_gate.py 双向校验,4 由运行时自检兜底.
+# CD 自有表清单(唯一真相源):闸门判定、错误文案、张数均由此派生.
+# 增删表需同步:CD_REQUIRED_TABLES / database/init_mysql.sql / _MYSQL_TABLE_DDL / _ensure_cd_tables.
 CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_servers",
     "cd_deploy_logs",
@@ -77,8 +65,7 @@ CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_sessions",
 )
 
-# 列出现存基础表:MySQL 走 information_schema(DATABASE() = 当前库),SQLite 走 sqlite_master.
-# 视图不算 CD 自身表,不参与闸门(MySQL 侧限定 BASE TABLE,两驱动语义一致).
+# 列出现存基础表:MySQL 走 information_schema,SQLite 走 sqlite_master;视图不参与闸门.
 _CD_TABLE_LIST_SQL = {
     "mysql": (
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
@@ -148,10 +135,9 @@ def _normalize_contract(raw_enabled: Any, raw_provision: Any) -> tuple[bool, str
 
 
 def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
-    """(内部)经 Glue 的契约端点读启用状态;任何「问不到」都抛 ContractUnavailableError(503 fail-closed).
+    """(内部)经 Glue 的契约端点读启用状态;问不到(未配置 / 窗口内 / HTTP 失败 / 响应形状不符)抛 ContractUnavailableError.
 
-    问不到 = CI_API_URL / CI_API_TOKEN 未配置、不可用窗口内、HTTP 失败(404/405/401/403/5xx/超时)、
-    响应形状不符(非对象 / 缺 enabled 字段).窗口缓存由 _resolve_contract_state 负责,本函数只管这一次问.
+    窗口缓存由 _resolve_contract_state 负责,本函数只管这一次问.
     """
     if not settings.ci_api_url or not settings.ci_api_token:
         raise ContractUnavailableError(
@@ -177,8 +163,7 @@ def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
     return CdIntegrationState(enabled, provision, True)
 
 
-# ── auto 模式的 MySQL 建表 DDL(与 database/init_mysql.sql 同构;.dockerignore 排除了 database/,
-#    运维脚本不进镜像,容器必须自带;两份由 backend/tests/test_cd_deploy_gate.py 严格比对)──
+# ── auto 模式的 MySQL 建表 DDL(与 database/init_mysql.sql 同构,容器自带)──
 # 只建 CD 自有表(cd_*).
 _MYSQL_TABLE_DDL: dict[str, str] = {
     "cd_servers": """CREATE TABLE IF NOT EXISTS cd_servers (
@@ -454,7 +439,7 @@ class _MysqlWrapper:
 
     def execute(self, sql, params=None):
         cur = self._conn.cursor()
-        # 只替换 SQL 占位符中的 ?,避免字符串字面量中的 ? 被误替换
+        # 只替换 SQL 占位符中的 ?(引号内的 ? 不替换)
         cur.execute(_Q_MARK_RE.sub("%s", sql), params or ())
         return cur
 
@@ -508,6 +493,7 @@ class Database:
     DRIVERS = ("sqlite", "mysql")
     _tables_ensured = False  # 类变量:建表只执行一次
     _pool = None  # MySQL 连接池实例(延迟初始化)
+    _pool_lock = threading.Lock()
 
     @property
     def driver(self) -> str:
@@ -521,28 +507,30 @@ class Database:
         self._path = Path(db_path or settings.db_path)
 
     def _init_pool(self):
-        """延迟初始化 MySQL 连接池(避免 import 时连接失败阻塞启动)"""
+        """延迟初始化 MySQL 连接池(首次使用时创建)."""
         if self._driver != "mysql":
             return
         try:
             import pymysql
             from dbutils.pooled_db import PooledDB
 
-            if Database._pool is None:
-                Database._pool = PooledDB(
-                    creator=pymysql,
-                    maxconnections=settings.db_pool_max,
-                    mincached=settings.db_pool_min,
-                    blocking=True,
-                    ping=1,  # 取出连接前先 ping 检测有效性
-                    host=settings.db_host,
-                    port=settings.db_port,
-                    user=settings.db_user,
-                    password=settings.db_pass,
-                    database=settings.db_name,
-                    charset="utf8mb4",
-                    cursorclass=pymysql.cursors.DictCursor,
-                )
+            # 并发首次调用可能各建一个池,后者覆盖会让前者的连接泄漏,故串行化
+            with Database._pool_lock:
+                if Database._pool is None:
+                    Database._pool = PooledDB(
+                        creator=pymysql,
+                        maxconnections=settings.db_pool_max,
+                        mincached=settings.db_pool_min,
+                        blocking=True,
+                        ping=1,  # 取出连接前先 ping 检测有效性
+                        host=settings.db_host,
+                        port=settings.db_port,
+                        user=settings.db_user,
+                        password=settings.db_pass,
+                        database=settings.db_name,
+                        charset="utf8mb4",
+                        cursorclass=pymysql.cursors.DictCursor,
+                    )
         except ImportError as e:
             raise RuntimeError("MySQL 模式需要安装 dbutils: pip install dbutils") from e
 
@@ -569,7 +557,7 @@ class Database:
     def _resolve_contract_state(self) -> CdIntegrationState:
         """契约状态(闸门第一道判据):问 Glue 的契约端点,带窗口缓存(CI_CONTRACT_TTL;0 = 每请求都问).
 
-        问不到抛 ContractUnavailableError(503 errors.ci_contract_unreachable),不当「未启用」.
+        问不到抛 ContractUnavailableError(503),不当「未启用」.
         """
         ttl = max(0, settings.ci_contract_ttl)
         if ttl:
@@ -589,14 +577,14 @@ class Database:
     def cd_missing_tables(self) -> list[str]:
         """返回当前库中缺失的 CD 表名(空列表 = 表建全 = CD 已部署;清单 = CD_REQUIRED_TABLES).
 
-        连接不可用一律抛 DatabaseUnavailableError(503 errors.db_unavailable).
+        连接不可用一律抛 DatabaseUnavailableError(503).
         """
         try:
             with self.conn() as conn:
                 rows = conn.execute(_CD_TABLE_LIST_SQL[self._driver]).fetchall()
         except Exception as e:
             if _is_missing_table_error(e):
-                # 连元数据表都查不到(如 MySQL 1146):无法证明 CD 已部署,按未部署处理
+                # 连元数据表都查不到:无法证明 CD 已部署,按未部署处理
                 return list(CD_REQUIRED_TABLES)
             raise
         existing = {_first_col_value(r) for r in rows}
@@ -618,22 +606,22 @@ class Database:
             try:
                 raw = pool.connection()
             except Exception as e:
-                # 取不到连接(网络/账号/连接数打满)= 库当前不可用 → 503,而不是裸 500
+                # 取不到连接(网络/账号/连接数打满)→ 503 库不可用
                 raise DatabaseUnavailableError(f"MySQL 取连接失败：{e}", "mysql", str(e)) from e
             wrapper = _MysqlWrapper(raw)
         else:
             try:
                 raw = self._connect_sqlite()
             except sqlite3.Error as e:
-                # 库文件打不开(目录不存在/不可写/被占用)= 环境故障 → 503 库不可用(不是 500)
+                # 库文件打不开(目录不存在/不可写/被占用)→ 503 库不可用
                 raise DatabaseUnavailableError(
                     f"SQLite 打开数据库文件失败（{self._path}）：{e}", "sqlite", str(e)
                 ) from e
             wrapper = _SqliteWrapper(raw)
 
         if not Database._tables_ensured:
-            # 建表授权来自契约:未启用 / manual 零 DDL,auto 建全清单 + 缺列 + 索引(见 _ensure_*).
-            # 未启用时不置 _tables_ensured:启用后最迟一个契约缓存窗口内自动建表,无需重启.
+            # 建表授权来自契约:未启用 / manual 零 DDL,auto 建全清单 + 缺列 + 索引
+            # 未启用时不置 _tables_ensured,下一请求重新判定
             try:
                 state = self._resolve_contract_state()
                 if state.enabled:
@@ -692,7 +680,7 @@ class Database:
         for table in CD_REQUIRED_TABLES:
             ddl = _MYSQL_TABLE_DDL.get(table)
             if ddl is None:
-                continue  # 漏表由下面的自检统一报出(避免 KeyError 掩盖真因)
+                continue  # 漏表由下方自检统一报出
             conn.execute(ddl)
         conn.commit()
         self._ensure_mysql_indexes(conn)
@@ -708,7 +696,7 @@ class Database:
             )
 
     def _ensure_mysql_indexes(self, conn):
-        """MySQL 索引(幂等):MySQL 没有 CREATE INDEX IF NOT EXISTS,重复建由 suppress 吞掉."""
+        """MySQL 索引(幂等):重复建由 suppress 吞掉."""
         for name, table, cols, unique in _MYSQL_INDEXES:
             with suppress(Exception):
                 conn.execute(f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table}({cols})")
@@ -792,7 +780,7 @@ class Database:
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN heartbeat_at VARCHAR(32) DEFAULT ''")
         # 并发锁唯一索引:running 记录 lock_key=project,同项目至多一条 running(NULL 可重复)
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
-        # 清理废弃的 deploy_id 列(原自增部署序号,已改用主键 id)
+        # 删除 deploy_id 列及旧索引
         with suppress(Exception):
             conn.execute("DROP INDEX IF EXISTS idx_cdl_deploy_id")
         with suppress(Exception):
@@ -844,8 +832,7 @@ class Database:
             value TEXT NOT NULL
         )""")
 
-        # 登录会话表(不透明 token + 服务端会话):token_hash 存 SHA-256 摘要,
-        # logout 删除对应行即时吊销;expires_at 为 epoch 秒,过期后拒绝并惰性清理.
+        # 登录会话表:token_hash 存 SHA-256 摘要,logout 删行即时吊销;expires_at 为 epoch 秒,过期拒绝并惰性清理
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_sessions (
             token_hash VARCHAR(64) PRIMARY KEY,
             username VARCHAR(64) NOT NULL,
@@ -915,7 +902,7 @@ class Database:
             forwarded_at TEXT DEFAULT ''
         )""")
 
-        # 审批单表(v1.5.0)
+        # 审批单表
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_approvals (
             id {PK},
             project VARCHAR(255) NOT NULL,
@@ -935,7 +922,7 @@ class Database:
             updated_at TEXT DEFAULT ''
         )""")
 
-        # 旧库缺列幂等迁移(CREATE TABLE IF NOT EXISTS 不会为已存在的表补列)
+        # 旧库缺列幂等迁移
         for col, col_def in (
             ("deploy_id", "INTEGER DEFAULT 0"),
             ("approved_at", "TEXT DEFAULT ''"),
@@ -945,7 +932,7 @@ class Database:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE cd_approvals ADD COLUMN {col} {col_def}")
 
-        # 审批规则表(v1.5.0)
+        # 审批规则表
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_approval_rules (
             id {PK},
             project VARCHAR(255) NOT NULL UNIQUE,
@@ -970,7 +957,7 @@ class Database:
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
 
         self._ensure_indexes(conn)
-        # 历史回填(幂等):必须在 cd_approvals 建表之后执行;仅处理 approval_id=0 的行.
+        # 回填 approval_id(幂等):仅处理 approval_id=0 的行.
         with suppress(Exception):
             conn.execute(
                 "UPDATE cd_deploy_logs SET approval_id=("

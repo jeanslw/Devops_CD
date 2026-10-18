@@ -1,4 +1,4 @@
-"""DeployerRegistry -- 对齐 PHP BuildProviderRegistry"""
+"""部署器注册表"""
 
 from collections.abc import Callable
 from typing import Any

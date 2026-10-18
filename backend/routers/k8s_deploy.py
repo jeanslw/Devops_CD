@@ -100,7 +100,7 @@ def _k8s_deployment_exists(ssh, name: str, namespace: str = "") -> bool:
     try:
         from backend.deployers.k8s_utils import _exec_exit
 
-        ns_flag = f"-n {namespace}" if namespace else ""
+        ns_flag = f"-n {shlex.quote(namespace)}" if namespace else ""
         out, _, ec = _exec_exit(
             ssh,
             f"kubectl get deployment/{shlex.quote(name)} {ns_flag} -o name 2>/dev/null",
@@ -168,7 +168,7 @@ def deploy_k8s_check(
         except AppException:
             pass
 
-        # 构造警告(复用现有逻辑)
+        # 构造警告
         name_low = filter_name.lower()
         yaml_low = deploy_name.lower()
         if name_low in yaml_low or yaml_low in name_low:

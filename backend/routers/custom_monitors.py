@@ -69,7 +69,7 @@ class CustomMonitorRequest(BaseModel):
     description: str = ""
     server_ids: str = ""
     enabled: bool = True
-    metrics: list[MetricDef] = []  # 指标列表
+    metrics: list[MetricDef] = []
 
 
 # ── 工具: 多格式解析 ──
@@ -91,7 +91,7 @@ def parse_output(raw: str, output_format: str, metrics: list[dict]) -> list[dict
     elif fmt == "json":
         return _parse_json(raw, metrics)
     else:
-        # auto / 兼容旧数据: 回退到单值提取
+        # auto: 回退到单值提取
         return _parse_auto(raw, metrics)
 
 
@@ -161,7 +161,6 @@ def _parse_kv(raw: str, metrics: list[dict]) -> list[dict]:
     kv_map = {}
     for line in raw.strip().split("\n"):
         line = line.strip()
-        # 支持 key=value 和 key: value
         m = re.match(r"^([^=:]+)[=:]\s*(.*)", line)
         if m:
             kv_map[m.group(1).strip()] = m.group(2).strip()
@@ -226,11 +225,10 @@ def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
 def _parse_auto(raw: str, metrics: list[dict]) -> list[dict]:
     """auto 模式: 优先 CSV, 失败回退单值"""
     if metrics and metrics[0].get("field_key", "").strip():
-        # 有指标定义 -> 尝试 CSV
         r = _parse_csv(raw, metrics)
         if r:
             return r
-    # 回退: 单值提取(兼容旧数据)
+    # 回退: 单值提取
     val = _parse_number(raw)
     if val is None:
         return []
@@ -249,7 +247,7 @@ def _parse_auto(raw: str, metrics: list[dict]) -> list[dict]:
 
 
 def _parse_number(raw: str) -> float | None:
-    """从命令输出中提取数值(兼容旧逻辑)"""
+    """从命令输出中提取数值"""
     if not raw:
         return None
     text = raw.strip()

@@ -1,6 +1,7 @@
 """K8S kubectl 部署模式 - SSH 远程 kubectl apply + rollout restart"""
 
 import logging
+import secrets
 import shlex
 
 import yaml
@@ -122,8 +123,7 @@ class KubectlDeployer(K8sSubDeployer):
         tag = req.tag
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
-        # ns_flag 延后构建:留空 k8s_ns 时需先解析 YAML 提取 manifest 声明的 namespace
-        # 作为执行/验证上下文(见 effective_ns),不能在这里就按空串拼 -n ''
+        # ns_flag 延后构建:留空 k8s_ns 时先解析 YAML 声明的 namespace(见 effective_ns)
 
         yaml_content = ""
         ssh = None
@@ -154,12 +154,10 @@ class KubectlDeployer(K8sSubDeployer):
                     return {"success": False, "output": f"Remote YAML is empty or unreadable: {req.path}\n{err}"}
                 _log(callback, S("deploy_log.yaml_read_ok"))
 
-            # ── 先渲染再校验:渲染后 {IMAGE}:{TAG} 已替换,YAML 可被 safe_load 解析 ──
+            # ── 先渲染再校验 ──
             yaml_content = _render_k8s_yaml(yaml_content, image, tag)
 
-            # k8s_ns 是 CD 请求的执行上下文.kubectl 的 --namespace/-n 不会覆盖
-            # manifest 中显式声明的 metadata.namespace,因此如果两者冲突必须直接失败,
-            # 避免"实际部署到 A,验证却在 B"的假成功/假失败.
+            # kubectl 的 --namespace/-n 不覆盖 manifest 声明的 metadata.namespace;两者冲突时直接失败.
             try:
                 docs = list(yaml.safe_load_all(yaml_content))
             except yaml.YAMLError as exc:
@@ -201,10 +199,8 @@ class KubectlDeployer(K8sSubDeployer):
                         ),
                     }
 
-            # 执行/验证统一使用的 namespace:请求填写优先;留空则以 YAML 声明为准
-            # (与 K8sDeployRequest.k8s_ns 契约一致).apply 不带 -n 时按 manifest 落位,
-            # 若 rollout/pods 查询仍不带 -n 会落到 kubeconfig 默认 ns,
-            # 造成"apply 成功,验证/重启却查错 namespace"的假失败.
+            # 执行/验证统一使用的 namespace:请求填写优先;留空则以 YAML 声明为准.
+            # apply 不带 -n 时按 manifest 落位,rollout/pods 查询须带同一 -n.
             effective_ns = namespace or manifest_ns
             ns_flag = f" -n {shlex.quote(effective_ns)}" if effective_ns else ""
 
@@ -212,13 +208,16 @@ class KubectlDeployer(K8sSubDeployer):
             if yaml_deploy_name and yaml_deploy_name != filter_name:
                 # 前端预检弹窗已确认,这里只打警告不拦截
                 _log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=yaml_deploy_name, project=filter_name))
-            tmp = f"/tmp/k8s-{filter_name}.yaml"  # nosec
+            # 并发部署同一项目时固定路径会互相覆盖,故带随机后缀
+            tmp = f"/tmp/k8s-{filter_name}-{secrets.token_hex(6)}.yaml"  # nosec
 
             _log(callback, S("deploy_log.uploading_yaml_k8s"))
             sftp = ssh.open_sftp()
-            with sftp.file(tmp, "w") as f:
-                f.write(yaml_content)
-            sftp.close()
+            try:
+                with sftp.file(tmp, "w") as f:
+                    f.write(yaml_content)
+            finally:
+                sftp.close()
             _log(callback, S("deploy_log.yaml_upload_k8s_ok"))
 
             deploy_name = yaml_deploy_name or filter_name  # 以 YAML 声明的 Deployment 名为准
@@ -287,6 +286,12 @@ class KubectlDeployer(K8sSubDeployer):
                 if ec != 0:
                     _log(callback, S("deploy_log.deploy_error", error=e or f"exit code {ec}"))
                     return {"success": False, "output": f"{before_text}\n\nStep {i + 1} failed (exit {ec}):\n{o or e}"}
+
+            # 远端临时 YAML 用完即删,避免并发随机名文件长期堆积
+            try:
+                ssh.exec_command(f"rm -f {shlex.quote(tmp)}")
+            except Exception:
+                pass
 
             # ── rollout status 等待部署完成 ──
             check_cancelled()

@@ -40,8 +40,7 @@ class ComposeDeployer(Deployer):
 
         mode = target.mode or "remote"
         image_name = split_image_ref(image)[0]  # hub.abc.com/project/app
-        # 防御性再校验一次:tag 必须符合 OCI 白名单(正常路径已在 service/路由层校验,
-        # 此处兜底,保证任何调用方进入 shell 拼接前 tag 都不含元字符)
+        # 二次校验 tag 白名单
         validate_tag(tag)
 
         # ── commands 模式:纯透传,不做任何 compose/docker 假设 ──
@@ -112,9 +111,7 @@ class ComposeDeployer(Deployer):
                     env_flag = ""
                 env_file_q = shlex.quote(env_file)
 
-                # 安全重写 .env:剔除旧 IMAGE/TAG 行后用 printf 追加新值.
-                # 镜像名/tag 一律经 shlex.quote(tag 另已过 OCI 白名单),
-                # 不使用 sed/echo 插值,杜绝任意命令注入.
+                # 重写 .env:剔除旧 IMAGE/TAG 行后追加新值
                 def _rewrite_env(image_ref: str) -> str:
                     payload = shlex.quote(f"IMAGE={image_ref}\nTAG={tag}\n")
                     return (
@@ -152,7 +149,7 @@ class ComposeDeployer(Deployer):
 
                 def _remote_manifest_digest(img):
                     """获取远程 registry 的 manifest digest(仅拉 manifest,不下载层)"""
-                    # 不过滤 stderr,方便排查 manifest inspect 失败原因
+                    # 不过滤 stderr
                     r = self._ssh_run(
                         ssh,
                         f"timeout 10 docker manifest inspect {shlex.quote(img + ':' + tag)} 2>&1 "
@@ -175,8 +172,8 @@ class ComposeDeployer(Deployer):
                 def _needs_pull(img):
                     """决定是否需要 pull:
                     - 本地没镜像 → 拉
-                    - 能拿到 remote digest 且与本地一致 → 跳过
-                    - 其他情况(拿不到 digest / digest 不一致)→ 拉(无法比对不能假设一致)
+                    - remote digest 与本地一致 → 跳过
+                    - 其余情况 → 拉
                     """
                     if not _image_exists(img):
                         self._log(callback, S("deploy_log.image_not_local_will_pull"))
@@ -220,7 +217,7 @@ class ComposeDeployer(Deployer):
                 # 4c. 私有仓库失败 → 回退 Docker Hub
                 if not pull_ok and is_private:
                     self._log(callback, S("deploy_log.fallback_dockerhub", image=dh_image))
-                    # 与主路径相同的安全写法重写 .env(仅镜像名换为 Docker Hub,tag 保持不变)
+                    # 重写 .env(仅镜像名换为 Docker Hub,tag 保持不变)
                     self._ssh_run(ssh, _rewrite_env(dh_image), image)
                     if _needs_pull(dh_image):
                         self._log(callback, S("deploy_log.pulling_image"))
@@ -244,7 +241,7 @@ class ComposeDeployer(Deployer):
                     return DeployResult(image=image, status="failed", output=f"Image pull failed:\n\n{pull_text}")
 
                 # 4d. 用 docker inspect 补全完整 Digest 和镜像名(不受终端宽度截断)
-                #     同时清理 docker-compose 截断的 digest:/status: 行,避免存到部署记录
+                #     同时清理 docker-compose 截断的 digest:/status: 行
                 pull_lines = [line for line in pull_text.split("\n") if line.strip()]
                 pull_clean = []
                 img_digest = ""
@@ -294,7 +291,8 @@ class ComposeDeployer(Deployer):
                 up_cmd = (
                     f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {shlex.quote(project_short)} 2>&1"
                 )
-                deploy_text, _ = retry_idempotent(
+                # up -d 的退出码必须接住:重试全失败时不能再按"容器还在"判成功
+                deploy_text, up_ec = retry_idempotent(
                     lambda: self._ssh_exec_stream(ssh, up_cmd, callback),
                     attempts=settings.deploy_retry_attempts,
                     delay=settings.deploy_retry_delay,
@@ -321,7 +319,7 @@ class ComposeDeployer(Deployer):
                         image,
                     )
 
-                if running.output and tag in running.output:
+                if up_ec == 0 and running.output and tag in running.output:
                     self._log(callback, S("deploy_log.container_started"))
                     result = DeployResult(
                         image=image,
@@ -371,9 +369,11 @@ class ComposeDeployer(Deployer):
         try:
             ssh.exec_command(f"mkdir -p {shlex.quote(target.path)}")
             sftp = ssh.open_sftp()
-            with sftp.file(f"{target.path}/docker-compose.yml", "w") as f:
-                f.write(content)
-            sftp.close()
+            try:
+                with sftp.file(f"{target.path}/docker-compose.yml", "w") as f:
+                    f.write(content)
+            finally:
+                sftp.close()
             return None
         except Exception as e:
             logger.error("Compose _upload_file failed", exc_info=e)

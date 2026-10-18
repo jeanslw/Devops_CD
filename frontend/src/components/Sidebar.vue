@@ -114,12 +114,10 @@ const deployOpen = ref(false)
 const monitorOpen = ref(false)
 const notifyOpen = ref(false)
 
-// 审批菜单文案:具备审批权限 → 审批中心;否则(仅有部署权限的申请人)→ 我的部署申请
 const approvalMenuText = computed(() =>
   auth.canApprove() ? t('sidebar.approvals') : t('sidebar.myApprovals')
 )
 
-// ── 审批菜单红点:待我审批(红)+ 我的待执行(琥珀),与 bot 通知互补的站内提醒 ──
 const toApprove = ref(0)
 const toExecute = ref(0)
 const badgeTotal = computed(() => toApprove.value + toExecute.value)
@@ -152,7 +150,6 @@ watch(() => auth.state?.user, (u) => {
 
 onUnmounted(stopBadgePolling)
 
-// 用户已登录但未分配任何权限(非 super_admin)时显示提示
 const showEmptyPermsHint = computed(() => {
   const u = auth.state?.user
   return u && u.role !== 'super_admin' && Array.isArray(u.permissions) && u.permissions.length === 0

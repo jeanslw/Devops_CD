@@ -16,5 +16,4 @@ def list_users(_user: dict = Depends(require_perm("cd.deploy.approve"))):
         users = get_ci_client().list_users()
     except CiClientError as e:
         raise ServiceUnavailableError("CI 服务不可用，请联系管理员", error_key="errors.ci_service_unavailable") from e
-    # 保持既有响应形状 {username, role}(systems/status 留待后续 UI 使用)
     return [{"username": u["username"], "role": u["role"]} for u in users if u.get("username")]

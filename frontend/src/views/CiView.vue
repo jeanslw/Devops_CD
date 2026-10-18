@@ -12,46 +12,48 @@
         <button class="btn btn-sm" :class="interval > 0 ? 'btn-auto-on' : 'btn-auto-off'" @click="loadData" :title="interval > 0 ? $t('ci.autoRefresh') : $t('ci.refreshNow')">🔄</button>
       </span>
     </h3>
-    <table>
-      <thead>
-        <tr><th>{{ $t('ci.project') }}</th><th>{{ $t('ci.ciSource') }}</th><th>{{ $t('ci.harborRepo') }}</th><th>{{ $t('ci.latestTag') }}</th><th>{{ $t('ci.pipeline') }}</th><th>{{ $t('common.action') }}</th></tr>
-      </thead>
-      <tbody>
-        <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-        <template v-else v-for="p in projects" :key="p.job_name">
-          <tr>
-            <td><strong>{{ p.job_name }}</strong></td>
-            <td><span class="badge" :class="p.build_provider === 'gitlab_ci' ? 'badge-gitlab' : 'badge-jenkins'">{{ p.build_provider }}</span></td>
-            <td>{{ p.harbor_repository || '—' }}</td>
-            <td>{{ p.latest_tag || '—' }}</td>
-            <td>{{ p.latest_pipeline ? '#' + p.latest_pipeline : '—' }}</td>
-            <td>
-              <button class="btn btn-blue btn-sm" @click="togglePipeline(p)" style="margin-right:6px">{{ $t('ci.buildStatus') }}</button>
-              <select class="deploy-select" @change="quickDeploy($event, p)" v-model="deployTargets[p.job_name]" style="width:auto">
-                <option value="">{{ $t('ci.deployTo') }}</option>
-                <option value="ssh">{{ $t('ci.ssh') }}</option>
-                <option value="docker">{{ $t('ci.docker') }}</option>
-                <option value="k8s">{{ $t('ci.k8s') }}</option>
-              </select>
-            </td>
-          </tr>
-          <tr v-if="p._showPipeline" class="ci-detail-row">
-            <td colspan="6">
-              <div v-if="p._pipelineLoading" style="padding:10px;color:#888;font-size:12px">{{ $t('common.loading') }}</div>
-              <div v-else-if="p._pipelineTag" style="padding:10px;background:#1b3a1b;border-radius:4px;border:1px solid #388e3c">
-                <span style="color:#81c784;font-weight:600">{{ $t('ci.ciCompleted') }}</span>
-                <span style="font-size:12px;color:#999;margin-left:8px">
-                  <template v-if="p._pipelineIid">Pipeline #{{ p._pipelineIid }} · </template>
-                  Tag {{ p._pipelineTag }}
-                  <template v-if="p._pipelineCreated"> · {{ p._pipelineCreated }}</template>
-                </span>
-              </div>
-              <div v-else style="padding:10px;color:#888;font-size:12px">{{ $t('ci.noCiData') }}</div>
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>{{ $t('ci.project') }}</th><th>{{ $t('ci.ciSource') }}</th><th>{{ $t('ci.harborRepo') }}</th><th>{{ $t('ci.latestTag') }}</th><th>{{ $t('ci.pipeline') }}</th><th>{{ $t('common.action') }}</th></tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+          <template v-else v-for="p in projects" :key="p.job_name">
+            <tr>
+              <td><strong>{{ p.job_name }}</strong></td>
+              <td><span class="badge" :class="p.build_provider === 'gitlab_ci' ? 'badge-gitlab' : 'badge-jenkins'">{{ p.build_provider }}</span></td>
+              <td>{{ p.harbor_repository || '—' }}</td>
+              <td>{{ p.latest_tag || '—' }}</td>
+              <td>{{ p.latest_pipeline ? '#' + p.latest_pipeline : '—' }}</td>
+              <td>
+                <button class="btn btn-blue btn-sm" @click="togglePipeline(p)" style="margin-right:6px">{{ $t('ci.buildStatus') }}</button>
+                <select class="deploy-select" @change="quickDeploy($event, p)" v-model="deployTargets[p.job_name]" style="width:auto">
+                  <option value="">{{ $t('ci.deployTo') }}</option>
+                  <option value="ssh">{{ $t('ci.ssh') }}</option>
+                  <option value="docker">{{ $t('ci.docker') }}</option>
+                  <option value="k8s">{{ $t('ci.k8s') }}</option>
+                </select>
+              </td>
+            </tr>
+            <tr v-if="p._showPipeline" class="ci-detail-row">
+              <td colspan="6">
+                <div v-if="p._pipelineLoading" style="padding:10px;color:#888;font-size:12px">{{ $t('common.loading') }}</div>
+                <div v-else-if="p._pipelineTag" style="padding:10px;background:#1b3a1b;border-radius:4px;border:1px solid #388e3c">
+                  <span style="color:#81c784;font-weight:600">{{ $t('ci.ciCompleted') }}</span>
+                  <span style="font-size:12px;color:#999;margin-left:8px">
+                    <template v-if="p._pipelineIid">Pipeline #{{ p._pipelineIid }} · </template>
+                    Tag {{ p._pipelineTag }}
+                    <template v-if="p._pipelineCreated"> · {{ p._pipelineCreated }}</template>
+                  </span>
+                </div>
+                <div v-else style="padding:10px;color:#888;font-size:12px">{{ $t('ci.noCiData') }}</div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
@@ -113,9 +115,7 @@ async function togglePipeline(p) {
   }
   p._showPipeline = true
   if (p._pipelineTag) return
-  // 列表接口(/api/projects → Glue /api/build/projects)已带回 latest_tag / latest_pipeline /
-  // tag_time,展开时直接复用即可,不必再打一次 /api/projects/{job}/pipeline(同一份数据;
-  // 且每次联网都会重建上游连接的请求路径最容易吃到等待)
+  // 展开时复用列表接口已带回的 latest_tag / latest_pipeline / tag_time
   if (p.latest_tag) {
     p._pipelineTag = p.latest_tag
     p._pipelineIid = p.latest_pipeline || ''

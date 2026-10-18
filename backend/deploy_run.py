@@ -1,6 +1,6 @@
 """进行中部署的运行期管理 - 取消信号 + 线程上下文 + 部署记录生命周期.
 
-v1.3.1 新增,支撑三个能力:
+三个能力:
 1. 取消机制:cancel 接口把 running 记录标记为 terminated,并置位内存信号;
    ssh_exec_stream 等低层函数在循环里轮询该信号,及时中断长命令.
 2. 并发锁:同一项目同时只允许一个 running 记录,部署前检查.
@@ -9,10 +9,9 @@ v1.3.1 新增,支撑三个能力:
 
 设计约定:
 - 内存注册表(threading.Event)用于快速检查,数据库里的 status 列是持久化真相源.
-- 取消检查回调通过线程局部变量(threading.local)传递给低层函数,避免向所有
-  Deployer.deploy() 签名逐层透传.
+- 取消检查回调通过线程局部变量(threading.local)传递给低层函数,不改 Deployer.deploy() 签名.
 - DeployCancelled 继承 BaseException(对齐 KeyboardInterrupt),穿透各 Deployer
-  里 except Exception 的兜底,一路冒泡到编排层统一按 terminated 落库.
+  里 except Exception 的捕获,冒泡到编排层统一按 terminated 写入数据库.
 """
 
 import json
@@ -32,12 +31,9 @@ def _now_padded() -> str:
 def normalize_deploy_status(raw: str | None) -> str:
     """Canonicalize a deployment status to the project-wide status set.
 
-    Legacy values such as 'success'/'succeeded' and 'cancelled'/'canceled' are
-    normalized to the DB truth values used by the runtime: ok, failed, running,
-    terminated, interrupted.
-
-    Note: 'pending' is a first-class status since v1.5.3 (approval-created deploy
-    log rows) and must NOT be aliased to 'running' here.
+    Alias inputs such as 'success'/'succeeded' and 'cancelled'/'canceled' are
+    normalized to the DB truth values: ok, failed, running, terminated, interrupted.
+    'pending' is a first-class status and must NOT be aliased to 'running'.
     """
     value = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -94,7 +90,7 @@ def _is_integrity_error(exc: BaseException) -> bool:
 
 
 class DeployCancelled(BaseException):
-    """部署被用户手动取消.继承 BaseException 以穿透 except Exception 兜底."""
+    """部署被用户手动取消.继承 BaseException 以穿透 except Exception 捕获."""
 
 
 class DeployRunManager:
@@ -108,8 +104,7 @@ class DeployRunManager:
         """注册一个进行中的部署,返回其取消事件.
 
         新事件天然未置位;已存在且已 set 的事件说明 cancel 先于 register 到达,
-        必须保留取消信号(否则 clear 会把刚发起的取消抹掉);仅对未 set 的残留事件
-        做 clear,防御 deploy_id 复用继承历史信号.
+        保留取消信号;仅对未 set 的残留事件做 clear.
         """
         with self._lock:
             ev = self._events.get(deploy_id)
@@ -123,7 +118,7 @@ class DeployRunManager:
             return ev
 
     def cancel(self, deploy_id: int) -> bool:
-        """置位取消信号(幂等:不存在则先创建再置位,兜底 cancel 先于 register 的竞态)."""
+        """置位取消信号(幂等:不存在则先创建再置位,兼容 cancel 先于 register 的竞态)."""
         with self._lock:
             ev = self._events.get(deploy_id)
             if ev is None:
@@ -218,10 +213,10 @@ def stop_heartbeat() -> None:
 
 
 def shutdown_running_deploys(timeout: float = 25.0) -> int:
-    """优雅停机:取消本进程所有进行中的部署并等待其收尾(落库 terminated).
+    """优雅停机:取消本进程所有进行中的部署并等待其收尾(写入 terminated).
 
     uvicorn 收到 SIGTERM 后(lifespan shutdown)调用:置位取消信号后,部署线程在
-    下一个检查点抛 DeployCancelled,按 terminated 正常落库,远端不会停留在半执行
+    下一个检查点抛 DeployCancelled,按 terminated 写入数据库,远端不会停留在半执行
     状态(如 helm 半程 upgrade).返回等待超时后仍未结束的部署数(正常应为 0).
     """
     deploy_run_manager.cancel_all()
@@ -253,6 +248,27 @@ def clear_cancel_checker() -> None:
         del _local.check_cancel
 
 
+def cancel_checker_for(db, deploy_id: int):
+    """构造取消检查器:进程内信号 + 库内终态.
+
+    多副本下取消请求可能落在另一个实例,它只能写库(mark_deploy_cancelled 置 terminated);
+    本机线程据此感知并被中断,否则远端会一直跑到自然结束.
+    """
+
+    def _check() -> bool:
+        if deploy_run_manager.is_cancelled(deploy_id):
+            return True
+        try:
+            with db.conn() as conn:
+                row = conn.execute("SELECT status FROM cd_deploy_logs WHERE id=?", (deploy_id,)).fetchone()
+            return bool(row) and row["status"] != "running"
+        except Exception:
+            # 库不可用时不对是否取消下断言,退回进程内信号
+            return False
+
+    return _check
+
+
 # ── 部署记录生命周期 ──
 
 
@@ -272,12 +288,11 @@ def start_deploy_record(
 ) -> int:
     """插入一条 running 记录,返回部署记录 id(自增主键,即部署编号).
 
-    并发安全设计:lock_key=project 上唯一索引,保证同一项目至多一条 running 记录
-    (原子,不再依赖'先查后插'的非原子检查).
+    并发安全:lock_key=project 上唯一索引,同一项目至多一条 running 记录(原子写入).
     params_json:完整部署请求快照(含 deploy_type 路由判别),供回滚重放使用.
     approval_id:经审批单执行时关联 cd_approvals.id,无审批为 0.
     runner / heartbeat_at:进程实例标识 + 心跳(多副本/多 worker 隔离,
-    recover_stale_running 只恢复心跳过期的记录,不误杀其他进程的部署).
+    recover_stale_running 只恢复心跳过期的记录).
     """
     ensure_heartbeat()
     with db.conn() as conn:
@@ -360,14 +375,13 @@ def create_pending_deploy_record(
 def claim_pending_deploy_record(db, *, project: str, approval_id: int) -> int:
     """执行审批单时把其 pending 记录原子转为 running 并占用项目锁.
 
-    返回部署记录 id;该审批单没有 pending 记录时返回 0(v1.5.3 之前的历史已批准单,
-    由调用方回退到 start_deploy_record 新建).并发/重复领取至多一个成功
-    (条件 UPDATE);同项目已有 running 触发唯一索引冲突时抛 ValueError(busy 语义).
+    返回部署记录 id;该审批单没有 pending 记录时返回 0(由调用方回退到
+    start_deploy_record 新建).并发/重复领取至多一个成功(条件 UPDATE);同项目已有
+    running 触发唯一索引冲突时抛 ValueError(busy 语义).
 
-    注意:pending 行的 project 是申请阶段的原始项目名,这里同步更新为执行链路的
-    project_key(与直通/回滚路径 start_deploy_record 落库口径一致),避免同一项目的
-    日志行 project 列在两种路径下分裂,导致按项目筛选/锁预检口径不一致.
-    同时写入 runner / heartbeat_at(多副本/多 worker 隔离,见 start_deploy_record).
+    pending 行的 project 是申请阶段的原始项目名,这里同步更新为执行链路的
+    project_key(与直通/回滚路径 start_deploy_record 的写入口径一致).同时写入
+    runner / heartbeat_at(多副本/多 worker 隔离).
     """
     ensure_heartbeat()
     approval_id = int(approval_id or 0)
@@ -438,8 +452,8 @@ def finish_deploy_record(
     output_truncated = (output or "")[: settings.log_truncate_chars]
     stage_times_json = json.dumps(stage_times or [], ensure_ascii=False)
 
-    # terminated 由部署线程自身检测到取消时写入(cancel 可能已置过 terminated),故按 id 无条件
-    # 更新以补 output/duration;其余终态只终结仍为 running 的记录,避免覆盖并发 cancel 的写入.
+    # terminated 由部署线程自身检测到取消时写入(cancel 可能已置过 terminated),按 id 无条件
+    # 更新以补 output/duration;其余终态只终结仍为 running 的记录,不覆盖并发 cancel 的写入.
     where_clause = "WHERE id=?" if normalized_status == "terminated" else "WHERE id=? AND status='running'"
     note_clause = ", deploy_note=?" if note is not None else ""
     note_value = (note or "")[:512] if note is not None else None
@@ -456,8 +470,8 @@ def finish_deploy_record(
                 params,
             )
         else:
-            # 兜底:没有拿到 deploy_id 时按 project 精确更新 running 记录(保证不丢),
-            # 不裸更新全部 running--并发多项目部署会互相覆盖终态.
+            # 没有 deploy_id 时按 project 精确更新 running 记录;
+            # 不裸更新全部 running(并发多项目部署会互相覆盖终态).
             params = [normalized_status, target, output_truncated, duration_ms, stage_times_json]
             if note_value is not None:
                 params.append(note_value)
@@ -496,23 +510,21 @@ def mark_deploy_cancelled(db, deploy_id: int) -> dict:
 
 
 def normalize_db_status_for_query(status: str | None) -> str:
-    """Compatibility helper for callers that still pass legacy status strings."""
+    """Alias of normalize_deploy_status for callers passing non-canonical status strings."""
     return normalize_deploy_status(status)
 
 
 def recover_stale_running(db, stale_seconds: int = 120) -> int:
     """进程重启恢复:把崩溃遗留的 running 部署记录标记为 interrupted 并清空 lock_key.
 
-    返回恢复的记录数.若进程在部署中途崩溃,cd_deploy_logs 会残留 status='running'
-    且 lock_key 非空,导致该项目被并发锁永久锁死.启动时调用此函数清理.
+    返回恢复的记录数.进程在部署中途崩溃时 cd_deploy_logs 会残留 status='running'
+    且 lock_key 非空,启动时调用此函数清理.
 
-    v1.5.3 多副本/多 worker 隔离:running 记录带 runner(进程实例标识)+ heartbeat_at,
-    只恢复'无实例标识(旧版本遗留)或心跳已过期'的记录--其他进程正在执行的部署
-    (心跳新鲜)不动,避免任一进程/worker 启动时误杀其他进程进行中的部署
-    (此前无条件全量恢复,replicas>1 或 --workers>1 时会互相打断).
+    多副本/多 worker 隔离:只恢复'无实例标识或心跳已过期'的记录,其他进程正在执行的
+    部署(心跳新鲜)不动.
 
     心跳超时判定:持锁进程每 15s 续写一次心跳,超过 stale_seconds(默认 120s)未续写
-    即视为已崩溃/被硬杀(无优雅停机窗口兜底时,最多延迟 120s 恢复,项目锁不会永久锁死).
+    即视为已崩溃/被硬杀.
     """
     stale_before = f"{int(time.time()) - stale_seconds:013d}"
     with db.conn() as conn:

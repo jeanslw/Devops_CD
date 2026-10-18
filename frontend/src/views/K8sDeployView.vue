@@ -156,7 +156,6 @@ const k8sNs = ref('default')
 const deployNote = ref('')
 const schedule = ref('')
 
-// ── 预检弹窗 ──
 const checkModal = reactive({
   show: false, text: '', warning: '', confirming: false,
   resolve: null,
@@ -172,7 +171,7 @@ function showCheckModal(text) {
 }
 
 async function checkDeploy(body) {
-  // 没有 YAML 路径 → 跳过预检(FluxCD 除外,走 SSH 发现)
+  // 没有 YAML 路径跳过预检;FluxCD 走 SSH 发现
   if (!body.path && body.cd_type !== 'fluxcd') return true
 
   try {
@@ -318,7 +317,6 @@ onMounted(async () => {
   if (selectedProject.value) {
     await changeProject(selectedProject.value)
   }
-  // 从审批中心跳转:?approval=<id> 直接展开流程面板
   if (route.query.approval) {
     panelApprovalId.value = Number(route.query.approval) || 0
   } else {
@@ -326,7 +324,6 @@ onMounted(async () => {
   }
 })
 
-// 同页跳转(组件已挂载时 query 变化)
 watch(() => route.query.approval, (v) => {
   if (v) panelApprovalId.value = Number(v) || 0
 })

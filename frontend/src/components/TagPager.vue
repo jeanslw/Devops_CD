@@ -31,7 +31,6 @@ function changePage(delta) {
 }
 
 watch(() => props.page, async () => {
-  // Auto re-open dropdown after page change
   await nextTick()
   try { selRef.value?.showPicker?.() } catch (_) { selRef.value?.focus?.() }
 })

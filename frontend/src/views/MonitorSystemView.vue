@@ -7,30 +7,32 @@
     <template v-else>
       <div class="card" style="margin-bottom:12px">
         <h3>{{ $t('monitor.selectServer') }}</h3>
-        <table>
-          <thead><tr><th>{{ $t('monitor.name') }}</th><th>{{ $t('monitor.host') }}</th><th>{{ $t('monitor.type') }}</th><th>{{ $t('monitor.capability') }}</th><th>{{ $t('monitor.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
-          <tbody>
-            <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
-            <tr v-for="s in servers" :key="s.id">
-              <td><strong>{{ s.name }}</strong></td>
-              <td>{{ s.host }}:{{ s.port }}</td>
-              <td>{{ typeLabel(s) }}</td>
-              <td v-html="capHtml(s)"></td>
-              <td><span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span></td>
-              <td>
-                <button v-if="s.status==='available'||s.status==='unavailable'" class="btn btn-blue btn-sm" @click="viewDetail(s.id)">{{ $t('monitor.viewSys') }}</button>
-                <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ s.status === 'unknown' ? $t('monitor.checking') : $t('monitor.unavailable') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>{{ $t('monitor.name') }}</th><th>{{ $t('monitor.host') }}</th><th>{{ $t('monitor.type') }}</th><th>{{ $t('monitor.capability') }}</th><th>{{ $t('monitor.status') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
+            <tbody>
+              <tr v-if="loading"><td colspan="6" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+              <tr v-for="s in servers" :key="s.id">
+                <td><strong>{{ s.name }}</strong></td>
+                <td>{{ s.host }}:{{ s.port }}</td>
+                <td>{{ typeLabel(s) }}</td>
+                <td v-html="capHtml(s)"></td>
+                <td><span class="badge" :class="statusClass(s)">{{ statusText(s) }}</span></td>
+                <td>
+                  <button v-if="s.status==='available'||s.status==='unavailable'" class="btn btn-blue btn-sm" @click="viewDetail(s.id)">{{ $t('monitor.viewSys') }}</button>
+                  <button v-else class="btn btn-sm" disabled style="opacity:0.4">{{ s.status === 'unknown' ? $t('monitor.checking') : $t('monitor.unavailable') }}</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
       <div v-if="detailServerId" class="card">
         <h3 style="margin:0 0 8px 0">{{ $t('monitor.sysTitle') }}</h3>
         <div v-if="detailLoading" style="color:#888">{{ $t('monitor.loading') }}</div>
         <div v-else-if="detailError" style="color:#e57373">{{ detailError }}</div>
         <template v-else-if="detail">
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:12px">
+          <div class="info-grid">
             <div style="padding:14px;background:#1a1a2e;border-radius:6px;border:1px solid #333">
               <div style="font-weight:600;margin-bottom:8px;color:#64b5f6">{{ $t('monitor.systemInfo') }}</div>
               <div style="font-size:12px;color:#aaa;line-height:1.8">
@@ -51,17 +53,19 @@
           </div>
           <div v-if="detail.top_processes && detail.top_processes.length">
             <h4 style="margin:0 0 6px 0;font-size:13px;color:#888">{{ $t('monitor.topProcesses') }}</h4>
-            <table>
-              <thead><tr><th>{{ $t('monitor.pid') }}</th><th>CPU%</th><th>MEM%</th><th>{{ $t('monitor.cmd') }}</th></tr></thead>
-              <tbody>
-                <tr v-for="p in detail.top_processes" :key="p.pid">
-                  <td>{{ p.pid }}</td>
-                  <td style="color:#ffab40">{{ p.cpu }}</td>
-                  <td style="color:#81c784">{{ p.mem }}</td>
-                  <td style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.cmd }}</td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>{{ $t('monitor.pid') }}</th><th>CPU%</th><th>MEM%</th><th>{{ $t('monitor.cmd') }}</th></tr></thead>
+                <tbody>
+                  <tr v-for="p in detail.top_processes" :key="p.pid">
+                    <td>{{ p.pid }}</td>
+                    <td style="color:#ffab40">{{ p.cpu }}</td>
+                    <td style="color:#81c784">{{ p.mem }}</td>
+                    <td style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.cmd }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </template>
       </div>
@@ -86,7 +90,6 @@ const detailError = ref('')
 const detail = ref(null)
 
 const TYPE_LABELS = { k8s: '☸️ K8S', docker: '🐳 Docker', ssh: '🖥️ Linux' }
-// 单台探测的并发上限:列表一次拉回后并行探测,避免同时开太多 SSH
 const PROBE_CONCURRENCY = 4
 
 const memColor = computed(() => {
@@ -109,7 +112,6 @@ function capHtml(s) {
   return `<span style="color:#81c784;font-size:12px">${t('monitor.sshOk')}</span>`
 }
 
-// 状态 → 文案/徽章样式:'unknown' 表示尚未探测(列表只读库,不等 SSH)
 function statusText(s) {
   if (s.status === 'available') return t('monitor.available')
   if (s.status === 'unavailable') return t('monitor.unavailable')
@@ -148,8 +150,6 @@ async function loadServers() {
   } catch (e) {} finally { loading.value = false }
 }
 
-// 逐台探测:列表先渲染,单台结果回来就回填该行;某台不可达只影响自己那一行,
-// 不再让整页等所有主机返回.并发上限避免同时开太多 SSH.
 async function probeAll() {
   const ids = servers.value.map(s => s.id)
   let cursor = 0
@@ -200,3 +200,23 @@ onMounted(async () => {
   probeAll()  // 不 await:列表先渲染,各主机的结果回来后逐行回填
 })
 </script>
+
+<style scoped>
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+  min-width: 0;
+}
+.info-grid > div {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 480px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

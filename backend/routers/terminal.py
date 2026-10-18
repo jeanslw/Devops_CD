@@ -1,6 +1,7 @@
 """Web Shell + SCP 文件上传"""
 
 import asyncio
+import contextlib
 import json
 import os
 import posixpath
@@ -56,12 +57,7 @@ def _check_dangerous(cmd: str) -> bool:
 
 
 def _webshell_permitted(role: str, perms: list[str]) -> bool:
-    """web 终端准入判据:与 require_perm / enforce_deploy_perm 同口径.
-
-    · super_admin 角色隐含全权(角色名匹配即放行);
-    · '*' 通配放行(Glue 对超管代码授予,不落 role_permissions 表;OIDC 模式来自 Glue);
-    · 其余只认 cd.webshell.
-    """
+    """web 终端准入判据:super_admin 角色或 '*' 通配放行,其余只认 cd.webshell."""
     if role == settings.super_admin_role:
         return True
     perms = perms or []
@@ -73,9 +69,7 @@ async def _ws_verify(token: str | None = None) -> str:
     if not token:
         raise HTTPException(401, "请登录")
     db = get_db()
-    # 部署闸门:与 REST 同口径 -- CD 表没建全时 WebShell(最高危操作)一律拒绝.这里是独立鉴权路径,
-    # 若不拦,缺表会在握手期变成未捕获异常(而非干净拒绝);故把 AppException(503) 转成 HTTPException,
-    # 由调用方按状态码关闭连接.
+    # 部署闸门:CD 表没建全时拒绝 WebShell;AppException(503) 转 HTTPException,由调用方按状态码关闭连接.
     try:
         cd_deploy_gate(db)
     except AppException as exc:
@@ -87,7 +81,7 @@ async def _ws_verify(token: str | None = None) -> str:
         if time.time() > sess["expires_at"]:
             _delete_session(conn, token)
             raise HTTPException(401, "token 已过期，请重新登录")
-    # 会话校验 + 惰性 Glue 复核(停用 / systems 不含 cd 即删会话);异常转换同上,401/503 都是 fail-closed.
+    # 会话校验 + 惰性 Glue 复核(停用 / systems 不含 cd 即删会话);401/503 均 fail-closed.
     try:
         ident = _oidc_identity(db, token, sess["username"])
     except AppException as exc:
@@ -97,19 +91,18 @@ async def _ws_verify(token: str | None = None) -> str:
 
 @router.websocket("/ws/terminal/{server_id}")
 async def terminal(websocket: WebSocket, server_id: int):
-    # 优先取 HttpOnly cookie(浏览器同源 WS 握手自动携带,token 不再进 URL/日志),
-    # 回退 query param(兼容旧客户端 / 脚本直连).
+    # 优先取 HttpOnly cookie,回退 query param.
     token = websocket.cookies.get("cd_token") or websocket.query_params.get("token")
     try:
         username = await _ws_verify(token)
     except HTTPException as e:
-        # 503 = CD 表没建全(未部署/导入不全):给出可操作原因,而不是笼统的"鉴权失败"
+        # 503 = CD 表没建全:给出可操作原因,而不是笼统的"鉴权失败"
         await websocket.close(code=4001, reason="CD 未部署" if e.status_code == 503 else "鉴权失败")
         return
 
     # 权限检查:需要 cd.webshell(判据与 require_perm / enforce_deploy_perm 同口径)
     db = get_db()
-    # 权限来自 Glue(复用 _ws_verify 刚建好的身份缓存,窗口内零调用)
+    # 权限来自 Glue(复用身份缓存,窗口内零调用)
     try:
         ident = glue_identity.get_identity(username)
     except AppException:
@@ -147,8 +140,15 @@ async def terminal(websocket: WebSocket, server_id: int):
         await websocket.close()
         return
 
-    # SSH 已连上,主动通知前端(onopen 只是 WebSocket 握手成功,不代表 SSH 通)
-    chan = await asyncio.to_thread(ssh.invoke_shell, term="xterm-256color", width=100, height=28)
+    # SSH 已连上,主动通知前端
+    try:
+        chan = await asyncio.to_thread(ssh.invoke_shell, term="xterm-256color", width=100, height=28)
+    except Exception as e:
+        # channel 创建失败时必须收口连接,不能留到会话结束
+        await websocket.send_text(f"\r\n❌ Shell 创建失败: {e}\r\n")
+        ssh.close()
+        await websocket.close()
+        return
     assert chan is not None, "SSH shell channel 创建失败"
     chan.settimeout(0.0)
 
@@ -211,9 +211,6 @@ async def terminal(websocket: WebSocket, server_id: int):
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
                     break
-            # 必须用 asyncio.TimeoutError 而非内置 TimeoutError:3.10 里 asyncio.wait_for 抛的是
-            # asyncio.exceptions.TimeoutError(独立类,非 builtins 子类),内置类捕不到会中断 WS 连接
-            # (3.11+ 两者等价).
             except asyncio.TimeoutError:
                 continue
             except WebSocketDisconnect:
@@ -243,8 +240,7 @@ async def upload_file(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-    # 安全校验:跨平台文件名防路径穿越.浏览器可能传入 Windows 完整路径(D:\tmp\2012.txt),\
-    # 在 Linux 上不算分隔符,故先统一转 / 再取 basename,保证两端行为一致.
+    # 安全校验:文件名防路径穿越,先统一分隔符再取 basename.
     _fn = (file.filename or "").replace("\\", "/")
     _fn = re.sub(r"^[a-zA-Z]:", "", _fn)  # 去除 Windows 盘符
     safe_filename = _fn.rsplit("/", 1)[-1]
@@ -255,8 +251,7 @@ async def upload_file(
     if not path.startswith("/"):
         raise ValidationError("路径必须为绝对路径，如 /tmp", error_key="errors.path_absolute")
 
-    # 安全校验:路径遍历防护(解析 ../ 等).用 posixpath 强制按 POSIX 规则归一化,两平台一致 --
-    # os.path.realpath 在 Windows 上会自动加盘符 D:\,导致 SFTP 把目标写到错误位置.
+    # 安全校验:路径遍历防护,用 posixpath 按 POSIX 规则归一化(两平台行为一致).
     combined = (path.rstrip("/") + "/" + safe_filename).replace("\\", "/")
     combined = re.sub(r"^[a-zA-Z]:", "", combined)  # 去 Windows 盘符
     target = posixpath.normpath(combined)
@@ -282,18 +277,23 @@ async def upload_file(
     except Exception as e:
         raise ValidationError(f"SSH 连接失败: {e}", error_key="errors.ssh_connect_failed") from e
 
+    sftp = None
     try:
-        sftp = ssh.open_sftp()
         ssh.exec_command(f"mkdir -p {shlex.quote(os.path.dirname(target))}")
+        sftp = ssh.open_sftp()
         with sftp.file(target, "w") as f:
             while True:
                 chunk = await file.read(65536)
                 if not chunk:
                     break
                 f.write(chunk)
-        sftp.close()
-        ssh.close()
         return ok(data={"path": target}, message="文件上传成功")
     except Exception as e:
-        ssh.close()
         raise ValidationError(f"上传失败: {e}", error_key="errors.upload_failed") from e
+    finally:
+        # sftp 与 ssh 都要收口,异常路径下也不能泄漏
+        if sftp is not None:
+            with contextlib.suppress(Exception):
+                sftp.close()
+        with contextlib.suppress(Exception):
+            ssh.close()

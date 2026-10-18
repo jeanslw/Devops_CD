@@ -1,10 +1,6 @@
-"""OIDC 客户端(BFF 机密客户端)
+"""OIDC 客户端(BFF 机密客户端):discovery,JWKS,authorize URL 组装,token 兑换 + id_token 验签.
 
-职责只有四件事:discovery,JWKS,authorize URL 组装,token 兑换 + id_token 验签.
-身份与权限**不在这里**(那是 backend/services/glue_identity.py 的职责):
-id_token 只用来确定 username,role/systems/status 一律以 Glue 的 /api/rbac 端点为准(§4.1).
-
-不引入 PyJWT:RS256 校验用已在依赖里的 cryptography 手写,少一个依赖就少一条供应链面.
+id_token 只用于确定 username;role / systems / status 以 Glue 的 /api/rbac 端点为准.
 """
 
 import base64
@@ -26,17 +22,15 @@ from backend.exceptions import AppException
 logger = logging.getLogger("oidc")
 
 _DISCOVERY_TTL = 3600  # discovery 字段是静态的(端点地址),不必频繁拉取
-_JWKS_TTL = 3600  # JWKS 同理;签名密钥轮换由"未知 kid → 强制刷新一次"兜住
+_JWKS_TTL = 3600  # JWKS 同理;未知 kid 会强制刷新一次(签名密钥轮换)
 _HTTP_TIMEOUT = 10
 
 
 class OidcError(AppException):
     """OIDC 流程异常.
 
-    status_code 直接映射为回调路由的响应码(502 = Glue 侧不可用或协议不符).
-    invalid_grant=True 专指 token 端点的 invalid_grant -- 授权码已用/已超时(Glue 侧 60s)
-    或 redirect_uri 不匹配,回调路由据此**静默重走一次 start**(用户视角是一次正常跳转,
-    而不是错误页;见测试矩阵 §11 第 3 行).
+    status_code 映射为回调路由的响应码(502 = Glue 侧不可用或协议不符).
+    invalid_grant=True 专指 token 端点的 invalid_grant,回调路由据此静默重走一次 start.
     """
 
     def __init__(self, message: str, status_code: int = 502, error_key: str | None = None, invalid_grant: bool = False):
@@ -45,7 +39,7 @@ class OidcError(AppException):
 
 
 class _TtlCache:
-    """进程内 TTL 缓存(单进程 uvicorn,见 §5:时钟与缓存都不落库)."""
+    """进程内 TTL 缓存(单进程 uvicorn;时钟与缓存不写入数据库)."""
 
     def __init__(self, name: str):
         self._name = name
@@ -73,7 +67,7 @@ class _TtlCache:
 _discovery_cache = _TtlCache("discovery")
 _jwks_cache = _TtlCache("jwks")
 
-# discovery / JWKS 是幂等 GET,可以带重试(瞬时 5xx 不该直接判登录失败).
+# discovery / JWKS 是幂等 GET,可以带重试.
 _session = requests.Session()
 _retry = requests.adapters.Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
 _session.mount("http://", requests.adapters.HTTPAdapter(max_retries=_retry))
@@ -97,8 +91,7 @@ def reset_caches() -> None:
 def _fetch_discovery() -> dict:
     """拉取并校验 /.well-known/openid-configuration(结果缓存 1 小时).
 
-    iss 校验(§8.5 / §12 F):discovery 的 issuer 与配置的 OIDC_ISSUER 不一致即拒绝,
-    且日志**同时打印两侧取值** -- 该坑最耗时,若只报'验签失败'会把人带向密钥问题.
+    discovery 的 issuer 与配置的 OIDC_ISSUER 不一致即拒绝,日志同时打印两侧取值.
     """
     url = f"{settings.oidc_issuer}/.well-known/openid-configuration"
     try:
@@ -179,7 +172,7 @@ def jwks(force_refresh: bool = False) -> dict:
 
 
 def _find_key(kid: str) -> dict | None:
-    """按 kid 找 RSA 签名公钥;未知 kid 只刷新 JWKS 一次(§8.5:支持 kid 轮换)."""
+    """按 kid 找 RSA 签名公钥;未知 kid 强制刷新 JWKS 一次再查."""
     for key in jwks().get("keys", []):
         if key.get("kid") == kid and key.get("kty") == "RSA":
             return key
@@ -193,7 +186,7 @@ def _find_key(kid: str) -> dict | None:
 
 
 def authorize_url(state: str, nonce: str) -> str:
-    """组装 /oauth/authorize 跳转地址(端点只信 discovery,不硬编码路径,§8.5)."""
+    """组装 /oauth/authorize 跳转地址(端点取自 discovery,不硬编码路径)."""
     params = {
         "response_type": "code",
         "client_id": settings.oidc_client_id,
@@ -209,12 +202,12 @@ def authorize_url(state: str, nonce: str) -> str:
 
 
 def exchange_code(code: str) -> dict:
-    """用授权码兑换 token(HTTP Basic 客户端认证,见 §8.1).
+    """用授权码兑换 token(HTTP Basic 客户端认证).
 
     三个硬约束:
-    1. **必须回传 redirect_uri**(Glue 用 consumeCode($code,$clientId,$redirectUri) 精确比对,
-       漏传或不一致都表现为 invalid_grant -- 看起来像 code 问题,实际是参数问题);
-    2. **不带 ?format=json**(§8.7 第 1 条);
+    1. 必须回传 redirect_uri(Glue 用 consumeCode($code,$clientId,$redirectUri) 精确比对,
+       漏传或不一致都表现为 invalid_grant);
+    2. 不带 ?format=json;
     3. 不回传 code_verifier(Glue 侧是机密客户端,非 PKCE 流).
     """
     endpoint = discovery()["token_endpoint"]
@@ -225,10 +218,6 @@ def exchange_code(code: str) -> dict:
         "scope": settings.oidc_scopes,
     }
     try:
-        # 复用模块级会话:同一连接池内第二次起不再握手。注意登录是低频操作(discovery /
-        # JWKS 已缓存 1h,一次登录只有 1 次 token POST),本改动边际收益有限 —— 真正把 token
-        # 兑换从 ~2.2s 压到 ~0.13s 的是 net.py 的 IPv4 优先:首个尝试即落在正在监听的
-        # 127.0.0.1 上,不必先撞那个注定被拒、且本机要白等约 2s 的 ::1.
         resp = _session.post(
             endpoint,
             data=body,
@@ -312,8 +301,7 @@ def _verify_claims(claims: dict, nonce: str) -> str:
     if not nonce or str(claims.get("nonce") or "") != nonce:
         raise OidcError("id_token nonce 不匹配（可能为重放请求）")
 
-    # username 优先 preferred_username,回退 sub(Glue 侧两者都等于 username,§8.2);
-    # 必须 strip + lower -- Glue 的 rbac 端点会做 strtolower 归一,不归一就会 404(§8.7 第 6 条)
+    # username 取 preferred_username,回退 sub;统一 strip + lower 归一
     username = str(claims.get("preferred_username") or claims.get("sub") or "").strip().lower()
     if not username:
         raise OidcError("id_token 中没有可用的用户名（preferred_username / sub 均为空）")

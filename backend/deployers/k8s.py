@@ -1,10 +1,10 @@
 """Kubernetes 部署器
 
 优先级:
-1. kubectl apply -f {path}  - 远程 YAML 文件(生产推荐)
-2. kubectl set image       - 直接改镜像版本(快速迭代)
+1. kubectl apply -f {path}  - 远程 YAML 文件
+2. kubectl set image       - 直接改镜像版本
 
-namespace 从 YAML 中解析,前端不提供 namespace 输入框.
+namespace 从 YAML 解析,前端不提供 namespace 输入框.
 """
 
 import logging
@@ -22,10 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_yaml_metadata(ssh, yaml_path):
-    """从远程 YAML 文件内容本地解析 Deployment 的 name + namespace.
+    """从远程 YAML 文件内容解析 Deployment 的 name + namespace.
 
-    首次部署时资源尚未在集群中创建,kubectl get -f 会 NotFound 取不到名,
-    故改为 cat 读文件内容 + yaml 本地解析(不依赖资源已存在).
     namespace 未声明时返回空串,调用方不传 -n,由 kubectl context 决定.
     """
     out, _, _ = _exec_on(ssh, f"cat {shlex.quote(yaml_path)} 2>/dev/null")
@@ -51,7 +49,7 @@ def _get_yaml_metadata(ssh, yaml_path):
 
 
 class K8sDeployer(Deployer):
-    """SSH 到 K8s 节点,优先 kubectl apply,兜底 kubectl set image"""
+    """SSH 到 K8s 节点,优先 kubectl apply,无 path 时 kubectl set image"""
 
     def name(self) -> str:
         return "k8s"
@@ -83,7 +81,7 @@ class K8sDeployer(Deployer):
                             output=f"YAML [{target.path}] 中未找到 Deployment 定义",
                         )
                     if filter_name != deploy_name:
-                        # 前端预检弹窗已确认,这里只打警告不拦截
+                        # 名称不一致只告警,不拦截
                         self._log(
                             callback, S("deploy_log.yaml_name_mismatch", yaml_name=deploy_name, project=filter_name)
                         )
@@ -93,7 +91,8 @@ class K8sDeployer(Deployer):
                     # 无 YAML → 必须先有 Deployment 才允许 set image
                     check_name = deploy_name
                     _, check_stdout, _ = ssh.exec_command(
-                        f"kubectl get deployment/{shlex.quote(check_name)} {f'-n {namespace}' if namespace else ''} -o name 2>/dev/null".strip()
+                        f"kubectl get deployment/{shlex.quote(check_name)} "
+                        f"{f'-n {shlex.quote(namespace)}' if namespace else ''} -o name 2>/dev/null".strip()
                     )
                     if not check_stdout.read().decode().strip():
                         return DeployResult(
@@ -103,7 +102,7 @@ class K8sDeployer(Deployer):
                             + "当前未找到。请先用 YAML 方式首次部署。",
                         )
 
-                ns_flag = f"-n {namespace}" if namespace else ""
+                ns_flag = f"-n {shlex.quote(namespace)}" if namespace else ""
 
                 # ── 部署前:当前运行版本 ──
                 self._log(callback, S("deploy_log.current_version"))
@@ -127,9 +126,12 @@ class K8sDeployer(Deployer):
                     ]
 
                 deploy_log = []
+                deploy_ok = True
                 for i, c in enumerate(deploy_cmds):
                     self._log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
-                    o, e, _ = _exec_on(ssh, c)
+                    o, e, ec = _exec_on(ssh, c)
+                    if ec != 0:
+                        deploy_ok = False
                     if o:
                         deploy_log.append(o)
                         self._log(callback, o)
@@ -142,7 +144,7 @@ class K8sDeployer(Deployer):
                 rollout_cmd = (
                     f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout=120s".strip()
                 )
-                rollout_out, rollout_err, _ = _exec_on(ssh, rollout_cmd)
+                rollout_out, rollout_err, rollout_ec = _exec_on(ssh, rollout_cmd)
                 rollout_output = (rollout_out or rollout_err or "").strip()
                 if rollout_out:
                     self._log(callback, rollout_out)
@@ -161,8 +163,8 @@ class K8sDeployer(Deployer):
                     after = all_after
                 self._log(callback, after)
 
-                # ── 成败判断:rollout status 输出为准 ──
-                is_ok = "successfully rolled out" in rollout_output
+                # ── 成败判断:命令退出码 + rollout status 输出双重校验 ──
+                is_ok = deploy_ok and rollout_ec == 0 and "successfully rolled out" in rollout_output
                 if is_ok:
                     running_count = sum(1 for line in after.split("\n") if "Running" in line)
                     self._log(callback, S("deploy_log.verify_ok"))

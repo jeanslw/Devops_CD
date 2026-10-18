@@ -23,9 +23,6 @@ class SyncConfigRequest(BaseModel):
     interval: int  # 分钟,0 关闭
 
 
-# ── 仓库 ──
-
-
 @router.get("/repositories")
 def list_repositories(
     _user: dict = Depends(require_perm("cd.image-registry")),
@@ -34,9 +31,6 @@ def list_repositories(
     """列出所有仓库(从数据库缓存读取)"""
     svc = RegistryService(db)
     return svc.get_repositories()
-
-
-# ── Artifact / Tag ──
 
 
 @router.get("/artifacts/{repo_id}")
@@ -50,9 +44,6 @@ def list_artifacts(
     """列出指定仓库的 artifacts/tags(分页,含扫描摘要)"""
     svc = RegistryService(db)
     return svc.get_artifacts(repo_id, page=page, page_size=page_size)
-
-
-# ── 扫描报告 ──
 
 
 @router.get("/scan/report/{repo_id}/{tag}")
@@ -91,9 +82,6 @@ def trigger_scan(
         raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable") from e
 
 
-# ── 删除 ──
-
-
 @router.delete("/artifacts/{repo_id}")
 def delete_artifact(
     repo_id: int,
@@ -113,9 +101,6 @@ def delete_artifact(
         raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable") from e
 
 
-# ── 同步 ──
-
-
 @router.post("/sync")
 def trigger_sync(
     project: str = "",
@@ -131,9 +116,6 @@ def trigger_sync(
     except HarborUnavailableError as e:
         logger.error("Harbor unavailable", exc_info=e)
         raise ServiceUnavailableError("Harbor 服务不可用，请联系管理员", error_key="errors.harbor_unavailable") from e
-
-
-# ── 同步配置 ──
 
 
 @router.get("/config")
