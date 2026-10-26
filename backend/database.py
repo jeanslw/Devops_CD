@@ -80,11 +80,17 @@ PROVISION_MANUAL = "manual"  # CD 不建表,只认运维预建的 CD 表
 
 
 class CdIntegrationState(NamedTuple):
-    """契约答复的启用状态(enabled / provision / 契约行是否存在)."""
+    """契约答复的启用状态(enabled / provision / 契约行是否存在)与镜像仓库提示.
+
+    registry_type / registry_url 随启用状态一并下发,缺失或取值非法时归一化为 "":类型由
+    消费方默认 harbor,地址缺失时由 registry_base_url() 报错.
+    """
 
     enabled: bool
     provision: str
     row_exists: bool
+    registry_type: str = ""
+    registry_url: str = ""
 
 
 # ── 契约读:仅 HTTP 通道 + 窗口缓存(窗口 = CI_CONTRACT_TTL;问不到统一按「契约不可达」fail-closed)──
@@ -134,6 +140,24 @@ def _normalize_contract(raw_enabled: Any, raw_provision: Any) -> tuple[bool, str
     return enabled, provision
 
 
+def _normalize_registry_type(raw: Any) -> str:
+    """契约 registry_type 归一:只认 harbor / registry,缺失 / 非法一律 ""(消费方按 harbor 默认)."""
+    value = str(raw or "").strip().lower()
+    return value if value in ("harbor", "registry") else ""
+
+
+def _normalize_registry_url(raw: Any) -> str:
+    """契约 registry_url 归一:剥 scheme 与尾部斜杠,得到 scheme-less host[:port].
+
+    与部署镜像引用 / 提供方客户端的取值语义一致(客户端按需补 https / http 候选).
+    """
+    url = str(raw or "").strip().rstrip("/")
+    for prefix in ("https://", "http://"):
+        if url.startswith(prefix):
+            return url[len(prefix) :]
+    return url
+
+
 def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
     """(内部)经 Glue 的契约端点读启用状态;问不到(未配置 / 窗口内 / HTTP 失败 / 响应形状不符)抛 ContractUnavailableError.
 
@@ -160,7 +184,38 @@ def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
         raise ContractUnavailableError("契约端点响应形状不符（缺 enabled 字段）")
     enabled, provision = _normalize_contract(raw.get("enabled"), raw.get("provision"))
     # token_active 仅供展示,不作判据;HTTP 200 即契约行存在(row_exists=True).
-    return CdIntegrationState(enabled, provision, True)
+    return CdIntegrationState(
+        enabled,
+        provision,
+        True,
+        _normalize_registry_type(raw.get("registry_type")),
+        _normalize_registry_url(raw.get("registry_url")),
+    )
+
+
+def contract_registry_hints() -> tuple[str, str]:
+    """契约下发的镜像仓库提示 (registry_type, registry_url),均可能为 "".
+
+    - 与闸门读(_resolve_contract_state)共用窗口缓存,不额外发 HTTP;
+    - 契约端点问不到时返回上次取到的值,从未取到过才返回 ("","");
+    - 返回 "" 只表示契约没有该字段:类型由消费方默认 harbor,地址缺失时由
+      registry_base_url() 报错。
+    """
+    ttl = max(0, settings.ci_contract_ttl)
+    if ttl:
+        with _contract_lock:
+            hit = _contract_cache.get(CD_SERVICE_NAME)
+        if hit is not None and _contract_now() - hit[1] < ttl:
+            return hit[0].registry_type, hit[0].registry_url
+    try:
+        state = _fetch_contract_http()
+    except ContractUnavailableError:
+        with _contract_lock:
+            stale = _contract_cache.get(CD_SERVICE_NAME)
+        return (stale[0].registry_type, stale[0].registry_url) if stale else ("", "")
+    with _contract_lock:
+        _contract_cache[CD_SERVICE_NAME] = (state, _contract_now())
+    return state.registry_type, state.registry_url
 
 
 # ── auto 模式的 MySQL 建表 DDL(与 database/init_mysql.sql 同构,容器自带)──

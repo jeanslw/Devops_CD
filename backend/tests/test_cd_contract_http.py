@@ -8,9 +8,9 @@
 
 本文件锁定三件事:
   1) 200 的 enabled / provision 以响应为准(_normalize_contract 是唯一归一化实现,不存在
-     双通道口径分叉);token_active 仅供展示,**绝不当闸门条件**;
+     双通道判定分叉);token_active 仅供展示,不作为闸门条件;
   2) 任何"问不到"(404 / 405 / 401 / 403 / 网络 / 形状不符 / 未配 CI)都按"契约不可达"
-     fail-closed:抛 ContractUnavailableError(503 ci_contract_unreachable),**绝不**退化成
+     fail-closed:抛 ContractUnavailableError(503 ci_contract_unreachable),不会退化成
      "一直未启用"(问不到 ≠ CI 关过开关),也不静默放行;
   3) 窗口缓存:窗口内复用(不再打 Glue),过期 / invalidate_contract_cache() 后重新问;
      端点不可达也有负缓存(窗口内快速失败,不每个请求都白等一次超时).
@@ -44,6 +44,7 @@ from backend.database import (  # noqa: E402
     ContractUnavailableError,
     Database,
     _normalize_contract,
+    contract_registry_hints,
     invalidate_contract_cache,
 )
 from backend.exceptions import AppException  # noqa: E402
@@ -154,7 +155,7 @@ class HttpStateTestCase(_ContractHttpTestCase):
         self.assertTrue(self.db.cd_integration_state().enabled)
 
     def test_normalization_is_the_single_implementation(self):
-        """_normalize_contract 是唯一归一化实现:任何响应值都按同一口径判定,不存在第二套."""
+        """_normalize_contract 是唯一归一化实现:任何响应值都按同一规则判定,不存在第二套."""
         for raw_enabled, raw_provision in [
             (1, "auto"),
             (0, "manual"),
@@ -169,12 +170,12 @@ class HttpStateTestCase(_ContractHttpTestCase):
             self.assertEqual(
                 (state.enabled, state.provision),
                 _normalize_contract(raw_enabled, raw_provision),
-                f"归一化口径分叉：enabled={raw_enabled!r} provision={raw_provision!r}",
+                f"归一化结果不一致：enabled={raw_enabled!r} provision={raw_provision!r}",
             )
 
 
 class UnreachableTestCase(_ContractHttpTestCase):
-    """ "问不到"≠"未启用":一律按契约不可达 fail-closed(503 ci_contract_unreachable),绝不静默放行."""
+    """ "问不到"≠"未启用":一律按契约不可达 fail-closed(503 ci_contract_unreachable),不会静默放行."""
 
     def test_404_raises_contract_unreachable(self):
         """404 = 服务名不在 Glue 白名单(配置写错),不是未启用:必须 503,否则拼错服务名会静默关站."""
@@ -288,6 +289,61 @@ class CacheTestCase(_ContractHttpTestCase):
         self.assertTrue(self.db.cd_integration_state().enabled, "invalidate 后应重新问并恢复")
 
 
+class RegistryHintsTestCase(_ContractHttpTestCase):
+    """镜像仓库提示(registry_type / registry_url):契约透传 + 归一化 + 契约不可达时不报错.
+
+    契约端点不可达时返回上次取到的值,从未取到过则返回 ("", "");本读取不参与授权判定.
+    """
+
+    def test_registry_fields_pass_through_normalized(self):
+        """Glue 下发的镜像仓库字段随契约进入缓存:类型归一(小写),URL 剥 scheme 与尾部斜杠."""
+        self._patch_client(
+            result={
+                "service": "cd",
+                "enabled": 1,
+                "provision": "auto",
+                "registry_type": " Registry ",
+                "registry_url": "https://hub.example.com/",
+            }
+        )
+        self.assertEqual(contract_registry_hints(), ("registry", "hub.example.com"))
+
+    def test_old_glue_without_fields_yields_empty_hints(self):
+        """旧版 Glue(无 registry_* 字段)→ ("",""):消费方按 harbor 默认 / 地址缺失报错处理."""
+        self._patch_client(result={"service": "cd", "enabled": 1, "provision": "auto"})
+        self.assertEqual(contract_registry_hints(), ("", ""))
+
+    def test_invalid_registry_type_yields_empty_hint(self):
+        """registry_type 非法值归一为 "":不让脏值把消费方引到不存在的提供方."""
+        self._patch_client(result={"enabled": 1, "provision": "auto", "registry_type": "what?"})
+        self.assertEqual(contract_registry_hints(), ("", ""))
+
+    def test_unreachable_endpoint_fails_open(self):
+        """契约端点不可达且从没取到过 → ("",""):registry 功能不因此返回 503."""
+        self._patch_client(exc=requests.ConnectionError("glue unreachable"))
+        self.assertEqual(contract_registry_hints(), ("", ""))
+
+    def test_unreachable_endpoint_reuses_last_known_hints(self):
+        """取到过再问不到 → 沿用上次取到的地址 / 类型,不返回空值."""
+        settings.ci_contract_ttl = 0  # 每请求都真问:本用例的"问不到"必须打到端点
+        fake = self._patch_client(
+            result={"enabled": 1, "provision": "auto", "registry_type": "harbor", "registry_url": "hub.example.com"}
+        )
+        self.assertEqual(contract_registry_hints(), ("harbor", "hub.example.com"))
+        fake.exc = requests.ConnectionError("glue unreachable")  # Glue 抖了
+        self.assertEqual(contract_registry_hints(), ("harbor", "hub.example.com"), "抖动期间应沿用上次取到的值")
+        self.assertEqual(fake.calls, 2)
+
+    def test_hints_share_the_window_cache(self):
+        """提示读取与闸门读共用窗口缓存:一次 HTTP 两种读都命中,不额外打 Glue."""
+        fake = self._patch_client(
+            result={"enabled": 1, "provision": "auto", "registry_type": "harbor", "registry_url": "hub.example.com"}
+        )
+        self.assertTrue(self.db.cd_integration_state().enabled)
+        self.assertEqual(contract_registry_hints(), ("harbor", "hub.example.com"))
+        self.assertEqual(fake.calls, 1, "窗口内提示读必须命中闸门读留下的缓存")
+
+
 class CiClientContractCallTestCase(unittest.TestCase):
     """调用形状(HARD 约束):契约端点不能带 ?format=json,且响应解包要防御."""
 
@@ -302,7 +358,7 @@ class CiClientContractCallTestCase(unittest.TestCase):
         with patch.object(CiClient, "_get", side_effect=fake_get):
             data = client.get_service_contract("cd")
         self.assertEqual(captured["url"], "http://glue.test:8080/api/integration/services/cd")
-        self.assertIsNone(captured["params"], "契约端点绝不能带 ?format=json（会被包成 {data: ...}）")
+        self.assertIsNone(captured["params"], "契约端点不得带 ?format=json（会被包成 {data: ...}）")
         self.assertLessEqual(captured["timeout"], 5.0, "契约读在请求路径上：超时必须收紧，宁可快速失败")
         self.assertEqual(data, {"enabled": True, "provision": "auto"})
 

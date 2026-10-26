@@ -90,10 +90,11 @@ class CiService:
         }
 
     def resolve_harbor_repo(self, project: str) -> str | None:
-        """查项目对应的 Harbor 仓库名(映射的 harbor_repository,非 tag 记录)"""
+        """查项目对应的镜像仓库名(Glue 2.11 起字段为 registry_repository,旧版为 harbor_repository,双读)"""
         m = self._find_job(project)
-        if m and (m.get("harbor_repository") or ""):
-            return m["harbor_repository"]
+        if m:
+            repo = (m.get("registry_repository") or m.get("harbor_repository") or "").strip()
+            return repo or None
         return None
 
     def resolve_project_key(self, project: str) -> str | None:

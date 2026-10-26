@@ -2,8 +2,6 @@
 
 > For system administrators: requirements, configuration, deployment, and operations.
 
-> **Version correspondence (CD ↔ CI)**: CD v1.6.0 requires Devops-Glue (CI) ≥ 2.9.0. This is a breaking release — local login is removed and the deploy-log shared view is replaced by an HTTP contract — so an older Glue (< 2.9.0) is incompatible. Upgrade Glue first, then CD.
-
 ## 1. Prerequisites
 
 ### Python Dependencies
@@ -20,6 +18,26 @@
 | bcrypt | 4.2+ | Password verification |
 | requests | 2.31+ | HTTP client |
 | python-multipart | 0.0.9+ | File upload |
+
+| Devops-Glue API | Devops-Glue CD |
+|:---:|:---:|
+| v2.11.0 | v1.6.1 |
+| v2.10.0 | v1.6.0 |
+| v2.9.0 | v1.6.0 |
+| v2.8.9 | v1.5.7 |
+| v2.8.8 | v1.5.6 |
+| v2.8.7 | v1.5.x |
+| v2.8.6 | v1.5.x |
+| v2.8.5 | v1.5.x |
+| v2.8.4 | v1.5.x |
+| v2.8.3 | v1.5.x |
+| v2.8.2 | v1.5.x |
+| v2.8.1 | v1.5.x |
+| v2.8.0 | v1.5.x |
+| v2.7 | v1.5 |
+| v2.6 | v1.4 |
+| v2.5 | v1.3 |
+| v2.4 | v1.2 |
 
 ### Frontend
 
@@ -71,10 +89,12 @@ mkdir -p config/data && chown 1000:1000 config/data
 # DB_USER=root
 # DB_PASS=
 
-# ── Harbor Registry ──
-HARBOR_BASE_URL=https://hub.example.com
-HARBOR_USER=admin
-HARBOR_PASSWORD=
+# ── Registry credentials (address / type come from the Glue contract, not local config) ──
+# The address and type are delivered by the Glue contract endpoint
+# GET /api/integration/services/cd (registry_url / registry_type, Glue ≥ 2.11); credentials are not
+# part of the contract, so keep the account/password here.
+REGISTRY_USER=admin
+REGISTRY_PASSWORD=
 
 # ── Glue API (required: OIDC identity / permissions / contract gate all go through the Glue API — needed for login) ──
 CI_API_URL=http://127.0.0.1:8080      # Devops-Glue API base URL (with port)
@@ -144,7 +164,7 @@ Devops-Glue's `docker-compose.yml` ships a built-in `devops-cd` section (`build:
 | Variable | Notes |
 |----------|-------|
 | `DB_DRIVER / DB_HOST / DB_PORT / DB_USER / DB_PASS` | shared as-is when one database is used; **for a dedicated CD database you must override `DB_NAME` in the CD section's `environment`** (e.g. `DB_NAME: devops_cd`) — `env_file` alone would carry Glue's database name |
-| `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | both services point at the same Harbor |
+| `REGISTRY_USER / REGISTRY_PASSWORD` | both services point at the same image registry; standard registry:2 also uses these credentials. The registry **address and type are not configured here** — they come from the Glue contract endpoint (Glue ≥ 2.11) |
 | `SECRET_KEY` | shared (Glue's CD section enforces it via `${SECRET_KEY:?}`) |
 | `CI_API_TOKEN` | shared: CD calls the Glue API with the same service token |
 | `CD_API_TOKEN` | must be identical on both sides: CD validates the inbound Bearer, Glue presents it when pulling deploy-logs |
@@ -163,7 +183,8 @@ Copy `.env.example` to `.env` and fill it in per the table below (startup steps:
 | Database | `DB_DRIVER=sqlite` + `DB_PATH` (or the 5 MySQL keys) | required |
 | OIDC SSO | `OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI` | required (missing one → ERROR at startup, login page lists what is missing) |
 | Glue API | `CI_API_URL / CI_API_TOKEN` | required (needed for login) |
-| Harbor | `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | required |
+| Registry credentials | `REGISTRY_USER / REGISTRY_PASSWORD` | required (the registry address and type come from the Glue contract endpoint, not from local config) |
+| Plain-HTTP registry | `REGISTRY_INSECURE_AUTO` | optional (default `false`: only check that the target dockerd allows the contract's `http://` registry via `insecure-registries`, then abort with copy-pasteable fix commands and no Docker Hub fallback; `true`: CD merges the target `/etc/docker/daemon.json` and reloads (falls back to restart) docker) |
 | Encryption key | `SECRET_KEY` | may stay empty: auto-generated into `.cd_secret_key` on first run (do not commit or delete) |
 | Optional | `TZ / HOST / PORT / DINGTALK_SECRET / CD_API_TOKEN` (required once deploy-logs pulling is enabled) | as needed |
 
@@ -241,7 +262,7 @@ source venv/bin/activate  # Linux/macOS
 
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env for database and Harbor
+# Edit .env for the database and the registry credentials
 
 python main.py
 # Open http://localhost:8081
@@ -251,7 +272,7 @@ python main.py
 
 ```bash
 cp .env.example .env
-# Edit .env for database and Harbor
+# Edit .env for the database and the registry credentials
 
 docker compose up -d
 # Open http://localhost:8081

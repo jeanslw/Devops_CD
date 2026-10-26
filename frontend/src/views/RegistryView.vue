@@ -3,6 +3,7 @@
     <!-- 仓库卡片列表 -->
     <div class="card" v-if="!viewingArtifacts">
       <h3>{{ $t('registry.title') }}
+        <span class="badge" style="margin-left:8px;font-size:11px;font-weight:400">{{ typeBadgeText }}</span>
         <span class="refresh-bar">
           <span :style="{ fontSize: '12px', color: syncUnreachable ? '#e74c3c' : '#888', marginRight: '10px' }">{{ lastSyncText }}</span>
           <select v-model="syncInterval" @change="onSyncIntervalChange" style="width:auto;margin:0;padding:3px 8px;font-size:12px">
@@ -49,18 +50,18 @@
         <button class="btn btn-sm" style="margin-left:8px" @click="syncCurrentRepo">{{ $t('registry.syncThisRepo') }}</button>
       </h3>
       <table>
-        <thead><tr><th>{{ $t('registry.tag') }}</th><th>{{ $t('registry.size') }}</th><th>{{ $t('registry.pushTime') }}</th><th>{{ $t('registry.scanResult') }}</th><th>{{ $t('common.action') }}</th></tr></thead>
+        <thead><tr><th v-for="col in artifactColumns" :key="col.key">{{ col.label }}</th></tr></thead>
         <tbody>
-          <tr v-if="artifactLoading"><td colspan="5" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+          <tr v-if="artifactLoading"><td :colspan="artifactColspan" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
           <tr v-else v-for="a in artifacts" :key="a.tag">
             <td><code style="font-size:13px;font-weight:600;color:var(--accent)">{{ a.tag }}</code></td>
-            <td>{{ a.size_mb }} MB</td>
-            <td style="font-size:12px;white-space:nowrap">{{ formatTime(a.push_time) }}</td>
-            <td><span class="severity-badge" :class="severityClass(a)">{{ severityText(a) }}</span></td>
-            <td>
+            <td><code v-if="a.digest" :title="a.digest" style="font-size:12px;color:#666;cursor:help">{{ shortDigest(a.digest) }}</code><span v-else style="color:#888">-</span></td>
+            <td v-if="caps.size">{{ a.size_mb }} MB</td>
+            <td v-if="caps.push_time" style="font-size:12px;white-space:nowrap">{{ formatTime(a.push_time) }}</td>
+            <td v-if="caps.scan"><span class="severity-badge" :class="severityClass(a)">{{ severityText(a) }}</span></td>
+            <td v-if="caps.scan">
               <button class="btn btn-blue btn-sm" @click="showScanReport(a)">{{ $t('registry.report') }}</button>
               <button class="btn btn-orange btn-sm" @click="triggerScan(a)">{{ $t('registry.scan') }}</button>
-              <button class="btn btn-red btn-sm" @click="confirmDeleteTag(a.tag)">🗑</button>
             </td>
           </tr>
         </tbody>
@@ -86,23 +87,7 @@
       </div>
     </div>
 
-    <!-- 删除确认弹窗 -->
-    <div v-if="deleteDialog.show" class="modal-overlay" @click.self="deleteDialog.show = false">
-      <div class="modal-box">
-        <h3 style="margin:0 0 12px 0">{{ $t('registry.deleteDialog.title') }}</h3>
-        <div class="grid2" style="margin-bottom:12px;grid-template-columns:1fr 1fr">
-          <div><label>{{ $t('registry.deleteDialog.repo') }}</label><div style="padding:6px 0;font-weight:600">{{ artifactRepoName }}</div></div>
-          <div><label>{{ $t('registry.deleteDialog.tag') }}</label><div style="padding:6px 0;color:var(--err);font-weight:600">{{ deleteDialog.tag }}</div></div>
-        </div>
-        <div style="margin-bottom:12px;font-size:12px;color:#888">{{ $t('registry.deleteDialog.warning') }}</div>
-        <label>{{ $t('registry.deleteDialog.confirmLabel') }}</label>
-        <input v-model="deleteDialog.input" placeholder="输入 Tag 名称" style="margin-bottom:12px">
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn" @click="deleteDialog.show = false">{{ $t('common.cancel') }}</button>
-          <button class="btn btn-red" :disabled="deleteDialog.input !== deleteDialog.tag" @click="doDelete">{{ $t('registry.deleteDialog.confirmBtn') }}</button>
-        </div>
-      </div>
-    </div>
+    <!-- 删除 Tag 功能已整体移除:Harbor / 标准 registry:2 均不提供跨类型安全的删除契约 -->
   </div>
 </template>
 
@@ -142,7 +127,29 @@ const artifactPageRange = computed(() => {
 })
 
 const scanDialog = reactive({ show: false, tag: '', loading: false, content: '', error: '' })
-const deleteDialog = reactive({ show: false, tag: '', input: '' })
+
+// 镜像仓库类型与能力开关(GET /api/registry/config 下发;标准 registry:2 无扫描/大小/推送时间)
+// type 为契约原样值:harbor / registry / ''(未取到,如实显示「未知」,不默认成 harbor)
+const registryMeta = reactive({ type: '', capabilities: { scan: true, size: true, push_time: true } })
+const caps = computed(() => registryMeta.capabilities)
+const typeBadgeText = computed(() =>
+  registryMeta.type ? t('registry.typeBadge', { type: registryMeta.type }) : t('registry.typeUnknown')
+)
+const artifactColumns = computed(() => {
+  const cols = [{ key: 'tag', label: t('registry.tag') }]
+  // digest 由 Glue tags 端点详情对象提供(Harbor v2 / registry:2 manifest 解析),两种类型都展示
+  cols.push({ key: 'digest', label: t('registry.digest') })
+  if (caps.value.size) cols.push({ key: 'size', label: t('registry.size') })
+  if (caps.value.push_time) cols.push({ key: 'pushTime', label: t('registry.pushTime') })
+  if (caps.value.scan) cols.push({ key: 'scan', label: t('registry.scanResult') }, { key: 'action', label: t('common.action') })
+  return cols
+})
+const artifactColspan = computed(() => artifactColumns.value.length)
+
+function shortDigest(d) {
+  const s = (d || '') + ''
+  return s.length > 19 ? s.slice(0, 19) + '…' : s
+}
 
 function formatTime(t) {
   if (!t) return '-'
@@ -201,6 +208,8 @@ async function loadSyncConfig() {
     if (auth.handle401(r)) return
     const d = await r.json()
     syncInterval.value = parseInt(d.interval || 0)
+    registryMeta.type = d.registry_type || ''
+    registryMeta.capabilities = d.capabilities || { scan: true, size: true, push_time: true }
   } catch (e) {}
 }
 
@@ -228,6 +237,11 @@ async function syncAll() {
     } else if (d.error_key === 'errors.harbor_unavailable') {
       syncUnreachable.value = true
       lastSyncText.value = t('registry.syncUnreachable')
+      showError(d)
+    } else if (d.error_key === 'errors.registry_permission_denied') {
+      // 仓库账号无查询权限:状态栏与提示都明确写清原因,不再笼统显示"同步失败"
+      syncUnreachable.value = false
+      lastSyncText.value = t('errors.registry_permission_denied')
       showError(d)
     } else {
       syncUnreachable.value = false
@@ -340,11 +354,16 @@ async function showScanReport(a) {
   try {
     const r = await fetch(`/api/registry/scan/report/${artifactRepoId.value}/${encodeURIComponent(a.tag)}`, { headers: auth.A() })
     if (auth.handle401(r)) { scanDialog.show = false; return }
-    if (r.status === 404) {
-      scanDialog.content = t('registry.scanDialog.noVulnFound')
-    } else {
-      const d = await r.json()
+    const ct = r.headers.get('content-type') || ''
+    let d = null
+    if (ct.includes('application/json')) { try { d = await r.json() } catch { d = null } }
+    if (r.ok) {
       renderScanReport(d, a.tag)
+    } else {
+      // 报告取不到(未扫描 / Tag 不存在 / 该仓库类型不支持扫描 / 无查询权限等)如实提示,
+      // 不再统一显示成"未发现漏洞"
+      const key = d?.error_key
+      scanDialog.error = (key && te(key)) ? t(key) : (d?.error || d?.detail || t('common.error'))
     }
   } catch (e) {
     scanDialog.error = '加载失败: ' + e.message
@@ -404,31 +423,6 @@ async function triggerScan(a) {
     const failMsg = d.error_key && te(d.error_key) ? t(d.error_key) : (d.error || t('registry.syncTriggerFail'))
     toast(d.ok ? t('registry.syncTriggered') : '❌ ' + failMsg, d.ok)
   } catch (e) { toast(t('registry.syncTriggerFail') + ': ' + e.message, false) }
-}
-
-function confirmDeleteTag(tag) {
-  deleteDialog.tag = tag
-  deleteDialog.input = ''
-  deleteDialog.show = true
-}
-
-async function doDelete() {
-  if (deleteDialog.input !== deleteDialog.tag || !artifactRepoId.value) return
-  try {
-    const r = await fetch(`/api/registry/artifacts/${artifactRepoId.value}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json', ...auth.A() },
-      body: JSON.stringify({ repo_id: artifactRepoId.value, tag: deleteDialog.tag })
-    })
-    const d = await r.json()
-    if (r.ok) {
-      toast(t('registry.deleteSuccess', { tag: deleteDialog.tag }), true)
-      deleteDialog.show = false
-      if (artifactRepoId.value) loadArtifacts(artifactPage.value)
-    } else {
-      showError(d)
-    }
-  } catch (e) { toast(t('registry.requestFail'), false) }
 }
 
 onMounted(() => { loadRepos(); loadSyncConfig() })

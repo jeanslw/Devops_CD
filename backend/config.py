@@ -1,6 +1,6 @@
 """应用配置 - 分两层文件
 
-- 部署层(随环境变化):项目根 `.env` - 数据库连接,SECRET_KEY,Harbor / CI 凭据,监听地址,TZ.
+- 部署层(随环境变化):项目根 `.env` - 数据库连接,SECRET_KEY,镜像仓库 / CI 凭据,监听地址,TZ.
 - 业务层(随版本发布):`config/app.env` - 超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等.
 - 优先级:进程环境变量 > 根 .env > config/app.env > 字段默认值.
 """
@@ -56,22 +56,12 @@ class Settings(BaseSettings):
     # id_token iat / exp 校验的时钟偏移容忍(秒)
     oidc_id_token_max_skew: int = 60
 
-    # ── Harbor 镜像仓库(必填)──
-    # 读 HARBOR_BASE_URL(完整地址,如 https://hub.example.com);CD 剥掉 scheme 供镜像引用
-    harbor_registry: str = Field(default="", validation_alias="HARBOR_BASE_URL")
-    harbor_user: str = ""
-    harbor_password: str = ""
-    harbor_verify_ssl: bool = True  # Harbor 自签名证书时设 false
-
-    @field_validator("harbor_registry", mode="after")
-    @classmethod
-    def _strip_harbor_scheme(cls, v: str) -> str:
-        """剥掉 http(s):// 与尾部斜杠,得到 scheme-less 的 registry host"""
-        v = (v or "").strip().rstrip("/")
-        for prefix in ("https://", "http://"):
-            if v.startswith(prefix):
-                return v[len(prefix) :]
-        return v
+    # ── 部署登录凭据(仅用于部署时 docker login 拉取私有镜像)──
+    # 镜像仓库「查询」已改走 Glue API(见 services/registry_provider.py),不再直连,
+    # 故本地不再保存仓库地址 / 类型 / TLS 校验;仅保留部署登录所需的账号密码
+    # (适用于 Harbor 与标准 OCI registry,二者认证字段通用)。
+    registry_user: str = ""
+    registry_password: str = ""
 
     # ── OIDC 自检──
 
@@ -113,6 +103,12 @@ class Settings(BaseSettings):
 
     # ── Docker 部署(可选)──
     container_restart_policy: str = "always"
+    # 明文 HTTP 仓库(契约 registry_url 为 http://)的目标机 dockerd 放行策略:
+    #   false(默认)= 部署前只检测;未放行则中止并输出可复制的修复命令,绝不修改目标机任何文件.
+    #   true        = 未放行时由 CD 备份/合并目标机 /etc/docker/daemon.json 的 insecure-registries,
+    #                 再 reload(失败回退 restart)dockerd.注意 restart 会重启该机所有容器.
+    # docker CLI 无法强制明文(--tls-verify 是 podman/skopeo 的),故只能落在目标机配置上.
+    registry_insecure_auto: bool = False
 
     # ── 部署重试(可选)──
     # 幂等命令(docker compose up -d / kubectl apply)失败时重试:attempts = 最大执行次数(=1 关闭),delay = 间隔秒

@@ -302,13 +302,12 @@ cd_service/
 | DELETE | `/api/alerts/{id}` | 🔑 | Delete alert rule |
 | GET | `/api/alerts/resource-types` | ✅ | Resource types/metrics available for rules |
 | POST | `/api/alerts/check` | 🔑 | Trigger an immediate alert check cycle |
-| **Artifact Registry (Harbor)** | | | |
-| GET | `/api/registry/repositories` | 🔑 | Harbor repository list (`cd.image-registry`) |
+| **Artifact Registry** | | | |
+| GET | `/api/registry/repositories` | 🔑 | Registry repository list (`cd.image-registry`; Harbor or standard registry:2, selected via the `registry_type` delivered by the Glue contract) |
 | GET | `/api/registry/artifacts/{id}` | 🔑 | Repository tag/artifact list |
-| GET | `/api/registry/scan/report/{id}/{tag}` | 🔑 | Tag vulnerability scan report |
-| POST | `/api/registry/scan/trigger/{id}/{tag}` | 🔑 | Trigger a vulnerability scan |
-| DELETE | `/api/registry/artifacts/{id}` | 🔑 | Delete tag (with safety checks) |
-| POST | `/api/registry/sync` | 🔑 | Trigger Harbor sync |
+| GET | `/api/registry/scan/report/{id}/{tag}` | 🔑 | Tag vulnerability scan report (Harbor only) |
+| POST | `/api/registry/scan/trigger/{id}/{tag}` | 🔑 | Trigger a vulnerability scan (Harbor only; standard registry returns `errors.scan_unsupported`) |
+| POST | `/api/registry/sync` | 🔑 | Trigger a registry sync |
 | GET | `/api/registry/config` | 🔑 | Harbor connection config |
 | PUT | `/api/registry/config` | 🔑 | Update Harbor connection config |
 | **Web Shell & Users** | | | |

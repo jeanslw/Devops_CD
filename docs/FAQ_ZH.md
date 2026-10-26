@@ -85,14 +85,32 @@ volumes:
 
 ---
 
-## Harbor
+## 镜像仓库（Harbor / 标准 registry:2）
 
-### Q: Harbor 仓库列表为空？
+### Q: 仓库列表为空？
 
-1. 确认 `.env` 中 `HARBOR_BASE_URL`、`HARBOR_USER`、`HARBOR_PASSWORD` 配置正确
-2. Harbor 必须开启 API 访问（Harbor v1.x 或 v2.x 均可，系统自动探测）
-3. 首次使用需在 Harbor 面板点「同步」按钮触发全量同步
-4. 检查 Harbor 网络可达性：CD 服务器上 `curl https://hub.xxx.com/api/v2.0/health`
+1. 确认 `.env` 中 `REGISTRY_USER`、`REGISTRY_PASSWORD` 配置正确（仓库**地址与类型不在 CD 本地配置**，由 Glue 契约端点下发）
+2. Glue 契约（`GET /api/integration/services/cd`，需 Glue ≥ 2.11）下发的 `registry_type` 决定对接的仓库类型：`harbor`（须开启 Harbor API，v1.x / v2.x 均可，系统自动探测）或 `registry`（标准 OCI Distribution / registry:2，只用 `/v2/` 标准接口）；契约取不到该字段时「镜像仓库」页显示「未知」并提示排查（常见原因：服务凭据未在 Glue「API 管理」中勾选 Harbor 查询权限），内部对接按 `harbor` 处理
+3. 契约取不到 `registry_url`（端口不可达 / Glue 过旧）时会直接报「未取到镜像仓库地址」——先确认 `CI_API_URL` / `CI_API_TOKEN` 能访问该端点
+4. 首次使用需在「镜像仓库」面板点「同步」按钮触发全量同步
+5. 检查网络可达性：Harbor 在 CD 服务器上 `curl https://hub.xxx.com/api/v2.0/health`；标准 registry 用 `curl https://reg.xxx.com/v2/`（返回 200 或 401/403 均算可达）
+
+### Q: 用标准 registry:2 时为什么没有漏洞扫描、大小和推送时间？
+
+标准 OCI Distribution 的 `/v2/` 接口只提供 Tag 列表，不提供漏洞扫描、镜像大小与推送时间。仓库类型为 `registry` 时这些操作均不提供，前端自动隐藏「扫描结果 / 报告 / 扫描」按钮及「大小」「推送时间」列，属预期行为而非故障。
+
+### Q: 部署报 `server gave HTTP response to HTTPS client` / 明文 HTTP 仓库拉取不了？
+
+契约下发的 `registry_url` 是 `http://...`（明文 HTTP）时：dockerd 对**未放行**的仓库只尝试 HTTPS，于是拉取报这条错。docker CLI 没有「跳过 TLS 校验」的开关（`--tls-verify` 是 podman / skopeo 的），`insecure-registries` 只能配在**目标机的 dockerd** 上，CD 无法替目标机表达这件事。
+
+1. CD 的默认行为（部署前自动检测，部署日志会写明）：读目标机 `/etc/docker/daemon.json`（含 `daemon.json.d/*.json`），检查该 `host[:port]` 是否已在 `insecure-registries` 中（支持 `host` / `host:port` / CIDR 条目，与 dockerd 匹配语义一致）；**未放行即中止部署**并输出可复制的修复命令，且**不回退 Docker Hub**（避免把同名公共镜像当成自己的镜像部署上线）。
+2. 按输出指引在**目标机**执行（需 root）：备份并合并 `insecure-registries` → `systemctl reload docker`（不生效则 `restart docker`，会重启该机容器）→ `docker pull <registry>/<repo>:<tag>` 复验。
+3. 想让 CD 自动完成第 2 步：置 `REGISTRY_INSECURE_AUTO=true`（默认 `false`：只检测、不改目标机任何文件）。
+4. 更推荐：给仓库加 TLS，把 Glue 契约的 `registry_url` 改为 `https://...`，CD 侧无需任何配置。
+5. `.env` 里写入的镜像名保持**不带 scheme** 的 `host[:port]/repo:tag`；带 `http://` 会被 docker 判为 `invalid reference format`。
+6. 旧开关 `REGISTRY_VERIFY_SSL`（原 `HARBOR_VERIFY_SSL`）**已废弃、无任何消费者**：它只能作用于 CD 进程自身的 TLS 校验，管不到目标机 dockerd 的拉取，设置它没有任何效果。
+
+K8S 系列部署（ArgoCD / FluxCD / 原生 K8s）的镜像拉取由**节点 kubelet / containerd** 完成，明文仓库需在节点 containerd 的 `certs.d` / insecure 配置中放行，CD 不介入（本文档的自动检测与自动修复仅覆盖 CD 自己执行 `docker pull` 的 compose 远程部署）。
 
 ### Q: 同步很慢？
 

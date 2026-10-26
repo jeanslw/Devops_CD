@@ -84,14 +84,32 @@ MySQL is strongly recommended. SQLite experiences lock contention when CD and PH
 
 ---
 
-## Harbor
+## Image Registry (Harbor / standard registry:2)
 
-### Q: Harbor repository list is empty?
+### Q: Registry repository list is empty?
 
-1. Verify `.env` settings: `HARBOR_BASE_URL`, `HARBOR_USER`, `HARBOR_PASSWORD`
-2. Harbor API must be enabled (v1.x or v2.x, auto-detected)
-3. Click "Sync" in the Harbor panel for initial full sync
-4. Check connectivity: `curl https://hub.xxx.com/api/v2.0/health`
+1. Verify `.env` settings: `REGISTRY_USER`, `REGISTRY_PASSWORD` (the registry **address and type are not local CD config** — they come from the Glue contract endpoint)
+2. The `registry_type` delivered by the Glue contract (`GET /api/integration/services/cd`, Glue ≥ 2.11) selects the backend: `harbor` (Harbor API must be enabled, v1.x or v2.x, auto-detected) or `registry` (standard OCI Distribution / registry:2, `/v2/` endpoints only); when the contract has no such field the Image Registry page shows "unknown" with a hint (common cause: the service credential does not have the Harbor read permission enabled in Glue "API Management"), while the backend keeps the `harbor` fallback
+3. When the contract has no `registry_url` (endpoint unreachable / Glue too old) CD reports "no image registry address" — make sure `CI_API_URL` / `CI_API_TOKEN` can reach that endpoint
+4. Click "Sync" in the "Image Registry" panel for the initial full sync
+5. Check connectivity: for Harbor run `curl https://hub.xxx.com/api/v2.0/health` on the CD server; for a standard registry use `curl https://reg.xxx.com/v2/` (200 or 401/403 both count as reachable)
+
+### Q: Why are vulnerability scanning, image size and push time missing with a standard registry:2?
+
+The standard OCI Distribution `/v2/` API only exposes the tag list — no vulnerability scanning, image size or push time. With a `registry` type those features are unavailable, so the frontend hides the scan result column, the Report/Scan buttons and the Size/Push-time columns. This is expected behaviour, not a fault.
+
+### Q: Deployment fails with `server gave HTTP response to HTTPS client` / a plain-HTTP registry cannot be pulled?
+
+When the contract `registry_url` is `http://...` (plain HTTP), dockerd tries HTTPS only for registries it does **not** allow, hence this error. The docker CLI has no "skip TLS verification" flag (`--tls-verify` belongs to podman / skopeo) and `insecure-registries` can only be configured on the **target host's dockerd** — CD cannot express it for the target.
+
+1. Default CD behaviour (checked automatically before the pull, reported in the deploy log): CD reads `/etc/docker/daemon.json` (plus `daemon.json.d/*.json`) on the target and checks whether that `host[:port]` is listed in `insecure-registries` (matching `host` / `host:port` / CIDR entries, same semantics as dockerd). If it is missing, the deploy is **aborted** with copy-pasteable fix commands, and CD does **not** fall back to Docker Hub (which would otherwise deploy a same-named public image as if it were yours).
+2. Run the commands from the output on the **target host** (root): back up and merge `insecure-registries` → `systemctl reload docker` (fall back to `restart docker`, which restarts that host's containers) → verify with `docker pull <registry>/<repo>:<tag>`.
+3. To let CD perform step 2 automatically, set `REGISTRY_INSECURE_AUTO=true` (default `false`: detect only, never touch the target).
+4. Better still: put TLS in front of the registry and switch the Glue contract `registry_url` to `https://...` — no CD configuration needed at all.
+5. The image name written to `.env` must stay **scheme-less**: `host[:port]/repo:tag`; a leading `http://` makes docker fail with `invalid reference format`.
+6. The old `REGISTRY_VERIFY_SSL` (formerly `HARBOR_VERIFY_SSL`) switch is **deprecated with no consumers left**: it only affected CD's own TLS verification and never the target dockerd pull, so setting it has no effect.
+
+For the K8S-family deployers (ArgoCD / FluxCD / native K8s) the pull is done by the **node kubelet / containerd**, so a plain-HTTP registry must be allowed in the node's containerd `certs.d` / insecure configuration; CD does not intervene there (the detection and auto-fix above cover only the compose remote deployer, where CD runs `docker pull` itself).
 
 ### Q: Sync is too slow?
 

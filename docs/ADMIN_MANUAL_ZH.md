@@ -2,8 +2,6 @@
 
 > 面向系统管理员：环境要求、配置说明、部署运维。
 
-> **版本对应关系（CD ↔ CI）**：CD v1.6.0 需配套 Devops-Glue（CI）≥ 2.9.0。本版为破坏性变更——本地登录移除、部署日志共享视图改为 HTTP 契约——旧版 Glue（< 2.9.0）不兼容，须先升级 Glue 再升级 CD。
-
 ## 1. 环境要求
 
 ### Python 依赖
@@ -20,6 +18,26 @@
 | bcrypt | 4.2+ | 密码验证 |
 | requests | 2.31+ | HTTP 客户端 |
 | python-multipart | 0.0.9+ | 文件上传 |
+
+| Devops-Glue API | Devops-Glue CD |
+|:---:|:---:|
+| v2.11.0 | v1.6.1 |
+| v2.10.0 | v1.6.0 |
+| v2.9.0 | v1.6.0 |
+| v2.8.9 | v1.5.7 |
+| v2.8.8 | v1.5.6 |
+| v2.8.7 | v1.5.x |
+| v2.8.6 | v1.5.x |
+| v2.8.5 | v1.5.x |
+| v2.8.4 | v1.5.x |
+| v2.8.3 | v1.5.x |
+| v2.8.2 | v1.5.x |
+| v2.8.1 | v1.5.x |
+| v2.8.0 | v1.5.x |
+| v2.7 | v1.5 |
+| v2.6 | v1.4 |
+| v2.5 | v1.3 |
+| v2.4 | v1.2 |
 
 ### 前端
 
@@ -70,10 +88,11 @@ mkdir -p config/data && chown 1000:1000 config/data
 # DB_USER=root
 # DB_PASS=
 
-# ── Harbor 镜像仓库 ──
-HARBOR_BASE_URL=https://hub.example.com
-HARBOR_USER=admin
-HARBOR_PASSWORD=
+# ── 镜像仓库凭据（地址 / 类型由 Glue 契约下发，本地不再配置）──
+# 仓库地址与类型来自 Glue 契约端点 GET /api/integration/services/cd 的 registry_url / registry_type
+# （需 Glue ≥ 2.11）；契约不下发凭据，故本地只填访问仓库用的账号密码。
+REGISTRY_USER=admin
+REGISTRY_PASSWORD=
 
 # ── Glue API（必填：OIDC 身份 / 权限 / 契约闸门全走 Glue API，登录必需）──
 CI_API_URL=http://127.0.0.1:8080      # Devops-Glue API 地址（含端口）
@@ -141,7 +160,7 @@ Devops-Glue 的 `docker-compose.yml` 内置 `devops-cd` 段（`build: ../Devops_
 | 变量 | 说明 |
 |------|------|
 | `DB_DRIVER / DB_HOST / DB_PORT / DB_USER / DB_PASS` | 共库时直接共用；**拆库部署须在 CD 段 `environment` 里覆盖 `DB_NAME`**（如 `DB_NAME: devops_cd`），不能靠 `env_file`（里面是 Glue 的库名） |
-| `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | 两服务指向同一 Harbor，直接共用 |
+| `REGISTRY_USER / REGISTRY_PASSWORD` | 两服务指向同一镜像仓库，凭据直接共用；标准 registry:2 也用这组凭据。仓库**地址与类型不在此配置**，由 Glue 契约端点下发（需 Glue ≥ 2.11） |
 | `SECRET_KEY` | 共用（Glue 的 CD 段以 `${SECRET_KEY:?}` 强制要求已设置） |
 | `CI_API_TOKEN` | 共用：CD 用同一服务 token 调 Glue API |
 | `CD_API_TOKEN` | 两端必须同值：CD 校验入站 Bearer，Glue 拉取 deploy-logs 时携带 |
@@ -160,7 +179,8 @@ Devops-Glue 的 `docker-compose.yml` 内置 `devops-cd` 段（`build: ../Devops_
 | 数据库 | `DB_DRIVER=sqlite` + `DB_PATH`（或 MySQL 5 项） | 必填 |
 | OIDC 单点登录 | `OIDC_ISSUER / CD_OIDC_SECRET / CD_OIDC_REDIRECT_URI` | 必填（缺一项启动记 ERROR，登录页提示缺哪些） |
 | Glue API | `CI_API_URL / CI_API_TOKEN` | 必填（登录必需） |
-| Harbor | `HARBOR_BASE_URL / HARBOR_USER / HARBOR_PASSWORD` | 必填 |
+| 镜像仓库凭据 | `REGISTRY_USER / REGISTRY_PASSWORD` | 必填（仓库地址与类型由 Glue 契约端点下发，不在本地配置） |
+| 明文 HTTP 仓库 | `REGISTRY_INSECURE_AUTO` | 可选（默认 `false`：部署前只检测目标机 `insecure-registries` 是否放行契约声明的 `http://` 仓库，未放行即中止并输出可复制的修复命令，且不回退 Docker Hub；`true`：由 CD 备份/合并目标机 `/etc/docker/daemon.json` 后 reload（失败回退 restart）docker） |
 | 加密密钥 | `SECRET_KEY` | 可留空：首次运行自动生成 `.cd_secret_key`（勿提交、勿删除） |
 | 可选 | `TZ / HOST / PORT / DINGTALK_SECRET / CD_API_TOKEN`（启用 deploy-logs 拉取时必填） | 按需 |
 
@@ -238,7 +258,7 @@ source venv/bin/activate  # Linux/macOS
 
 pip install -r requirements.txt
 cp .env.example .env
-# 编辑 .env 配置数据库和 Harbor
+# 编辑 .env 配置数据库与镜像仓库凭据
 
 python main.py
 # 访问 http://localhost:8081
@@ -248,7 +268,7 @@ python main.py
 
 ```bash
 cp .env.example .env
-# 编辑 .env 配置数据库和 Harbor
+# 编辑 .env 配置数据库与镜像仓库凭据
 
 docker compose up -d
 # 访问 http://localhost:8081
@@ -484,7 +504,7 @@ Devops-Glue CD 支持四种 K8s 部署模式，每种模式的工作原理和 CD
 - **通知机器人**（`notify_bot_id`）：审批请求/结果通知的机器人。
 - **回滚审批**（`require_rollback_approval`，默认开启）：回滚是否也需审批。
 
-命中规则的部署会生成 `cd_approvals` 审批单（`pending`）并通知审批人。审批状态机为 `pending → approved → deploying → deployed / failed`，另有 `rejected`、`cancelled`。批准是原子落库迁移；执行由后台线程完成，并带持久化队列，进程重启后已批准未执行的审批单不会丢失。
+命中规则的部署会生成 `cd_approvals` 审批单（`pending`）并通知审批人。审批状态机为 `pending → approved → deploying → deployed / failed`，另有 `rejected`、`cancelled`。批准在数据库中原子完成；执行由后台线程负责，队列持久化，进程重启后已批准未执行的审批单不会丢失。
 
 > **四眼原则（v1.5.2 起）**：申请人不能批准或驳回自己发起的审批单（`super_admin` 也不例外），必须由另一位具备审批权限的用户处理；批准后仍以申请人身份自动执行部署。
 
@@ -554,7 +574,7 @@ CD 系统新增"构建管理"面板，通过 HTTP API 调用 Devops-Glue（CI）
 
 - `backend/services/ci_client.py` 支持两种认证：API Token 模式（固定 Bearer token，免登录）与账号模式（JWT Token 缓存，过期前自动续期）。请求失败自动重试（指数退避）。
 - 数据归属：CD 不直读 CI 数据库表（`ci_pipeline_artifacts` / `ci_job_git_map` 等），映射、tag、pipeline、构建记录均经 CI HTTP API 获取；CD 本地只维护自己的 `cd_*` 表。
-- 构建历史、构建日志通过 CI API 实时获取，不在 CD 本地落地。
+- 构建历史、构建日志通过 CI API 实时获取，不在 CD 本地保存。
 
 ## 9. Webhook 接收端点 & 安全策略
 

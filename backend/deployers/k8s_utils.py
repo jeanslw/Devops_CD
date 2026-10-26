@@ -5,9 +5,9 @@ import shlex
 
 import yaml
 
-from backend.config import settings
 from backend.deploy_run import DeployCancelled, get_cancel_checker
 from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具(含 errors="replace")
+from backend.services.registry_provider import registry_base_url
 
 
 def check_cancelled() -> None:
@@ -146,7 +146,7 @@ def _get_deployment_name(yaml_content: str) -> str:
 def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     image_parts = image.rsplit(":", 1)
     full_image_name = image_parts[0]
-    reg = settings.harbor_registry
+    reg = registry_base_url()
     # 剥离原始 registry,只保留镜像路径(如 mycode/diagnosis-runtime)
     image_name = full_image_name[len(reg) + 1 :] if reg and full_image_name.startswith(reg + "/") else full_image_name
     # 统一以 .env 的 registry 拼接最终镜像地址
