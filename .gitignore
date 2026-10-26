@@ -24,6 +24,7 @@ start.bat
 .idea
 .editorconfig
 .laragon
+.clinerules/
 
 # OS
 .DS_Store

@@ -31,6 +31,7 @@ from backend.deployers.registry import deployer_registry
 from backend.exceptions import NotFoundError, ValidationError
 from backend.services.ci_service import CiService
 from backend.services.notification import notify_deploy
+from backend.services.registry_provider import RegistryConfigError, registry_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +72,16 @@ def _resolve_image(db, req):
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
         raise ValidationError(
-            f"项目 '{req.project}' 未配置 harbor_repository",
+            f"项目 '{req.project}' 未配置 registry_repository",
             error_key="errors.no_harbor_repo",
             error_params={"project": req.project},
         )
-    image = f"{settings.harbor_registry}/{harbor_repo}:{req.tag}"
+    try:
+        registry = registry_base_url()
+    except RegistryConfigError as e:
+        # 仓库地址缺失:按参数校验失败返回(error_key=None → 前端展示 message)
+        raise ValidationError(str(e), error_key=None) from e
+    image = f"{registry}/{harbor_repo}:{req.tag}"
     project_key = svc.resolve_project_key(req.project) or req.project
     project_short = project_key.split("/")[-1]
     return image, project_key, project_short

@@ -22,7 +22,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import shlex
 
-from backend.config import settings
 from backend.deploy_run import normalize_deploy_status, normalize_rollback_type
 from backend.deployers.base import DeployTarget, InvalidTag, retry_idempotent, split_image_ref, validate_tag
 from backend.deployers.compose import ComposeDeployer
@@ -83,17 +82,18 @@ class _Resp:
 # ─────────────────────────────────────────────────────────────
 class TestPureHelpers(unittest.TestCase):
     def test_render_k8s_yaml_placeholders(self):
-        settings.harbor_registry = "hub.example.com"
-        yaml = "image: {IMAGE_NAME}:{TAG}\nfull: {IMAGE}:{TAG}\nplain: {IMAGE}\ntag: {TAG}"
-        out = _render_k8s_yaml(yaml, "hub.example.com/repo/app:v1.0", "v2.0")
+        # 仓库地址来自 Glue 契约(registry_base_url 已无本地 env 兜底),测试直接打桩契约取值
+        with patch("backend.deployers.k8s_utils.registry_base_url", return_value="hub.example.com"):
+            yaml = "image: {IMAGE_NAME}:{TAG}\nfull: {IMAGE}:{TAG}\nplain: {IMAGE}\ntag: {TAG}"
+            out = _render_k8s_yaml(yaml, "hub.example.com/repo/app:v1.0", "v2.0")
         self.assertIn("image: hub.example.com/repo/app:v2.0", out)
         self.assertIn("full: hub.example.com/repo/app:v2.0", out)
         self.assertNotIn("{IMAGE", out)
         self.assertNotIn("{TAG", out)
 
     def test_render_k8s_yaml_ported_registry_rsplit(self):
-        settings.harbor_registry = "hub.example.com:5000"
-        out = _render_k8s_yaml("i: {IMAGE}", "hub.example.com:5000/repo/app:v1.0", "v2.0")
+        with patch("backend.deployers.k8s_utils.registry_base_url", return_value="hub.example.com:5000"):
+            out = _render_k8s_yaml("i: {IMAGE}", "hub.example.com:5000/repo/app:v1.0", "v2.0")
         self.assertIn("hub.example.com:5000/repo/app:v2.0", out)
 
     def test_get_deployment_name(self):
@@ -393,7 +393,6 @@ class TestTagValidation(unittest.TestCase):
 
     def test_compose_remote_env_rewrite_commands_no_sed(self):
         """直接驱动 remote 流程断言 .env 重写命令内容(上一用例的可执行版本)."""
-        settings.harbor_registry = ""
         image_name = "hub.example.com/group/app"
         tag = "v1.2.3"
         project_short = "app"
@@ -434,6 +433,8 @@ class TestTagValidation(unittest.TestCase):
         with (
             patch("backend.deployers.compose.ssh_session", return_value=session),
             patch("backend.deployers.compose.ssh_exec_stream", side_effect=fake_stream),
+            # 契约未下发地址(空)→ 走"镜像不是来自已配置私有仓库"分支
+            patch("backend.deployers.compose.registry_base_url", return_value=""),
         ):
             result = ComposeDeployer().deploy(target, f"{image_name}:{tag}", "group/app", tag)
 
@@ -449,6 +450,120 @@ class TestTagValidation(unittest.TestCase):
         self.assertIn(shlex.quote(f"IMAGE={image_name}\nTAG={tag}\n"), rewrite)
         # pull/up 命令中 project 被引用
         self.assertTrue(all(project_short in c for c in stream_cmds), stream_cmds)
+
+
+class TestComposePlainHttpRegistry(unittest.TestCase):
+    """契约把仓库声明为明文 HTTP(http://)时的 compose 行为:拉取前校验目标机放行,失败不换源"""
+
+    def _deploy_via_plain_http_registry(self, ensure_result, allow_auto=False):
+        """驱动一次「契约把仓库声明为明文 HTTP」的 remote 部署.
+
+        返回 (result, ensure_mock, 全部下发命令):仓库地址固定 192.168.137.5:5000,
+        registry_is_insecure 打桩为 True,守护函数结果由调用方给出(不发真实 SSH 命令).
+        """
+        image_name = "192.168.137.5:5000/group/app"
+        tag = "v1.2.3"
+        stream_cmds = []
+
+        def handler(cmd):
+            if cmd.startswith("test -d"):
+                return ("OK", "", 0)
+            if "grep -v -e '^IMAGE='" in cmd:  # .env 重写(printf 追加 + grep 剔除旧行)
+                return ("", "", 0)
+            if " cat " in cmd and ".env" in cmd:  # 回读校验:必须含 IMAGE / TAG
+                return (f"IMAGE={image_name}\nTAG={tag}\n", "", 0)
+            return ("", "", 0)
+
+        fake = FakeSSH(handler)
+        session = MagicMock()
+        session.__enter__.return_value = fake
+        session.__exit__.return_value = False
+        target = DeployTarget(host="1.2.3.4", user="root", path="/srv/app")
+        with (
+            patch("backend.deployers.compose.ssh_session", return_value=session),
+            patch(
+                "backend.deployers.compose.ssh_exec_stream",
+                side_effect=lambda ssh, cmd, *a, **k: (stream_cmds.append(cmd), ("", 0))[1],
+            ),
+            patch("backend.deployers.compose.registry_base_url", return_value="192.168.137.5:5000"),
+            patch("backend.deployers.compose.registry_is_insecure", return_value=True),
+            patch("backend.deployers.compose.ensure_insecure_registry", return_value=ensure_result) as ensure,
+            patch("backend.config.settings.registry_insecure_auto", allow_auto),
+        ):
+            result = ComposeDeployer().deploy(target, f"{image_name}:{tag}", "group/app", tag)
+        return result, ensure, fake.commands + stream_cmds
+
+    def test_compose_plain_http_registry_blocked_before_login_and_pull(self):
+        """契约声明 http:// 且目标机未放行 → 拉取前中止:不登录、不拉取,并输出修复指引"""
+        blocked = MagicMock(ok=False, auto_fixed=False, detail="GUIDANCE-TEXT")
+        result, ensure, cmds = self._deploy_via_plain_http_registry(blocked)
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("plain HTTP", result.output)
+        self.assertIn("GUIDANCE-TEXT", result.output)
+        ensure.assert_called_once()
+        self.assertEqual(ensure.call_args.args[1], "192.168.137.5:5000")
+        # 默认(REGISTRY_INSECURE_AUTO 未开)不得授权 CD 修改目标机
+        self.assertFalse(ensure.call_args.kwargs["allow_auto"])
+        joined = " ".join(cmds)
+        self.assertNotIn("docker login", joined)
+        self.assertNotIn("docker-compose pull", joined)
+
+    def test_compose_plain_http_registry_pull_failure_does_not_fall_back(self):
+        """明文 HTTP 未放行导致拉取失败 → 不回退 Docker Hub(避免部署同名公共镜像)"""
+        image_name = "192.168.137.5:5000/group/app"
+        tag = "v1.2.3"
+        err_text = (
+            'Error response from daemon: Get "https://192.168.137.5:5000/v2/": '
+            "http: server gave HTTP response to HTTPS client"
+        )
+        state = {"pull": 0}
+        rewrites = []
+
+        def handler(cmd):
+            if cmd.startswith("test -d"):
+                return ("OK", "", 0)
+            if "grep -v -e '^IMAGE='" in cmd:
+                rewrites.append(cmd)
+                return ("", "", 0)
+            if " cat " in cmd and ".env" in cmd:
+                return (f"IMAGE={image_name}\nTAG={tag}\n", "", 0)
+            if "docker image inspect" in cmd:  # 拉取前后都不存在 → 需要拉取且拉取失败
+                return ("NOT_FOUND", "", 0)
+            return ("", "", 0)
+
+        fake = FakeSSH(handler)
+        session = MagicMock()
+        session.__enter__.return_value = fake
+        session.__exit__.return_value = False
+
+        def fake_stream(ssh, cmd, *a, **k):
+            state["pull"] += 1
+            return (err_text, 1)
+
+        target = DeployTarget(host="1.2.3.4", user="root", path="/srv/app")
+        with (
+            patch("backend.deployers.compose.ssh_session", return_value=session),
+            patch("backend.deployers.compose.ssh_exec_stream", side_effect=fake_stream),
+            patch("backend.deployers.compose.registry_base_url", return_value="192.168.137.5:5000"),
+            patch("backend.deployers.compose.registry_is_insecure", return_value=True),
+            patch(
+                "backend.deployers.compose.ensure_insecure_registry",
+                return_value=MagicMock(ok=True, auto_fixed=False, detail=""),
+            ),
+        ):
+            result = ComposeDeployer().deploy(target, f"{image_name}:{tag}", "group/app", tag)
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("no Docker Hub fallback", result.output)
+        # 真实故障文本与修复指引都带上,便于运维直接照抄
+        self.assertIn("server gave HTTP response to HTTPS client", result.output)
+        self.assertIn("insecure-registries", result.output)
+        # 只拉取一次:没有 Docker Hub 换源后的第二次 docker-compose pull
+        self.assertEqual(state["pull"], 1)
+        # .env 只在 4a 之前重写过一次(IMAGE 仍是私有仓库镜像名),没有被换成 Docker Hub 镜像名
+        self.assertEqual(len(rewrites), 1, rewrites)
+        self.assertIn(image_name, rewrites[0])
 
 
 class TestNoShellCommand(unittest.TestCase):

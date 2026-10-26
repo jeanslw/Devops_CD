@@ -32,6 +32,7 @@ from backend.exceptions import AppException, ConflictError, NotFoundError, Valid
 from backend.services.ci_service import CiService
 from backend.services.deploy_executor import execute_from_params
 from backend.services.notification import notify_approval
+from backend.services.registry_provider import registry_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -474,7 +475,7 @@ def _resolve_display_image(db, project: str, tag: str) -> str:
     try:
         repo = CiService(db).resolve_harbor_repo(project)
         if repo:
-            return f"{settings.harbor_registry}/{repo}:{tag}"
+            return f"{registry_base_url()}/{repo}:{tag}"
     except Exception:
         pass
     return ""

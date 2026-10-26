@@ -139,7 +139,7 @@ ps aux | wc -l
 
 ### 6.3 注意事项
 
-- 构建历史、日志按需从 CI 拉取，不在 CD 本地落地。
+- 构建历史、日志按需从 CI 拉取，CD 不在本地保存副本。
 - 写操作通过 CI API 执行，受 CI 系统自身权限控制。
 
 ## 7. Webhook 接收与事件转发
@@ -302,13 +302,12 @@ cd_service/
 | DELETE | `/api/alerts/{id}` | 🔑 | 删除告警规则 |
 | GET | `/api/alerts/resource-types` | ✅ | 可选资源类型/指标清单 |
 | POST | `/api/alerts/check` | 🔑 | 立即触发一轮告警检查 |
-| **制品仓库（Harbor）** | | | |
-| GET | `/api/registry/repositories` | 🔑 | Harbor 仓库列表（`cd.image-registry`） |
+| **制品仓库（镜像仓库）** | | | |
+| GET | `/api/registry/repositories` | 🔑 | 镜像仓库列表（`cd.image-registry`；Harbor 或标准 registry:2，由 Glue 契约下发的 `registry_type` 决定） |
 | GET | `/api/registry/artifacts/{id}` | 🔑 | 仓库 Tag/Artifact 列表 |
-| GET | `/api/registry/scan/report/{id}/{tag}` | 🔑 | Tag 漏洞扫描报告 |
-| POST | `/api/registry/scan/trigger/{id}/{tag}` | 🔑 | 触发漏洞扫描 |
-| DELETE | `/api/registry/artifacts/{id}` | 🔑 | 删除 Tag（安全校验） |
-| POST | `/api/registry/sync` | 🔑 | 触发 Harbor 同步 |
+| GET | `/api/registry/scan/report/{id}/{tag}` | 🔑 | Tag 漏洞扫描报告（仅 Harbor） |
+| POST | `/api/registry/scan/trigger/{id}/{tag}` | 🔑 | 触发漏洞扫描（仅 Harbor，标准 registry 返回 `errors.scan_unsupported`） |
+| POST | `/api/registry/sync` | 🔑 | 触发镜像仓库同步 |
 | GET | `/api/registry/config` | 🔑 | Harbor 连接配置 |
 | PUT | `/api/registry/config` | 🔑 | 更新 Harbor 连接配置 |
 | **Web Shell 与用户** | | | |

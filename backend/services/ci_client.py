@@ -31,7 +31,7 @@ API = {
     "variables": "/api/build/{path}/variables",  # GET → {key: options}
     "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
     "refs": "/api/git/{path}/refs",  # GET → {"branches": [...], "tags": [...]}(Glue ≥ 2.9.0)
-    "service_contract": "/api/integration/services/{service}",  # GET → {service, enabled, provision, token_active, updated_at}
+    "service_contract": "/api/integration/services/{service}",  # GET → {service, enabled, provision, token_active, updated_at, registry_type, registry_url(后两者 Glue ≥ 2.11)}
     "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline(仅 GitLab CI)
     "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline(仅 GitLab CI)
     "rbac_users": "/api/rbac/users",  # GET 用户列表(账号写操作在 CI 侧完成)
@@ -209,6 +209,17 @@ class CiClient:
             self._token = None
         self._ensure_token()
 
+    def get_json(self, path: str, params: dict | None = None) -> Any:
+        """GET Glue 任意相对路径(相对 base_url),返回解析后的 JSON.
+
+        用于镜像仓库等代理端点(/api/harbor/*、/api/registry/*)。
+        """
+        return self._get(f"{self._base}{path}", params=params)
+
+    def post_json(self, path: str, body: dict | None = None) -> Any:
+        """POST Glue 任意相对路径(相对 base_url),返回解析后的 JSON."""
+        return self._post(f"{self._base}{path}", body or {})
+
     # ── 业务方法(一一对应 CI OpenAPI)──
 
     def list_projects(self) -> Any:
@@ -228,7 +239,7 @@ class CiClient:
         return result
 
     def get_projects(self) -> Any:
-        """GET /api/build/projects?format=json → [{job_name, build_provider, current_path, harbor_repository, git_platform, latest_tag, latest_pipeline, tag_time}]"""
+        """GET /api/build/projects?format=json → [{job_name, build_provider, current_path, registry_repository(Glue 2.11+,旧版为 harbor_repository), git_platform, latest_tag, latest_pipeline, tag_time}]"""
         result = self._get(self._url(API["projects_full"]), params={"format": "json"})
         if isinstance(result, dict) and "data" in result:
             return result["data"]
@@ -319,9 +330,11 @@ class CiClient:
         }
 
     def get_service_contract(self, service: str) -> Any:
-        """GET /api/integration/services/{service} → {service, enabled, provision, token_active, updated_at}.
+        """GET /api/integration/services/{service} → {service, enabled, provision, token_active, updated_at, registry_type, registry_url}.
 
-        契约(CD 是否被授权、以哪种建表方式授权)的窄只读端点,Glue ≥ 2.9.0 提供. 硬约束:
+        契约(CD 是否被授权、以哪种建表方式授权)的窄只读端点,Glue ≥ 2.9.0 提供;
+        registry_type / registry_url 自 Glue 2.11 起随响应返回(缺失 = 旧版 Glue,消费方按
+        「类型默认 harbor / 地址缺失报错」处理,CD 侧无本地地址配置). 硬约束:
         **不加 ?format=json**;**不解析 message 判错**(message 是已翻译文本,不是稳定标识),
         调用方只看状态码与字段.
 

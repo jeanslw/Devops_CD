@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from backend.config import settings
 from backend.database import Database
 from backend.services.ci_client import CiClientError, get_ci_client
-from backend.services.harbor_client import HarborClient, HarborUnavailableError
+from backend.services.registry_provider import (
+    HarborUnavailableError,
+    RegistryPermissionDeniedError,
+    get_registry_provider,
+    registry_capabilities,
+    registry_type_hint,
+)
 
 logger = logging.getLogger("registry")
 
@@ -21,7 +27,7 @@ class RegistryService:
 
     def __init__(self, db: Database):
         self._db = db
-        self._harbor_client = None
+        self._provider_client = None
 
     # ── 配置读写 ──
 
@@ -57,27 +63,40 @@ class RegistryService:
         self.set_config("registry_sync_interval", str(interval_minutes))
         restart_background_sync(interval_minutes)
 
+    def get_registry_meta(self) -> dict:
+        """镜像仓库类型与能力开关(静态判断,不连仓库;前端据此隐藏不可用操作)
+
+        registry_type 为契约下发的原样值:harbor | registry | ""(未取到,前端显示「未知」),
+        不替前端默认成 harbor,避免把"没取到"伪装成"契约说是 harbor".
+        """
+        return {"registry_type": registry_type_hint(), "capabilities": registry_capabilities()}
+
     @property
-    def _harbor(self):
-        """延迟初始化 HarborClient:纯数据库查询不触发 API 探测"""
-        if self._harbor_client is None:
+    def _provider(self):
+        """延迟初始化提供方:按 Glue 契约下发的仓库类型选 HarborClient / RegistryV2Provider:
+        纯数据库查询不触发 API 探测"""
+        if self._provider_client is None:
             try:
-                self._harbor_client = HarborClient()
+                self._provider_client = get_registry_provider()
             except RuntimeError as e:
-                logger.error("Harbor client initialization failed", exc_info=e)
+                logger.error("Registry provider initialization failed", exc_info=e)
                 raise HarborUnavailableError(
-                    "Harbor 镜像仓库不可达。请检查：\n"
-                    "1. HARBOR_BASE_URL 地址是否正确\n"
+                    "镜像仓库不可达，无法连接仓库。请检查：\n"
+                    f"1. 仓库地址是否可用（{e}）\n"
                     "2. 网络是否连通\n"
-                    "3. Harbor 服务是否正常运行\n"
+                    "3. 镜像仓库服务是否正常运行\n"
                 ) from e
-        return self._harbor_client
+        return self._provider_client
 
     # ── 工具 ──
 
     @staticmethod
-    def _to_mysql_dt(iso_str: str) -> str:
+    def _to_mysql_dt(iso_str: str) -> str | None:
         """ISO 8601 时间戳 → MySQL DATETIME 字符串(统一归一化为 UTC 墙钟时间)
+
+        空值 / 无法解析的值返回 None(写入 NULL):
+        MySQL 的 DATETIME 列不接受空字符串(错误 1292),标准 OCI 仓库(registry:2)
+        本就不提供推送/拉取时间,同步时该字段必须按 NULL 入库而不是空串.
 
         Harbor 返回的 push_time/pull_time 是 UTC(如 '2026-07-17T07:17:04.737Z').
         优先用 fromisoformat 解析,可正确处理 Z 与数值时区偏移(如 +08:00);
@@ -85,7 +104,7 @@ class RegistryService:
         去尾零后小数位数不定,解析失败时回退字面量截断.
         """
         if not iso_str:
-            return ""
+            return None
         try:
             dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
             if dt.tzinfo is not None:
@@ -95,24 +114,43 @@ class RegistryService:
             s = iso_str.replace("T", " ").replace("Z", "")
             if "." in s:
                 s = s[: s.index(".")]
+            if not s.strip():
+                return None
             return s
 
     # ── 从 CI 映射获取待同步仓库 ──
 
+    @staticmethod
+    def _mapped_repo(p: dict) -> str:
+        """容器仓库名:Glue 2.11 起字段改名为 registry_repository,旧版为 harbor_repository,双读兼容"""
+        return (p.get("registry_repository") or p.get("harbor_repository") or "").strip()
+
     def _get_ci_repos(self) -> list[dict]:
-        """从 CI 映射获取所有已配置 Harbor 仓库的项目(经 API)"""
+        """从 CI 映射获取所有已配置镜像仓库的项目(经 API)"""
         projects = get_ci_client().get_projects() or []
-        return [
-            {"project": p["job_name"], "repo": p["harbor_repository"]}
-            for p in projects
-            if (p.get("harbor_repository") or "")
-        ]
+        return [{"project": p["job_name"], "repo": self._mapped_repo(p)} for p in projects if self._mapped_repo(p)]
 
     # ── 同步逻辑 ──
 
     def sync_repo(self, conn, project: str, repo: str) -> int:
         """同步单个仓库的 artifacts 到数据库,返回新增/更新的数量"""
-        # 确保 repo 记录存在
+        # 先从镜像仓库拉取,成功后才建仓库记录:
+        # 拉取失败(无权限/不可达/解析异常)不在列表里留下"0 Tags"的占位行
+        try:
+            raw = self._provider.list_artifacts(repo)
+            logger.info(f"镜像仓库返回 {len(raw)} 条 artifacts: {repo}")
+        except HarborUnavailableError:
+            # 连接层不可达上抛,由 sync_all / sync_for_project 转 errors.harbor_unavailable
+            raise
+        except RegistryPermissionDeniedError:
+            # 账号无查询权限:同样上抛,由 sync_all / sync_for_project 转 errors.registry_permission_denied
+            raise
+        except Exception as e:
+            # 非连接类错误(404 / 解析异常等)保持容错,不打断其他仓库的同步
+            logger.error(f"同步 {repo} 失败: {e}")
+            return 0
+
+        # 拉取成功,确保 repo 记录存在
         rows = conn.execute(
             "SELECT id FROM cd_registry_repositories WHERE project_name=? AND repo_name=?", (project, repo)
         ).fetchall()
@@ -123,18 +161,6 @@ class RegistryService:
                 "INSERT INTO cd_registry_repositories(project_name,repo_name) VALUES (?,?)", (project, repo)
             )
             repo_id = cur.lastrowid
-
-        # 从 Harbor 拉取
-        try:
-            raw = self._harbor.list_artifacts(repo)
-            logger.info(f"Harbor 返回 {len(raw)} 条 artifacts: {repo}")
-        except HarborUnavailableError:
-            # 连接层不可达上抛,由 sync_all / sync_for_project 转 errors.harbor_unavailable
-            raise
-        except Exception as e:
-            # 非连接类错误(404 / 解析异常等)保持容错,不打断其他仓库的同步
-            logger.error(f"同步 {repo} 失败: {e}")
-            return 0
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         count = 0
@@ -194,7 +220,7 @@ class RegistryService:
                 )
             count += 1
 
-        # 清理 Harbor 已不存在的 tag(sync 只做 upsert,需补"删 gone"才对齐真值源)
+        # 清理镜像仓库已不存在的 tag(sync 只做 upsert,需补"删 gone"才对齐真值源)
         # list_artifacts 返回空列表既可能是"仓库确实空"也可能是"404/分页异常",
         # 客户端无法区分,仅在拿到非空 tag 列表时才做差集删除,宁可保守不误删.
         current_tags = {art["tag"] for art in raw if art.get("tag")}
@@ -221,6 +247,13 @@ class RegistryService:
                         conn.execute("DELETE FROM cd_registry_artifacts WHERE repo_id=?", (r["id"],))
                         conn.execute("DELETE FROM cd_registry_repositories WHERE id=?", (r["id"],))
 
+                # 清理没有任何 Tag 的仓库记录:多为历史同步失败残留的占位行,
+                # 拉取成功(即使 0 Tag)的本轮同步会立即重建,无误删风险
+                conn.execute(
+                    """DELETE FROM cd_registry_repositories WHERE NOT EXISTS
+                       (SELECT 1 FROM cd_registry_artifacts WHERE repo_id=cd_registry_repositories.id)"""
+                )
+
                 total = 0
                 errors = []
                 for cr in ci_repos:
@@ -230,6 +263,8 @@ class RegistryService:
                         logger.info(f"同步 {cr['repo']}: {n} 条")
                     except HarborUnavailableError:
                         raise  # 直接抛出,不要在 errors 里吞掉
+                    except RegistryPermissionDeniedError as e:
+                        raise e  # 无查询权限必须让界面明确提示,不能伪装成"同步了 0 条"
                     except Exception as e:
                         errors.append(cr["repo"])
                         logger.error(f"同步 {cr['repo']} 失败", exc_info=e)
@@ -237,8 +272,15 @@ class RegistryService:
             except HarborUnavailableError:
                 return {
                     "ok": False,
-                    "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态",
+                    "error": "镜像仓库不可达，无法同步。请检查网络连接和镜像仓库服务状态",
                     "error_key": "errors.harbor_unavailable",
+                }
+            except RegistryPermissionDeniedError as e:
+                logger.error("镜像仓库拒绝访问（账号无查询权限）", exc_info=e)
+                return {
+                    "ok": False,
+                    "error": "镜像仓库账号没有查询权限，无法同步。请检查仓库账号密码，并确认该账号有权访问相关仓库",
+                    "error_key": "errors.registry_permission_denied",
                 }
             except CiClientError as e:
                 logger.error("CI service unavailable while fetching repository mappings", exc_info=e)
@@ -267,6 +309,15 @@ class RegistryService:
             ]
             if not matched:
                 return {"ok": False, "error": "未找到该项目仓库映射"}
+            # 清理这些仓库里没有任何 Tag 的残留记录(历史同步失败占位行),拉取成功后本轮重建
+            placeholders = ",".join("?" for _ in matched)
+            conn.execute(
+                f"""DELETE FROM cd_registry_repositories
+                    WHERE NOT EXISTS
+                      (SELECT 1 FROM cd_registry_artifacts WHERE repo_id=cd_registry_repositories.id)
+                      AND (project_name=? OR repo_name IN ({placeholders}))""",
+                (project, *(cr["repo"] for cr in matched)),
+            )
             try:
                 total = 0
                 for cr in matched:
@@ -276,8 +327,15 @@ class RegistryService:
             except HarborUnavailableError:
                 return {
                     "ok": False,
-                    "error": "Harbor 镜像仓库不可达，无法同步。请检查网络连接和 Harbor 服务状态",
+                    "error": "镜像仓库不可达，无法同步。请检查网络连接和镜像仓库服务状态",
                     "error_key": "errors.harbor_unavailable",
+                }
+            except RegistryPermissionDeniedError as e:
+                logger.error("镜像仓库拒绝访问（账号无查询权限）", exc_info=e)
+                return {
+                    "ok": False,
+                    "error": "镜像仓库账号没有查询权限，无法同步。请检查仓库账号密码，并确认该账号有权访问相关仓库",
+                    "error_key": "errors.registry_permission_denied",
                 }
 
     # ── 查询 ──
@@ -386,7 +444,13 @@ class RegistryService:
         return {"critical": c, "high": h, "medium": m, "low": low, "total": total, "fixable": fixable}
 
     def get_scan_report(self, repo_id: int, tag: str) -> dict | None:
-        """先读数据库缓存,再实时请求 Harbor 获取详情(优先 Harbor 最新数据)"""
+        """先读数据库缓存,再实时请求镜像仓库获取详情(优先 Harbor 最新数据)"""
+        if not registry_capabilities().get("scan"):
+            # 标准 registry 无漏洞扫描接口(能力开关为 False)
+            return {
+                "error": "当前镜像仓库类型（registry）不支持漏洞扫描",
+                "error_key": "errors.scan_unsupported",
+            }
         with self._db.conn() as conn:
             row = conn.execute(
                 """SELECT a.scan_status, a.scan_severity, a.vuln_critical, a.vuln_high,
@@ -414,7 +478,7 @@ class RegistryService:
             else:
                 harbor_project = harbor_repo = repo_name
             harbor_url = (
-                f"{self._harbor.base_url}/harbor/projects/"
+                f"{self._provider.base_url}/harbor/projects/"
                 f"{urllib.parse.quote(harbor_project, safe='')}"
                 f"/repositories/{urllib.parse.quote(harbor_repo, safe='')}"
                 f"/artifacts/{urllib.parse.quote(digest, safe='')}?tab=vulnerabilities"
@@ -431,7 +495,7 @@ class RegistryService:
             # 实时请求 Harbor 获取最新详情(数据库缓存可能为 0)
             harbor_unavailable = False
             try:
-                live = self._harbor.get_scan_report(row["repo_name"], tag)
+                live = self._provider.get_scan_report(row["repo_name"], tag)
                 if live:
                     live_summary = self._norm_summary(live.get("summary") or {})
                     # 优先用 Harbor 的 summary;如果 Harbor summary 全 0,fallback 数据库
@@ -460,11 +524,18 @@ class RegistryService:
             return result
 
     def trigger_scan(self, repo_id: int, tag: str) -> dict:
-        """触发 Harbor 重新扫描该 artifact(v2 用 tag)"""
+        """触发镜像仓库重新扫描该 artifact(仅 Harbor 提供该接口)"""
+        if not registry_capabilities().get("scan"):
+            # 标准 registry 无扫描触发接口(能力开关为 False)
+            return {
+                "ok": False,
+                "error": "当前镜像仓库类型（registry）不支持漏洞扫描",
+                "error_key": "errors.scan_unsupported",
+            }
         with self._db.conn() as conn:
             try:
                 row = conn.execute(
-                    """SELECT r.repo_name, a.digest
+                    """SELECT r.repo_name
                        FROM cd_registry_artifacts a
                        JOIN cd_registry_repositories r ON a.repo_id = r.id
                        WHERE a.repo_id=? AND a.tag=?""",
@@ -473,78 +544,14 @@ class RegistryService:
                 if not row:
                     return {"ok": False, "error": "Tag 不存在"}
 
-                if self._harbor.version == "v2":
-                    project, repo = HarborClient._split_repo(row["repo_name"])
-                    enc_proj = urllib.parse.quote(project, safe="")
-                    enc_repo = urllib.parse.quote(repo, safe="")
-                    encoded_tag = urllib.parse.quote(tag, safe="")
-                    self._harbor._post(
-                        f"/api/v2.0/projects/{enc_proj}/repositories/{enc_repo}/artifacts/{encoded_tag}/scan"
-                    )
-                else:
-                    encoded = urllib.parse.quote(row["repo_name"], safe="")
-                    self._harbor._post(f"/api/repositories/{encoded}/tags/{urllib.parse.quote(tag, safe='')}/scan")
+                self._provider.trigger_scan(row["repo_name"], tag)
                 return {"ok": True, "detail": "扫描已触发，请等待 Harbor 完成后再查看报告"}
             except HarborUnavailableError as e:
-                logger.warning(f"触发扫描失败（Harbor 不可达）: {e}")
-                return {"ok": False, "error": "Harbor 镜像仓库不可达，无法触发扫描"}
+                logger.warning(f"触发扫描失败（镜像仓库不可达）: {e}")
+                return {"ok": False, "error": "镜像仓库不可达，无法触发扫描"}
             except Exception as e:
                 logger.error("触发扫描失败", exc_info=e)
                 return {"ok": False, "error": "触发扫描失败，请联系管理员"}
-
-    # ── 删除 ──
-
-    def delete_artifact(self, repo_id: int, tag: str) -> dict:
-        """删除 artifact(Harbor v1/v2 通用 + 更新数据库)"""
-        with self._db.conn() as conn:
-            # 获取仓库信息
-            repo_row = conn.execute(
-                "SELECT project_name, repo_name FROM cd_registry_repositories WHERE id=?", (repo_id,)
-            ).fetchone()
-            if not repo_row:
-                return {"ok": False, "error": "仓库不存在"}
-
-            artifact_row = conn.execute(
-                "SELECT id, digest FROM cd_registry_artifacts WHERE repo_id=? AND tag=?", (repo_id, tag)
-            ).fetchone()
-            if not artifact_row:
-                return {"ok": False, "error": "Tag 不存在"}
-
-            # 校验 1:是否在线运行
-            running = self._check_running(conn, repo_row["project_name"], tag)
-            if running:
-                return {"ok": False, "error": f"该 Tag 正在线上运行（{running}），请先回滚到其他版本"}
-
-            # 校验 2:最近 3 个 Tag 保护
-            recent = conn.execute(
-                "SELECT tag FROM cd_registry_artifacts WHERE repo_id=? ORDER BY push_time DESC LIMIT 3", (repo_id,)
-            ).fetchall()
-            protected = {r["tag"] for r in recent}
-            if tag in protected:
-                return {"ok": False, "error": "最近 3 个 Tag 受保护，禁止删除"}
-
-            # 调 Harbor API 删除
-            success = self._harbor.delete_artifact(repo_row["repo_name"], tag, artifact_row["digest"])
-            if not success:
-                return {"ok": False, "error": "Harbor 删除失败，请检查权限或配置"}
-
-            # 更新数据库
-            conn.execute("DELETE FROM cd_registry_artifacts WHERE id=?", (artifact_row["id"],))
-            return {"ok": True}
-
-    def _check_running(self, conn, project: str, tag: str) -> str | None:
-        """检查 Tag 是否在线上运行"""
-        # 终态取值必须与部署记录写入口径一致(status='ok'),否则该闸门永不命中
-        rows = conn.execute(
-            "SELECT target, deploy_type, created_at FROM cd_deploy_logs "
-            "WHERE project=? AND tag=? AND status='ok' "
-            "ORDER BY created_at DESC LIMIT 5",
-            (project, tag),
-        ).fetchall()
-        if rows:
-            targets = {f"{r['deploy_type']}@{r['target']}" for r in rows}
-            return "、".join(sorted(targets)[:3])
-        return None
 
 
 # ── 后台定时同步 ──

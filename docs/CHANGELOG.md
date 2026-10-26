@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.6.1 (2026-10-24)
+
+> **Upgrade note**: requires Devops-Glue 2.11 or later. 
+
+- **Added**
+  - The image-registry type comes from the Devops-Glue contract: Harbor (default) or a standard OCI registry (registry:2 and alike). The Image Registry page follows the current type and shows it next to the page title.
+  - A standard registry supports anonymous and user/password authentication; it has no vulnerability scanning, image size or push time, and the page hides those columns, buttons and actions.
+  - The CI project mapping field is read from `registry_repository` (the new name in Devops-Glue 2.11+); the old `harbor_repository` is still accepted.
+  - Registries the contract declares as plain HTTP (`registry_url` starting with `http://`) are checked against the target docker daemon's `insecure-registries` before login and pull; one that is not allowed fails the deploy with copy-pasteable fix commands, and `REGISTRY_INSECURE_AUTO=true` lets CD back up and merge `/etc/docker/daemon.json` and reload docker itself (off by default).
+- **Removed**
+  - The local registry address and type configuration; both come only from the contract, while the registry credentials and the certificate-check setting stay local. Without an address from the contract, deploys and the Image Registry page fail with a clear error instead of building an image reference without an address; when the contract endpoint is briefly unreachable, the last known values are reused.
+  - Artifact-tag deletion on the Image Registry page: neither Harbor nor a standard registry supports it, so the action and its confirmation dialog are gone.
+- **Improved**
+  - When the registry type has no vulnerability scanning, a scan request answers with a clear "this registry type does not support vulnerability scanning" message.
+  - When the registry type cannot be retrieved, the page shows "unknown (not received from the contract)" instead of defaulting to Harbor; the actual backend selection is unchanged.
+- **Fixed**
+  - Syncing against a standard OCI registry no longer fails, and a failed sync no longer leaves empty  rows; leftover empty rows are cleaned up automatically on the next sync.
+  - When the registry account has no permission to query, sync reports it clearly instead of faking success; a scan report that cannot be fetched states the reason instead of showing "no vulnerabilities found".
+  - A pull that fails because the target daemon only speaks HTTPS to a plain-HTTP registry no longer falls back to Docker Hub, which could deploy a same-named public image; the deploy stops with the original error and the fix instructions instead.
+
 ## v1.6.0 (2026-10-14)
 
 > **⚠️ Breaking change** — v1.6.0 is not backward-compatible with v1.5.x and earlier. Local password login is removed in favour of Devops-Glue OIDC single sign-on. Before upgrading, set `OIDC_ISSUER`, `CD_OIDC_SECRET` and `CD_OIDC_REDIRECT_URI` in the root `.env`, and enable Devops-CD under "API Integration Services → Enable" in the Glue console. Requires Devops-Glue 2.9.0 or later.

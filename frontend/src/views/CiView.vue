@@ -23,7 +23,7 @@
             <tr>
               <td><strong>{{ p.job_name }}</strong></td>
               <td><span class="badge" :class="p.build_provider === 'gitlab_ci' ? 'badge-gitlab' : 'badge-jenkins'">{{ p.build_provider }}</span></td>
-              <td>{{ p.harbor_repository || '—' }}</td>
+              <td>{{ p.registry_repository || p.harbor_repository || '—' }}</td>
               <td>{{ p.latest_tag || '—' }}</td>
               <td>{{ p.latest_pipeline ? '#' + p.latest_pipeline : '—' }}</td>
               <td>

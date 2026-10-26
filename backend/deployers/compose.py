@@ -5,6 +5,7 @@ import shlex
 
 from backend.config import settings
 from backend.deploy_log import S
+from backend.services.registry_provider import registry_base_url, registry_is_insecure
 
 from .base import (
     Deployer,
@@ -17,6 +18,7 @@ from .base import (
     ssh_session,
     validate_tag,
 )
+from .registry_insecure import ensure_insecure_registry, guidance, is_plain_http_registry_error
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +132,10 @@ class ComposeDeployer(Deployer):
                     return DeployResult(image=image, status="failed", output=f".env write failed:\n{out}")
 
                 # 4. 仓库登录 & 镜像拉取
-                registry = settings.harbor_registry.rstrip("/") if settings.harbor_registry else ""
-                has_creds = bool(settings.harbor_user and settings.harbor_password)
+                registry = registry_base_url()
+                has_creds = bool(
+                    getattr(settings, "registry_user", None) and getattr(settings, "registry_password", None)
+                )
 
                 # 判断镜像是否来自已配置的私有仓库
                 is_private = bool(registry) and image_name.startswith(registry + "/")
@@ -187,12 +191,36 @@ class ComposeDeployer(Deployer):
                         return False
                     return True
 
+                # 4a-0. 明文 HTTP 仓库(契约 registry_url 声明 http://):
+                #       dockerd 对未列入 insecure-registries 的仓库只尝试 HTTPS,拉取与登录都会失败,
+                #       且 docker CLI 没有强制明文的开关,故先确认目标机已放行,再进入登录/拉取.
+                #       注:未放行时 docker manifest inspect 同样走 HTTPS 失败,_needs_pull 必然判为需要拉取,
+                #       因此此处无需先判定是否需要拉取,不改变既有日志顺序.
+                if is_private and registry_is_insecure():
+                    self._log(callback, S("deploy_log.registry_insecure_check", registry=registry))
+                    check = ensure_insecure_registry(ssh, registry, allow_auto=settings.registry_insecure_auto)
+                    if not check.ok:
+                        self._log(callback, S("deploy_log.registry_insecure_blocked", registry=registry))
+                        return DeployResult(
+                            image=image,
+                            status="failed",
+                            output=(
+                                f"Registry {registry} is declared as plain HTTP by the Glue contract "
+                                f"(registry_url starts with http://) and the target docker daemon does not "
+                                f"allow it.\n\n{check.detail}"
+                            ),
+                        )
+                    if check.auto_fixed:
+                        self._log(callback, S("deploy_log.registry_insecure_auto_fixed", registry=registry))
+                    else:
+                        self._log(callback, S("deploy_log.registry_insecure_ok", registry=registry))
+
                 # 4a. 登录私有仓库
                 if is_private and has_creds:
                     self._log(callback, S("deploy_log.registry_login", registry=registry))
                     login_out = self._ssh_run(
                         ssh,
-                        f"echo {shlex.quote(settings.harbor_password)} | docker login {registry} -u {shlex.quote(settings.harbor_user or '')} --password-stdin 2>&1",
+                        f"echo {shlex.quote(settings.registry_password)} | docker login {registry} -u {shlex.quote(settings.registry_user or '')} --password-stdin 2>&1",
                         image,
                     )
                     if "Login Succeeded" in login_out.output:
@@ -213,6 +241,21 @@ class ComposeDeployer(Deployer):
                 else:
                     pull_text = ""
                 pull_ok = _image_exists(image_name)
+
+                # 4c-0. 唯一不允许换源的失败:明文 HTTP 仓库未放行(https 客户端收到 http 响应).
+                #       换源到 Docker Hub 会把同名公共镜像当成自己的镜像部署上线(供应链风险),
+                #       且会把「目标机缺配置」这个真因掩盖成二次失败,故直接失败并给出修复指引.
+                if not pull_ok and is_private and is_plain_http_registry_error(pull_text):
+                    self._log(callback, S("deploy_log.registry_insecure_blocked", registry=registry))
+                    return DeployResult(
+                        image=image,
+                        status="failed",
+                        output=(
+                            f"Image pull failed: registry {registry} is plain HTTP but not allowed by the "
+                            f"target docker daemon (no Docker Hub fallback for this failure).\n\n"
+                            f"{pull_text}\n\n{guidance(registry)}"
+                        ),
+                    )
 
                 # 4c. 私有仓库失败 → 回退 Docker Hub
                 if not pull_ok and is_private:

@@ -24,6 +24,7 @@ from backend.deploy_run import (
 )
 from backend.deployers import DeployTarget, deployer_registry
 from backend.deployers.base import validate_tag
+from backend.services.registry_provider import RegistryConfigError, registry_base_url
 
 from .ci_service import CiService
 from .notification import notify_deploy
@@ -155,9 +156,14 @@ class DeployService:
 
         harbor_repo = self._ci.resolve_harbor_repo(project)
         if not harbor_repo:
-            raise ValueError(f"Project '{project}' has no harbor_repository configured")
+            raise ValueError(f"Project '{project}' has no registry_repository configured")
 
-        image = f"{settings.harbor_registry}/{harbor_repo}:{tag}"
+        try:
+            registry = registry_base_url()
+        except RegistryConfigError as e:
+            # 仓库地址缺失:按参数错误返回(与本服务其它配置缺失一致)
+            raise ValueError(str(e)) from e
+        image = f"{registry}/{harbor_repo}:{tag}"
         project_key = self._ci.resolve_project_key(project) or project
 
         # ── 并发锁:同一项目同时只允许一个进行中部署 ──
