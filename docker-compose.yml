@@ -140,14 +140,5 @@ services:
       retries: 3
       start_period: 20s
 
-    deploy:
-      resources:
-        limits:
-          cpus: ${CD_CPU_LIMIT:-2.0}
-          memory: ${CD_MEM_LIMIT:-512m}
-        reservations:
-          cpus: ${CD_CPU_RESERVE:-0.25}
-          memory: ${CD_MEM_RESERVE:-256m}
-
 volumes:
   cd_known_hosts:
