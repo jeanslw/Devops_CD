@@ -957,6 +957,7 @@
     "sso_denied": "Sign-in was not completed (cancelled on the Devops-Glue page, or the Glue session expired). Please sign in again",
     "sso_state_invalid": "This sign-in request is no longer valid (duplicate callback or expired authorization code). Please start again",
     "sso_unavailable": "Single sign-on is temporarily unavailable (cannot reach Devops-Glue, or the login assertion failed to verify). Please retry later; contact your administrator if it persists",
+    "sso_upstream_error": "The unified login service returned a server error (an OIDC configuration problem on the Devops-Glue side, e.g. an unusable signing key). Ask an administrator to check the ERROR entries for /oauth/token in the Glue container log and to verify OIDC_RSA_PRIVATE_KEY / OIDC_KEY_FILE",
     "wrong_deploy_api": "Please use the Kubernetes-specific endpoint /api/deploy-k8s"
   }
 }

@@ -248,7 +248,10 @@ def exchange_code(code: str) -> dict:
         raise OidcError("授权码无效或已过期（invalid_grant）", status_code=400, invalid_grant=True)
     if resp.status_code in (400, 401):
         raise OidcError(f"token 端点拒绝兑换（HTTP {resp.status_code}）：请核对 CD_OIDC_SECRET 与 CD_OIDC_REDIRECT_URI")
-    raise OidcError(f"token 端点返回 HTTP {resp.status_code}")
+    raise OidcError(
+        f"token 端点返回 HTTP {resp.status_code}（Devops-Glue 服务端错误，请查看 Glue 容器日志中 /oauth/token 的 ERROR 记录）",
+        error_key="errors.sso_upstream_error",
+    )
 
 
 # ── id_token 校验 ──

@@ -307,6 +307,26 @@ class TestAuthorizeAndTokenExchange(_OidcSettingsMixin, unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 502)
         self.assertIn("CD_OIDC_SECRET", ctx.exception.message)
 
+    def test_exchange_code_5xx_is_flagged_as_glue_side_error(self):
+        """Glue token 端点 5xx 必须带独立 error_key.
+
+        回归背景:Glue 的 OIDC 签名私钥被写成占位值 / 不可读时,/oauth/token 直接 500,
+        但登录页只笼统报「统一登录服务暂时不可用」,被当成网络或凭据问题排查了很久.
+        """
+        resp = MagicMock(status_code=500)
+        resp.json.return_value = {"error": "server_error", "message": "已翻译的文案"}
+        with (
+            patch.object(oidc, "discovery", return_value=_discovery_doc()),
+            patch.object(oidc, "_session") as sess,
+        ):
+            sess.post.return_value = resp
+            with self.assertRaises(oidc.OidcError) as ctx:
+                oidc.exchange_code("code-1")
+        self.assertFalse(ctx.exception.invalid_grant)
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.error_key, "errors.sso_upstream_error")
+        self.assertIn("500", ctx.exception.message)
+
     def test_exchange_code_without_id_token_rejected(self):
         resp = MagicMock(status_code=200)
         resp.json.return_value = {"access_token": "at"}  # scope 漏 openid 时的表现(Glue 不报错)

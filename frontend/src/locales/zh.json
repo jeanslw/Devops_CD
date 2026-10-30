@@ -957,6 +957,7 @@
     "sso_denied": "统一登录未完成（在 Devops-Glue 授权页取消了登录，或 Glue 会话已失效），请重新登录",
     "sso_state_invalid": "登录请求已失效（重复回调或授权码超时），请重新发起登录",
     "sso_unavailable": "统一登录服务暂时不可用（无法连接 Devops-Glue，或登录凭据校验未通过），请稍后重试；持续出现请联系管理员",
+    "sso_upstream_error": "统一登录服务返回了服务端错误（Devops-Glue 侧的 OIDC 配置问题，例如签名私钥不可用）。请管理员查看 Glue 容器日志中 /oauth/token 的 ERROR 记录，并核对 OIDC_RSA_PRIVATE_KEY / OIDC_KEY_FILE 配置",
     "wrong_deploy_api": "请使用 K8S 专用接口 /api/deploy-k8s"
   }
 }
