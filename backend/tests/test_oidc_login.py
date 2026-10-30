@@ -556,6 +556,23 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.headers["location"], "/login?error=errors.sso_unavailable")
 
+    def test_navigation_upstream_5xx_uses_glue_side_key(self):
+        """Glue 侧 5xx 与「连不上 Glue」分流:登录页直接给出指向 Glue 日志的排查提示.
+
+        回归背景:OIDC 签名私钥非 PEM 时 Glue 的 /oauth/token 返回 500,
+        旧文案与「网络不可达」共用 errors.sso_unavailable,把服务端配置问题掩盖成网络问题.
+        """
+        with patch.object(
+            oidc_router.oidc,
+            "exchange_code",
+            side_effect=oidc_router.oidc.OidcError(
+                "token 端点返回 HTTP 500", error_key="errors.sso_upstream_error"
+            ),
+        ):
+            resp = oidc_router.callback(request=self._nav(), db=self.db, code="c1", state="st-1")
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.headers["location"], "/login?error=errors.sso_upstream_error")
+
     def test_navigation_gate_failure_on_callback_redirects_to_login(self):
         self.db.cd_missing_tables.return_value = ["cd_sessions"]
         resp = oidc_router.callback(request=self._nav(), db=self.db, code="c1", state="st-1")
