@@ -565,9 +565,7 @@ class TestOidcRoutes(_OidcSettingsMixin, unittest.TestCase):
         with patch.object(
             oidc_router.oidc,
             "exchange_code",
-            side_effect=oidc_router.oidc.OidcError(
-                "token 端点返回 HTTP 500", error_key="errors.sso_upstream_error"
-            ),
+            side_effect=oidc_router.oidc.OidcError("token 端点返回 HTTP 500", error_key="errors.sso_upstream_error"),
         ):
             resp = oidc_router.callback(request=self._nav(), db=self.db, code="c1", state="st-1")
         self.assertEqual(resp.status_code, 302)
