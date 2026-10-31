@@ -45,11 +45,45 @@ def validate_tag(tag: str) -> str:
     return tag
 
 
+class KnownHostsError(Exception):
+    """known_hosts 本地读写失败(权限不足等),区别于网络错误."""
+
+
+def _project_cd_service() -> str:
+    """返回项目内 .cd_service 目录(进程可写,作为 ~/.cd_service 的回退)."""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".cd_service")
+
+
+def _write_ssh_key_temp(ssh_key: str) -> str:
+    """ssh_key 落临时文件(权限 600),优先 %TEMP%,不可写回退项目内 .cd_service,返回路径."""
+    for d in (None, _project_cd_service()):
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False, dir=d) as tmp:
+                tmp.write(ssh_key)
+                tmp_file = tmp.name
+            os.chmod(tmp_file, 0o600)
+            return tmp_file
+        except OSError as e:
+            logger.warning("临时密钥文件写入失败(dir=%s): %s", d, e)
+    raise KnownHostsError("临时密钥文件写入失败(本地权限不足)")
+
+
 def _known_hosts_file() -> str:
-    """返回 known_hosts 文件路径(固定在 ~/.cd_service/known_hosts)."""
-    cd_dir = os.path.join(os.path.expanduser("~"), ".cd_service")
-    os.makedirs(cd_dir, exist_ok=True)
-    return os.path.join(cd_dir, "known_hosts")
+    """返回 known_hosts 路径,优先 ~/.cd_service,不可写回退项目内 .cd_service."""
+    home_dir = os.path.join(os.path.expanduser("~"), ".cd_service")
+    try:
+        os.makedirs(home_dir, exist_ok=True)
+        return os.path.join(home_dir, "known_hosts")
+    except OSError as e:
+        logger.warning("known_hosts 主目录不可写(%s),回退项目内 .cd_service: %s", home_dir, e)
+    proj_dir = _project_cd_service()
+    try:
+        os.makedirs(proj_dir, exist_ok=True)
+    except OSError as e:
+        raise KnownHostsError(
+            f"known_hosts 目录均不可写:主目录({home_dir})与项目目录({proj_dir}),请检查本地写权限"
+        ) from e
+    return os.path.join(proj_dir, "known_hosts")
 
 
 def _save_first_host_key(host: str, port: int, timeout: int) -> None:
@@ -81,7 +115,10 @@ def _save_first_host_key(host: str, port: int, timeout: int) -> None:
         host_keys.add(host, key.get_name(), key)
         if f"[{host}]:{port}" != host:
             host_keys.add(f"[{host}]:{port}", key.get_name(), key)
-        client.save_host_keys(kh_file)
+        try:
+            client.save_host_keys(kh_file)
+        except OSError as e:
+            raise KnownHostsError(f"known_hosts 写入失败(权限不足或磁盘问题): {e}") from e
         client.close()
     finally:
         if transport is not None:
@@ -140,7 +177,10 @@ def trust_ssh_host(
         host_key_entry.add(host, key.get_name(), key)
         if f"[{host}]:{port}" != host:
             host_key_entry.add(f"[{host}]:{port}", key.get_name(), key)
-        client.save_host_keys(kh_file)
+        try:
+            client.save_host_keys(kh_file)
+        except OSError as e:
+            raise KnownHostsError(f"known_hosts 写入失败(权限不足或磁盘问题): {e}") from e
         client.close()
 
         # 步骤 3:有凭据则顺便验证可连通;失败只记警告(信任本身已成功)
@@ -155,10 +195,7 @@ def trust_ssh_host(
                     "look_for_keys": False,
                 }
                 if ssh_key:
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
-                        tmp.write(ssh_key)
-                        tmp_file = tmp.name
-                    os.chmod(tmp_file, 0o600)
+                    tmp_file = _write_ssh_key_temp(ssh_key)
                     connect_kwargs["key_filename"] = tmp_file
                     connect_kwargs["username"] = username or "root"
                 else:  # password
@@ -173,6 +210,9 @@ def trust_ssh_host(
                 if isinstance(e, paramiko.AuthenticationException):
                     logger.warning("trust_ssh_host: credential check failed (auth) for %s@%s:%s", username, host, port)
                     warning = "（主机密钥已保存，但凭据验证失败，请检查用户名/密码/密钥）"
+                elif isinstance(e, KnownHostsError):
+                    logger.error("trust_ssh_host: local temp key write failed for %s@%s:%s — %s", username, host, port, e)
+                    warning = "（本地临时密钥文件写入失败，权限不足）"
                 elif isinstance(e, (TimeoutError, OSError)):
                     logger.warning("trust_ssh_host: credential check failed (unreachable) for %s:%s", host, port)
                     warning = "（主机密钥已保存，但连接验证失败，服务器不可达）"
@@ -192,6 +232,9 @@ def trust_ssh_host(
         elif isinstance(e, (paramiko.SSHException,)):
             logger.warning("SSH trust protocol error: %s:%s — %s", host, port, e)
             msg = "SSH 协议错误，请检查服务端配置"
+        elif isinstance(e, KnownHostsError):
+            logger.error("SSH trust failed: local known_hosts error: %s:%s — %s", host, port, e)
+            msg = "本地 known_hosts 写入失败（权限不足），请检查 ~/.cd_service 或项目目录写权限"
         elif isinstance(e, OSError):
             logger.warning("SSH trust unreachable: %s:%s — %s", host, port, e)
             msg = "连接失败，请检查主机地址、端口及网络可达性"
@@ -238,10 +281,7 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
     tmp_file = None
 
     if target.ssh_key:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as tmp:
-            tmp.write(target.ssh_key)
-            tmp_file = tmp.name
-        os.chmod(tmp_file, 0o600)
+        tmp_file = _write_ssh_key_temp(target.ssh_key)
         kwargs["key_filename"] = tmp_file
     elif target.password:
         kwargs["password"] = target.password
