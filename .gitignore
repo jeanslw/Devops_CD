@@ -19,6 +19,9 @@ start.bat
 .cd_secret_key
 .cd_secret_key.salt
 
+# known_hosts 回退目录(含主机密钥,不提交)
+.cd_service/
+
 # IDE
 .vscode/
 .idea
