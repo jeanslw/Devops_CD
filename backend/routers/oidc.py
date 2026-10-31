@@ -219,11 +219,7 @@ def callback(
             request,
             400 if exc.invalid_grant else 502,
             exc.message,
-            nav_key=(
-                "errors.sso_state_invalid"
-                if exc.invalid_grant
-                else (exc.error_key or "errors.sso_unavailable")
-            ),
+            nav_key=("errors.sso_state_invalid" if exc.invalid_grant else (exc.error_key or "errors.sso_unavailable")),
         )
 
     try:
