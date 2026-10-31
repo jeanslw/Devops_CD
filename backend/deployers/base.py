@@ -211,7 +211,9 @@ def trust_ssh_host(
                     logger.warning("trust_ssh_host: credential check failed (auth) for %s@%s:%s", username, host, port)
                     warning = "（主机密钥已保存，但凭据验证失败，请检查用户名/密码/密钥）"
                 elif isinstance(e, KnownHostsError):
-                    logger.error("trust_ssh_host: local temp key write failed for %s@%s:%s — %s", username, host, port, e)
+                    logger.error(
+                        "trust_ssh_host: local temp key write failed for %s@%s:%s — %s", username, host, port, e
+                    )
                     warning = "（本地临时密钥文件写入失败，权限不足）"
                 elif isinstance(e, (TimeoutError, OSError)):
                     logger.warning("trust_ssh_host: credential check failed (unreachable) for %s:%s", host, port)
