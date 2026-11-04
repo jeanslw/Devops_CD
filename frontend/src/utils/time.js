@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 
-// 展示时区:由 /api/info 下发的 settings.display_timezone 填充;为空则按浏览器本地时间展示.
-// 存储层统一为 UTC,此处只做"展示"侧的时区转换(借鉴 Devops-Glue 的 display_timezone 模型).
+// 展示时区:由 /api/info 下发的 settings.display_timezone 填充;为空则按浏览器本地时间.
+// 存储层统一为 UTC,展示与定时输入换算均按同一时区.
 const displayTimezone = ref('')
 
 export function setDisplayTimezone(tz) {
@@ -33,15 +33,37 @@ export function toLocalDisplay(utcStr) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// 把 DateTimePicker 选出的浏览器本地时间(朴素串 'YYYY-MM-DD HH:MM')转为 UTC 墙钟串再提交,
-// 保证存储层始终是 UTC,定时发布才能在任意环境按时区正确触发.
+// 把指定时区的墙钟时间换算为 UTC 时刻;tz 为空或非法时回退浏览器本地时间.
+function wallClockToUtc(y, mo, d, h, mi, tz) {
+  if (!tz) return new Date(y, mo - 1, d, h, mi, 0, 0)
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hourCycle: 'h23',
+    })
+    const tzWallAsUtc = ts => {
+      const parts = fmt.formatToParts(new Date(ts))
+      const get = t => Number(parts.find(p => p.type === t).value)
+      return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'))
+    }
+    const wall = Date.UTC(y, mo - 1, d, h, mi, 0)
+    const first = wall - (tzWallAsUtc(wall) - wall)
+    const offset = tzWallAsUtc(first) - first
+    return new Date(wall - offset)
+  } catch (e) {
+    return new Date(y, mo - 1, d, h, mi, 0, 0)
+  }
+}
+
+// 把选择器选出的墙钟时间按展示时区换算为 UTC 墙钟串再提交.
 export function localInputToUtc(localStr) {
   if (!localStr) return ''
   const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(localStr)
   if (!m) return localStr
   const [, y, mo, d, h, mi] = m
-  // new Date(...) 以数字参数构造时按浏览器本地时间;getUTC* 取 UTC 分量
-  const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), 0, 0)
+  const dt = wallClockToUtc(Number(y), Number(mo), Number(d), Number(h), Number(mi), displayTimezone.value)
   const pad = n => String(n).padStart(2, '0')
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:00`
 }

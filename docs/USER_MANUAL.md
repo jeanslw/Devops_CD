@@ -311,7 +311,7 @@ cd_service/
 | GET | `/api/registry/config` | 🔑 | Harbor connection config |
 | PUT | `/api/registry/config` | 🔑 | Update Harbor connection config |
 | **Web Shell & Users** | | | |
-| WS | `/ws/terminal/{id}` | 🔑 | Web Shell terminal (`cd.webshell`; auth via `cd_token` cookie or `?token=`) |
+| WS | `/ws/terminal/{id}` | 🔑 | Web Shell terminal (`cd.webshell`; auth via `cd_token` HttpOnly cookie) |
 | POST | `/api/upload/{id}` | 🔑 | SFTP file upload (`cd.webshell`) |
 | GET | `/api/users` | 🔑 | User list (for picking approvers in approval rules, requires `cd.deploy.approve`; account management lives in CI) |
 | **Webhooks (notification management)** | | | |

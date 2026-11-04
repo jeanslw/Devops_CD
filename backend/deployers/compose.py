@@ -220,7 +220,7 @@ class ComposeDeployer(Deployer):
                     self._log(callback, S("deploy_log.registry_login", registry=registry))
                     login_out = self._ssh_run(
                         ssh,
-                        f"echo {shlex.quote(settings.registry_password)} | docker login {registry} -u {shlex.quote(settings.registry_user or '')} --password-stdin 2>&1",
+                        f"echo {shlex.quote(settings.registry_password)} | docker login {shlex.quote(registry)} -u {shlex.quote(settings.registry_user or '')} --password-stdin 2>&1",
                         image,
                     )
                     if "Login Succeeded" in login_out.output:

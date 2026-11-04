@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from backend.auth import enforce_deploy_perm, get_current_user, get_db, require_perm
-from backend.crypto import decrypt
+from backend.crypto import decrypt_strict, DecryptError
 from backend.database import Database
 from backend.deploy_run import mark_deploy_cancelled
 from backend.deployers import DeployTarget
 from backend.deployers.base import InvalidTag, validate_tag
 from backend.deployers.registry import deployer_registry
-from backend.exceptions import NotFoundError, ValidationError
+from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.models import CancelRequest, DeployRequest
 from backend.services.approval_service import gate_deploy
 from backend.services.deploy_executor import ssh_params
@@ -148,12 +148,20 @@ def stop(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
+    try:
+        password = decrypt_strict(srv["password"] or "")
+        ssh_key = decrypt_strict(srv["ssh_key"] or "")
+    except DecryptError as e:
+        raise AppException(
+            f"服务器「{srv['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
+            status_code=500,
+        ) from e
     target = DeployTarget(
         host=srv["host"],
         port=srv["port"],
         user=srv["user"],
-        password=decrypt(srv["password"] or ""),
-        ssh_key=decrypt(srv["ssh_key"] or ""),
+        password=password,
+        ssh_key=ssh_key,
     )
     deployer = deployer_registry.create(req.deploy_type)
     if deployer is None:
@@ -188,8 +196,15 @@ def stop_k8s(
     if not srv:
         raise NotFoundError("集群不存在", error_key="errors.cluster_not_found")
 
-    host, port, user_srv, pwd = srv["host"], srv["port"], srv["user"], decrypt(srv["password"] or "")
-    ssh_key = decrypt(srv["ssh_key"] or "")
+    try:
+        pwd = decrypt_strict(srv["password"] or "")
+        ssh_key = decrypt_strict(srv["ssh_key"] or "")
+    except DecryptError as e:
+        raise AppException(
+            f"集群「{srv['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
+            status_code=500,
+        ) from e
+    host, port, user_srv = srv["host"], srv["port"], srv["user"]
 
     deployer = deployer_registry.create(f"k8s/{req.cd_type}")
     if deployer is None:

@@ -14,7 +14,7 @@ import time
 from pydantic import BaseModel
 
 from backend.config import settings
-from backend.crypto import decrypt
+from backend.crypto import decrypt_strict, DecryptError
 from backend.deploy_run import (
     DeployCancelled,
     cancel_checker_for,
@@ -28,7 +28,7 @@ from backend.deploy_run import (
 )
 from backend.deployers.base import InvalidTag, validate_tag
 from backend.deployers.registry import deployer_registry
-from backend.exceptions import NotFoundError, ValidationError
+from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.services.ci_service import CiService
 from backend.services.notification import notify_deploy
 from backend.services.registry_provider import RegistryConfigError, registry_base_url
@@ -60,8 +60,14 @@ def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
         host = str(srv["host"])
         port = int(srv["port"])
         user = str(srv["user"])
-        pwd = decrypt(srv["password"] or "")
-        ssh_key = decrypt(srv["ssh_key"] or "")
+        try:
+            pwd = decrypt_strict(srv["password"] or "")
+            ssh_key = decrypt_strict(srv["ssh_key"] or "")
+        except DecryptError as e:
+            raise AppException(
+                f"集群「{srv['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
+                status_code=500,
+            ) from e
         return host, port, user, pwd, ssh_key
     raise ValidationError("请选择目标集群", error_key="errors.select_cluster")
 

@@ -7,10 +7,10 @@ from collections.abc import Callable
 
 from backend.auth import enforce_deploy_perm
 from backend.config import settings
-from backend.crypto import decrypt
+from backend.crypto import decrypt_strict, DecryptError
 from backend.database import Database
 from backend.deploy_log import S
-from backend.exceptions import ValidationError
+from backend.exceptions import AppException, ValidationError
 from backend.deploy_run import (
     DeployCancelled,
     cancel_checker_for,
@@ -76,19 +76,27 @@ class DeployService:
                 # 须过滤掉(空选择会把 K8S 集群误当 SSH/Compose 目标,签名错位).
                 rows = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name").fetchall()
 
-            return [
-                (
+            def _build_target(r):
+                try:
+                    password = decrypt_strict(r["password"] or "")
+                    ssh_key = decrypt_strict(r["ssh_key"] or "")
+                except DecryptError as e:
+                    raise AppException(
+                        f"服务器「{r['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
+                        status_code=500,
+                    ) from e
+                return (
                     r["id"],
                     DeployTarget(
                         host=r["host"],
                         port=r["port"],
                         user=r["user"],
-                        password=decrypt(r["password"] or ""),
-                        ssh_key=decrypt(r["ssh_key"] or ""),
+                        password=password,
+                        ssh_key=ssh_key,
                     ),
                 )
-                for r in rows
-            ]
+
+            return [_build_target(r) for r in rows]
 
     def _build_target_str(self, results: list, is_batch: bool, total: int) -> str:
         """批量时合并 target 描述,单台时返回单条描述."""
