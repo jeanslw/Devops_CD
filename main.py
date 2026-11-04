@@ -8,6 +8,8 @@ FastAPI 部署执行器 - SSH / docker-compose / K8s
 import logging
 import threading
 import time
+
+logging.Formatter.converter = time.gmtime  # 日志时间戳统一为 UTC
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -244,6 +246,7 @@ def api_info():
         "status": "running",
         "db_type": settings.db_driver,
         "db_connected": db_ok,
+        "display_timezone": settings.display_timezone,
         "uptime_seconds": uptime_seconds,
     }
 

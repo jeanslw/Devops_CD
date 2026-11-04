@@ -3,7 +3,7 @@
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.config import settings
 from backend.database import Database
@@ -217,7 +217,7 @@ def _get_bot(db, bot_id: int):
 
 def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang: str, target_type: str):
     """构造并发送告警通知"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     resource_type = result["resource"]
 
     # 自定义资源:用监控项名称作为显示名

@@ -94,6 +94,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { toLocalDisplay } from '@/utils/time.js'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useError } from '@/composables/useError'
@@ -152,14 +153,7 @@ function shortDigest(d) {
 }
 
 function formatTime(t) {
-  if (!t) return '-'
-  try {
-    const normalized = (t + '').replace(' ', 'T') + ((t + '').includes('Z') ? '' : 'Z')
-    const d = new Date(normalized)
-    if (isNaN(d.getTime())) return (t + '').slice(0, 16)
-    const pad = n => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  } catch (e) { return (t + '').slice(0, 16) }
+  return toLocalDisplay(t)
 }
 
 function severityClass(a) {

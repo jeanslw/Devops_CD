@@ -115,6 +115,7 @@ import MultiSelect from '@/components/MultiSelect.vue'
 import ApprovalFlowPanel from '@/components/ApprovalFlowPanel.vue'
 import ApprovalActiveList from '@/components/ApprovalActiveList.vue'
 import DateTimePicker from '@/components/DateTimePicker.vue'
+import { localInputToUtc } from '@/utils/time.js'
 
 const route = useRoute()
 const auth = useAuth()
@@ -179,7 +180,7 @@ async function doDeploy() {
     yaml_content: yamlContent.value,
     env_file: envFile.value,
     deploy_note: deployNote.value,
-    scheduled_at: schedule.value,
+    scheduled_at: localInputToUtc(schedule.value),
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }

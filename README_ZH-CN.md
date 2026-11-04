@@ -21,8 +21,8 @@ FastAPI 持续部署服务，与 [Devops-Glue API](https://gitee.com/jeanslw/dev
 
 **[英文版](README.md)**
 
-![系统概览](system_info_zh.png)
-![运行状态](system_running_zh.png)
+![系统概览](docs/Images/system_info_zh.png)
+![运行状态](docs/Images/system_running_zh.png)
 
 
 ## 基础

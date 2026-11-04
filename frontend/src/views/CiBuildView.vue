@@ -172,6 +172,7 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
+import { toLocalDisplay } from '@/utils/time.js'
 
 const auth = useAuth()
 const { toast } = useToast()
@@ -441,8 +442,7 @@ function statusClass(status) {
 }
 
 function formatTime(t) {
-  if (!t) return ''
-  return t.replace('T', ' ').substring(0, 19)
+  return toLocalDisplay(t)
 }
 
 onMounted(loadProjects)
