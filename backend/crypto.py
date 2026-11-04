@@ -177,6 +177,39 @@ def decrypt(value: str) -> str:
         return ""
 
 
+class DecryptError(Exception):
+    """解密失败:密钥已更换 / 密文被篡改 / 密文格式损坏.
+
+    用于 SSH 等会把密文当凭据的路径:失败时不再静默返回空串(空密码去连 SSH 会表现为
+    认证失败且密钥配错不报错),而是抛异常由调用方转 500/503.
+    """
+
+
+def decrypt_strict(value: str) -> str:
+    """解密字符串,失败时抛 DecryptError(用于 SSH 等会拿密文当凭据的路径).
+
+    - 空值直接返回;
+    - 无 enc: 前缀的值按明文原样返回(历史数据);
+    - enc: 前缀解密失败(密钥错误 / 密文损坏 / 被篡改)抛 DecryptError,不返回空串.
+    """
+    if not value:
+        return value
+    if not value.startswith(ENCRYPT_PREFIX):
+        return value  # 明文历史数据,原样返回
+    token = value[len(ENCRYPT_PREFIX) :].encode("utf-8")
+    try:
+        return _fernet.decrypt(token).decode("utf-8")
+    except InvalidToken:
+        for fallback in (_legacy_fernet, *_salt_file_fernets):
+            try:
+                return fallback.decrypt(token).decode("utf-8")
+            except InvalidToken:
+                continue
+        raise DecryptError("凭据解密失败:SECRET_KEY 已更换或密文被篡改") from None
+    except ValueError as exc:
+        raise DecryptError(f"凭据解密失败:密文格式损坏(非法 base64):{exc}") from exc
+
+
 def decrypt_server_row(row: dict) -> dict:
     """对服务器记录字典中的 password / ssh_key 字段就地解密."""
     if "password" in row:

@@ -62,10 +62,10 @@ def _now() -> str:
 
 
 def _parse_scheduled_at(s: str) -> str:
-    """解析并规范化定时执行时间.空 → ''(立即,不定时).
+    """解析并规范化定时执行时间.入参必须已是 UTC 墙钟,空 → ''(立即,不定时).
 
     接受 'YYYY-MM-DD HH:MM[:SS]'(前端 datetime-local 的 'T' 分隔自动归一为空格),
-    与库内 created_at/approved_at 同为本地朴素时间.非法格式抛 ValidationError.
+    不做时区转换.非法格式抛 ValidationError.
     """
     s = (s or "").strip().replace("T", " ")
     if not s:

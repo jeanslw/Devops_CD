@@ -4,7 +4,7 @@ import threading
 import time
 
 from backend.config import settings
-from backend.crypto import decrypt
+from backend.crypto import decrypt_strict, DecryptError
 from backend.deployers.base import DeployTarget, _ssh_cmd
 
 
@@ -197,11 +197,20 @@ docker info --format '{{.ContainersRunning}}/{{.Containers}}' 2>/dev/null || ech
 
 
 def _make_target(srv) -> DeployTarget:
-    """从数据库行构造 DeployTarget,自动解密 password / ssh_key"""
+    """从数据库行构造 DeployTarget,自动解密 password / ssh_key.
+
+    解密失败(密钥错误 / 密文损坏)抛 DecryptError,由调用方的逐台 try/except 捕获
+    (该服务器标记为监控错误),不再静默返回空密码去连 SSH.
+    """
+    try:
+        password = decrypt_strict(srv["password"] or "")
+        ssh_key = decrypt_strict(srv["ssh_key"] or "")
+    except DecryptError as e:
+        raise DecryptError(f"服务器「{srv.get('name')}」凭据解密失败：{e}") from e
     return DeployTarget(
         host=srv["host"],
         port=srv["port"],
         user=srv["user"],
-        password=decrypt(srv["password"] or ""),
-        ssh_key=decrypt(srv["ssh_key"] or ""),
+        password=password,
+        ssh_key=ssh_key,
     )

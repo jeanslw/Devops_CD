@@ -3,7 +3,7 @@
 约定:
 - 存储层(MySQL / SQLite / DATETIME 列)一律存 UTC 墙钟字符串 'YYYY-MM-DD HH:MM:SS';
 - MySQL 连接会话时区由 backend/database.py 强制为 '+00:00',使 DEFAULT CURRENT_TIMESTAMP 也落 UTC;
-- 前端按 config/app.env 的 DISPLAY_TIMEZONE(默认注释 = 浏览器本地时间)展示,服务端不做时区转换.
+- 前端按 config/app.env 的 DISPLAY_TIMEZONE(默认注释 = 浏览器本地时间)展示并换算定时输入,服务端不做时区转换.
 """
 
 from datetime import datetime, timezone

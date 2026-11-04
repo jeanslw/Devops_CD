@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import posixpath
 import re
@@ -21,7 +22,7 @@ from backend.auth import (
     require_perm,
 )
 from backend.config import settings
-from backend.crypto import decrypt
+from backend.crypto import decrypt_strict, DecryptError
 from backend.database import Database
 from backend.deployers.base import DeployTarget, ssh_connect
 from backend.exceptions import AppException, NotFoundError, ValidationError
@@ -65,7 +66,10 @@ def _webshell_permitted(role: str, perms: list[str]) -> bool:
 
 
 async def _ws_verify(token: str | None = None) -> str:
-    """WebSocket 鉴权:通过 query param token 查服务端会话(O(1) 哈希查找)"""
+    """WebSocket 鉴权:仅通过 HttpOnly cookie cd_token 查服务端会话(O(1) 哈希查找).
+
+    不再接受 ?token= 查询串,避免令牌进入访问日志与反向代理日志.
+    """
     if not token:
         raise HTTPException(401, "请登录")
     db = get_db()
@@ -91,8 +95,8 @@ async def _ws_verify(token: str | None = None) -> str:
 
 @router.websocket("/ws/terminal/{server_id}")
 async def terminal(websocket: WebSocket, server_id: int):
-    # 优先取 HttpOnly cookie,回退 query param.
-    token = websocket.cookies.get("cd_token") or websocket.query_params.get("token")
+    # 仅取 HttpOnly cookie;不再接受 ?token= 查询串(避免令牌进访问日志/代理日志).
+    token = websocket.cookies.get("cd_token")
     try:
         username = await _ws_verify(token)
     except HTTPException as e:
@@ -124,12 +128,19 @@ async def terminal(websocket: WebSocket, server_id: int):
         await websocket.close()
         return
 
+    try:
+        password = decrypt_strict(srv["password"] or "")
+        ssh_key = decrypt_strict(srv["ssh_key"] or "")
+    except DecryptError as e:
+        await websocket.send_text(f"\r\n❌ 服务器凭据解密失败：{e}\r\n")
+        await websocket.close()
+        return
     target = DeployTarget(
         host=srv["host"],
         port=srv["port"],
         user=srv["user"],
-        password=decrypt(srv["password"] or ""),
-        ssh_key=decrypt(srv["ssh_key"] or ""),
+        password=password,
+        ssh_key=ssh_key,
     )
 
     # SSH 连接(在线程池中执行,避免阻塞事件循环)
@@ -188,6 +199,12 @@ async def terminal(websocket: WebSocket, server_id: int):
                             line = buf + text
                             if _check_dangerous(line):
                                 buf = ""
+                                logging.getLogger(__name__).warning(
+                                    "WebShell 危险命令被拦截 server_id=%s user=%s cmd=%.200s",
+                                    server_id,
+                                    username,
+                                    line,
+                                )
                                 await websocket.send_text(_DANGEROUS_WARNING)
                                 continue
                             buf = ""
@@ -265,12 +282,20 @@ async def upload_file(
                 error_params={"path": prefix},
             )
 
+    try:
+        password = decrypt_strict(srv["password"] or "")
+        ssh_key = decrypt_strict(srv["ssh_key"] or "")
+    except DecryptError as e:
+        raise AppException(
+            f"服务器「{srv['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
+            status_code=500,
+        ) from e
     dt = DeployTarget(
         host=srv["host"],
         port=srv["port"],
         user=srv["user"],
-        password=decrypt(srv["password"] or ""),
-        ssh_key=decrypt(srv["ssh_key"] or ""),
+        password=password,
+        ssh_key=ssh_key,
     )
     try:
         ssh = await asyncio.to_thread(ssh_connect, dt, settings.ssh_timeout)

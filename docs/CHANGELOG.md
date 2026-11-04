@@ -3,13 +3,16 @@
 ## v1.6.2 (2026-11-04)
 
 - **Added**
-  - Timezone display setting `DISPLAY_TIMEZONE`: commented out by default (the frontend shows the browser local time); uncomment and set a timezone to display in that timezone.
+  - Timezone setting `DISPLAY_TIMEZONE` defaults to UTC; display and scheduled-input conversion both use it. Leave it empty to use the browser local time.
 - **Changed**
   - Database and time writes are unified to UTC, and the shared MySQL session timezone with Devops-Glue is aligned, so both systems agree on time semantics.
-  - Frontend times are shown in the browser or configured timezone; scheduled publishes convert the local time to UTC before storing, no longer affected by the deployment environment timezone.
+  - Frontend times are shown in the configured timezone; scheduled publishes convert input to UTC in that same timezone, so display and submission use one consistent basis.
   - The deployment container no longer sets `TZ` and defaults to UTC.
 - **Fixed**
   - Scheduled publishes firing at the wrong time because bare-metal and container timezones differed.
+  - Failed decryption of server passwords or private keys now reports an error instead of connecting to SSH with an empty password.
+  - The Web Shell session token is read from the cookie only, no longer from the query string; blocked dangerous commands are logged.
+  - The registry login address is properly quoted.
 - **Improved**
   - Backend log timestamps are unified to UTC.
 

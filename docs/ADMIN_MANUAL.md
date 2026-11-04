@@ -555,6 +555,13 @@ There is exactly one way in: **Devops-Glue single sign-on**.
 
 - Password login and the `AUTH_MODE` switch are gone — OIDC is the only login method; when the contract endpoint cannot be reached, the startup precheck and the deploy gate reject as "contract unreachable"
 
+### Web Shell Permissions & Security Boundary
+
+- The `cd.webshell` permission is **equivalent to all privileges of that server's SSH user**. The Web Shell performs no command-level authorization — what can be executed is entirely decided by the SSH account itself (and the target host's `sudo`/ACL), which is outside CD's control.
+- The built-in **dangerous-command blacklist is only a lightweight UX-level interception and warning, not a security boundary**: `bash -c "rm -rf /"`, `rm -rf /tmp/../`, or re-encoding/escaping before execution can all easily bypass it. Do not treat it as a firewall or a least-privilege control.
+- The real security boundary should be built on: a controlled, least-privilege SSH account, network isolation / bastion host, and audit logging (CD's deploy/operation logs, plus SSH's own auth logs).
+- If command-level restrictions are required, implement them at the target host's SSH account level (e.g. `rbash`, a restricted `PATH`, or a `sudoers` whitelist) rather than relying on the front-end blacklist.
+
 ## 8. CI Build Management Integration (optional)
 
 The CD system adds a **Build Management** panel that calls the Devops-Glue (CI) API over HTTP, enabling Jenkins/GitLab CI build triggering, build history, and build logs directly from the CD dashboard.

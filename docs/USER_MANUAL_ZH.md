@@ -311,7 +311,7 @@ cd_service/
 | GET | `/api/registry/config` | 🔑 | Harbor 连接配置 |
 | PUT | `/api/registry/config` | 🔑 | 更新 Harbor 连接配置 |
 | **Web Shell 与用户** | | | |
-| WS | `/ws/terminal/{id}` | 🔑 | Web Shell 终端（`cd.webshell`；经 `cd_token` cookie 或 `?token=` 鉴权） |
+| WS | `/ws/terminal/{id}` | 🔑 | Web Shell 终端（`cd.webshell`；经 `cd_token` HttpOnly cookie 鉴权） |
 | POST | `/api/upload/{id}` | 🔑 | SFTP 文件上传（`cd.webshell`） |
 | GET | `/api/users` | 🔑 | 用户列表（供审批规则选择审批人，需 `cd.deploy.approve`；账号管理统一在 CI 侧） |
 | **Webhook 配置管理** | | | |
