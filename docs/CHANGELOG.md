@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.6.2 (2026-11-04)
+
+- **Added**
+  - Timezone display setting `DISPLAY_TIMEZONE`: commented out by default (the frontend shows the browser local time); uncomment and set a timezone to display in that timezone.
+- **Changed**
+  - Database and time writes are unified to UTC, and the shared MySQL session timezone with Devops-Glue is aligned, so both systems agree on time semantics.
+  - Frontend times are shown in the browser or configured timezone; scheduled publishes convert the local time to UTC before storing, no longer affected by the deployment environment timezone.
+  - The deployment container no longer sets `TZ` and defaults to UTC.
+- **Fixed**
+  - Scheduled publishes firing at the wrong time because bare-metal and container timezones differed.
+- **Improved**
+  - Backend log timestamps are unified to UTC.
+
 ## v1.6.1 (2026-10-24)
 
 > **Upgrade note**: requires Devops-Glue 2.11 or later. 
