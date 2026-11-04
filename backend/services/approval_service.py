@@ -19,6 +19,8 @@ import threading
 from contextlib import suppress
 from datetime import datetime
 
+from backend.time_utils import utc_now_str
+
 from fastapi import HTTPException
 
 from backend.auth import WILDCARD_PERM, enforce_deploy_perm, load_user_context
@@ -56,7 +58,7 @@ def _parse_csv(s) -> list[str]:
 
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return utc_now_str()
 
 
 def _parse_scheduled_at(s: str) -> str:

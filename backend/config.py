@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     monitor_cache_pod_detail: int = 15
     alert_check_interval: int = 60  # 告警检测间隔(秒)
 
+    # ── 时区(仅影响前端时间展示)──
+    # 留空 = 前端按浏览器本地时间展示;填入 IANA 时区(如 Asia/Shanghai)则按此时区展示。
+    # 存储层始终为 UTC(与 Devops-Glue 共用 MySQL 的时区统一为 UTC)。
+    display_timezone: str = ""
+
     model_config = SettingsConfigDict(
         env_file=(BASE_DIR / "config" / "app.env", BASE_DIR / ".env"),
         env_file_encoding="utf-8",

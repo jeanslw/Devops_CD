@@ -244,6 +244,7 @@ def api_info():
         "status": "running",
         "db_type": settings.db_driver,
         "db_connected": db_ok,
+        "display_timezone": settings.display_timezone,
         "uptime_seconds": uptime_seconds,
     }
 

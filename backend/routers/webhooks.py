@@ -2,7 +2,7 @@
 
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pymysql
 from fastapi import APIRouter, Depends, Request
@@ -224,7 +224,7 @@ def forward_event(
 
         conn.execute(
             "UPDATE cd_webhook_events SET forwarded=1, forwarded_at=? WHERE id=?",
-            (datetime.now(), eid),
+            (datetime.now(timezone.utc), eid),
         )
         return ok(message="已转发到 Bot")
 
@@ -267,7 +267,7 @@ async def receive_webhook(
                 sent = send_webhook(bot["webhook_url"], msg, bot["type"])
                 conn.execute(
                     "UPDATE cd_webhook_events SET forwarded=?, forwarded_at=? WHERE id=?",
-                    (1 if sent else 0, datetime.now(), event_id),
+                    (1 if sent else 0, datetime.now(timezone.utc), event_id),
                 )
 
         return ok(message="received")

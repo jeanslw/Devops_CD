@@ -6,7 +6,7 @@ import hmac
 import ipaddress
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from backend.config import settings
@@ -140,7 +140,7 @@ def notify_deploy(
     """
     if not bot_id:
         return
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     target_str = ", ".join(targets)
 
     # 翻译 status 和 mode

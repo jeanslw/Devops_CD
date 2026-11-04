@@ -57,12 +57,12 @@
                   <span
                     v-if="a.scheduled_at"
                     class="badge badge-sched"
-                    :title="$t('approvals.scheduleTip', { time: a.scheduled_at })"
+                    :title="$t('approvals.scheduleTip', { time: toLocalDisplay(a.scheduled_at) })"
                     style="margin-left:4px"
-                  >⏰ [{{ $t('approvals.scheduledBadge') }}] {{ a.scheduled_at.slice(0, 16) }}</span>
+                  >⏰ [{{ $t('approvals.scheduledBadge') }}] {{ toLocalDisplay(a.scheduled_at) }}</span>
                 </td>
                 <td>{{ a.approver || '—' }}</td>
-                <td>{{ a.created_at }}</td>
+                <td>{{ toLocalDisplay(a.created_at) }}</td>
                 <td class="actions">
                   <button
                     v-if="a.status === 'pending' && a.can_approve"
@@ -191,7 +191,7 @@
       <div class="modal-box">
         <h4>{{ $t('approvals.approve') }} #{{ approveTarget.id }} — {{ approveTarget.project }}</h4>
         <p v-if="approveTarget.scheduled_at" class="approve-sched">
-          ⏰ {{ $t('approvals.scheduleTip', { time: approveTarget.scheduled_at.slice(0, 16) }) }}
+          ⏰ {{ $t('approvals.scheduleTip', { time: toLocalDisplay(approveTarget.scheduled_at) }) }}
         </p>
         <div class="modal-actions">
           <button class="btn" @click="approveTarget = null">{{ $t('common.cancel') }}</button>
@@ -221,6 +221,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { toLocalDisplay } from '@/utils/time.js'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { useError } from '@/composables/useError'

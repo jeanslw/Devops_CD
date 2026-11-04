@@ -134,6 +134,7 @@ import TagPager from '@/components/TagPager.vue'
 import ApprovalFlowPanel from '@/components/ApprovalFlowPanel.vue'
 import ApprovalActiveList from '@/components/ApprovalActiveList.vue'
 import DateTimePicker from '@/components/DateTimePicker.vue'
+import { localInputToUtc } from '@/utils/time.js'
 
 const route = useRoute()
 const auth = useAuth()
@@ -240,7 +241,7 @@ async function doDeploy() {
     api_url: apiUrl.value,
     k8s_ns: k8sNs.value.trim(),
     deploy_note: deployNote.value,
-    scheduled_at: schedule.value,
+    scheduled_at: localInputToUtc(schedule.value),
     bot_id: parseInt(botId.value) || 0,
     lang: locale.value
   }

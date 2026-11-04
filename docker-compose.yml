@@ -2,7 +2,7 @@
 # 数据库推荐 MySQL / MariaDB
 #
 # 配置分两层:
-#   · 部署层 -- 根目录 .env(数据库 / SECRET_KEY / 镜像仓库凭据 / CI 凭据 / TZ),下面 env_file 注入容器;
+#   · 部署层 -- 根目录 .env(数据库 / SECRET_KEY / 镜像仓库凭据 / CI 凭据),下面 env_file 注入容器;
 #     镜像仓库地址与类型不在此配置:由 Glue 契约端点 GET /api/integration/services/cd 下发(Glue ≥ 2.11).
 #   · 业务层 -- config/app.env(超时 / 缓存 TTL / 间隔 / 截断 / 命名空间 / 角色等),随镜像发布;
 #   优先级:进程环境变量 > 根 .env > config/app.env > 代码默认值 --
@@ -106,8 +106,6 @@ services:
       PYTHONUNBUFFERED: "1"
       HOST: 0.0.0.0
       PORT: 8081
-      # ── 时区 ──
-      TZ: ${TZ:-Asia/Shanghai}
       # ── CI API 集成(和 PHP Devops-Glue 搭配时启用)──
       #CI_API_URL: http://devops-glue
       #CI_API_TOKEN: dg_xxx

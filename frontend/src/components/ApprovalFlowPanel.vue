@@ -31,11 +31,11 @@
     <!-- 元信息 -->
     <div class="flow-meta">
       <span>{{ $t('approvals.flowRequester') }}: {{ approval.requester || '—' }}</span>
-      <span v-if="scheduledAt" class="flow-sched-badge" :title="t('approvals.scheduleTip', { time: scheduledAt.slice(0, 16) })">
-        ⏰ [{{ t('approvals.scheduledBadge') }}] {{ scheduledAt.slice(0, 16) }}
+      <span v-if="scheduledAt" class="flow-sched-badge" :title="t('approvals.scheduleTip', { time: toLocalDisplay(scheduledAt) })">
+        ⏰ [{{ t('approvals.scheduledBadge') }}] {{ toLocalDisplay(scheduledAt) }}
       </span>
       <span v-if="approval.approver">
-        {{ $t('approvals.flowApprover') }}: {{ approval.approver }}<template v-if="approval.approved_at"> · {{ approval.approved_at }}</template>
+        {{ $t('approvals.flowApprover') }}: {{ approval.approver }}<template v-if="approval.approved_at"> · {{ toLocalDisplay(approval.approved_at) }}</template>
       </span>
       <span v-if="approval.deploy_id">
         {{ $t('approvals.flowDeployId') }}<a :href="`/logs?deploy_id=${approval.deploy_id}`">#{{ approval.deploy_id }}</a>
@@ -72,6 +72,7 @@ import { useToast } from '@/composables/useToast'
 import { useError } from '@/composables/useError'
 import { useSseStream } from '@/composables/useSseStream'
 import { confirm } from '@/composables/useConfirm'
+import { toLocalDisplay } from '@/utils/time.js'
 
 const props = defineProps({
   approvalId: { type: [Number, String], default: 0 },
@@ -147,7 +148,7 @@ function barDone(i) {
 const hintText = computed(() => {
   const s = status.value
   if (s === 'approved' && approval.value) {
-    if (scheduledAt.value) return t('approvals.scheduleTip', { time: scheduledAt.value.slice(0, 16) })
+    if (scheduledAt.value) return t('approvals.scheduleTip', { time: toLocalDisplay(scheduledAt) })
     if (!approval.value.can_execute) return t('approvals.flowHintApprovedOther')
   }
   return t(`approvals.flowHint_${s}`) || ''

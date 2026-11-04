@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { setDisplayTimezone } from '../utils/time.js'
 
 const version = ref('')
 let loading = null
@@ -9,6 +10,7 @@ async function load() {
     if (!r.ok) return
     const d = await r.json()
     if (d && d.version) version.value = d.version
+    if (d && 'display_timezone' in d) setDisplayTimezone(d.display_timezone)
   } catch {
   }
 }

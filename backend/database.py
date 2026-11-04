@@ -585,6 +585,7 @@ class Database:
                         database=settings.db_name,
                         charset="utf8mb4",
                         cursorclass=pymysql.cursors.DictCursor,
+                        init_command="SET time_zone='+00:00'",
                     )
         except ImportError as e:
             raise RuntimeError("MySQL 模式需要安装 dbutils: pip install dbutils") from e
@@ -725,6 +726,7 @@ class Database:
             database=settings.db_name,
             charset="utf8mb4",
             cursorclass=pymysql.cursors.DictCursor,
+            init_command="SET time_zone='+00:00'",
         )
         return conn
 
@@ -769,7 +771,7 @@ class Database:
     def _ensure_cd_tables(self, conn):
         """SQLite 模式自动建表 + 索引(仅 enabled=1 且 provision='auto' 时调用);结尾做清单自检."""
         PK = "INTEGER PRIMARY KEY AUTOINCREMENT"
-        NOW = "datetime('now','localtime')"
+        NOW = "datetime('now')"
 
         conn.execute(f"""CREATE TABLE IF NOT EXISTS cd_servers (
             id {PK},

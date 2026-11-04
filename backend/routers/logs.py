@@ -1,7 +1,7 @@
 """部署日志路由"""
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 
@@ -73,7 +73,7 @@ def integration_deploy_logs(
     else:
         # 日期都不传时默认近 30 天
         where.append("created_at >= ?")
-        params.append((datetime.now() - timedelta(days=_DEFAULT_WINDOW_DAYS)).strftime("%Y-%m-%d"))
+        params.append((datetime.now(timezone.utc) - timedelta(days=_DEFAULT_WINDOW_DAYS)).strftime("%Y-%m-%d"))
 
     where_sql = f" WHERE {' AND '.join(where)}" if where else ""
 
