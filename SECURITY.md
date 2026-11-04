@@ -8,12 +8,10 @@ As this project is maintained by an individual with limited resources, security 
 | ------- | --------- |
 | **Devops-Glue** | |
 | v2.11.x | ✅ Active support — will receive security updates |
-| v2.10.x | ✅ Active support — will receive security updates |
-| v2.9.0 and below | ❌ No longer supported — please upgrade to the latest version |
+| v2.10.0 and below | ❌ No longer supported — please upgrade to the latest version |
 
 | **Devops-CD** | |
-| CD v1.6.1 | ✅ Active support — will receive security updates |
-| CD v1.6.0 | ✅ Active support — will receive security updates |
+| CD v1.6.x | ✅ Active support — will receive security updates |
 | CD v1.5.7 and below | ❌ No longer supported — please upgrade to the latest version |
 
 **Notes**:

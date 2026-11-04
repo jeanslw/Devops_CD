@@ -18,8 +18,8 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 
 **[Chinese](README_ZH-CN.md)**
 
-![System Overview](system_info.png)
-![System Status](system_running.png)
+![System Overview](docs/Images/system_info.png)
+![System Status](docs/Images/system_running.png)
 
 ## Overview
 
