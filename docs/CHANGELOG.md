@@ -13,6 +13,7 @@
   - Failed decryption of server passwords or private keys now reports an error instead of connecting to SSH with an empty password.
   - The Web Shell session token is read from the cookie only, no longer from the query string; blocked dangerous commands are logged.
   - The registry login address is properly quoted.
+  - On token expiry or dependency outage the app now returns to the login page with a notice instead of degrading the sidebar to a single item.
 - **Improved**
   - Backend log timestamps are unified to UTC.
 
