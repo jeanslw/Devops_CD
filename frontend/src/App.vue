@@ -81,11 +81,14 @@ onUnmounted(() => {
 watch(() => auth.state.authenticated, (val, oldVal) => {
   if (val && !oldVal) {
     router.push('/')
+  } else if (!val && oldVal) {
+    const reason = auth.state.logoutReason
+    router.replace({ path: '/login', query: reason ? { reason } : undefined })
   }
 })
 
-watch(() => auth.state.loadError, (val) => {
-  if (val) toast(t('errors.load_user_failed'), false)
+watch(() => auth.state.serviceUnavailable, (val) => {
+  if (val) toast(t('errors.service_unavailable'), false)
 })
 
 const unsubscribeRoute = router.afterEach(() => {

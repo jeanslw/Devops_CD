@@ -4,9 +4,23 @@ import { reactive } from 'vue'
 const state = reactive({
   authenticated: !!sessionStorage.getItem('cd_authed'),
   initialized: !!sessionStorage.getItem('cd_authed'),
-  user: null,          // { username, role, permissions: [...] }
-  loadError: false,    // 首次加载用户信息失败
+  user: restoreUser(),
+  serviceUnavailable: false,
+  logoutReason: null,
 })
+
+function restoreUser() {
+  try {
+    const raw = sessionStorage.getItem('cd_user')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function persistUser() {
+  if (state.user) sessionStorage.setItem('cd_user', JSON.stringify(state.user))
+}
 
 // bootstrap 去重
 let bootstrapping = false
@@ -32,27 +46,33 @@ export function useAuth() {
       const r = await fetch('/api/me', { headers: A() })
       if (r.ok) {
         state.user = await r.json()
-        state.loadError = false
+        state.serviceUnavailable = false
+        state.logoutReason = null
+        persistUser()
       } else if (r.status === 401) {
-        logout()  // cookie 失效/过期:清理本地状态
+        logout('session_expired')
+      } else if (state.user) {
+        state.serviceUnavailable = true
       } else {
-        if (!state.user) state.loadError = true
-        state.user = null
+        logout('service_unavailable')
       }
     } catch {
-      if (!state.user) state.loadError = true
+      if (state.user) state.serviceUnavailable = true
+      else logout('service_unavailable')
     }
   }
 
-  async function logout() {
+  async function logout(reason = null) {
     try {
-      // 通知服务端吊销会话 + 清除 HttpOnly cookie;失败不影响本地清理
       await fetch('/api/logout', { method: 'POST', headers: A() })
     } catch {
     }
     state.authenticated = false
     state.user = null
+    state.serviceUnavailable = false
+    state.logoutReason = reason
     sessionStorage.removeItem('cd_authed')
+    sessionStorage.removeItem('cd_user')
     state.initialized = false
   }
 
@@ -67,7 +87,9 @@ export function useAuth() {
         sessionStorage.setItem('cd_authed', '1')
         state.authenticated = true
         state.initialized = true
-        state.loadError = false
+        state.serviceUnavailable = false
+        state.logoutReason = null
+        persistUser()
       }
     } catch {
     } finally {
@@ -77,7 +99,7 @@ export function useAuth() {
 
   function handle401(r) {
     if (r.status === 401) {
-      logout()
+      logout('session_expired')
       return true
     }
     return false

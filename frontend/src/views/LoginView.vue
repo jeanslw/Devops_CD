@@ -43,6 +43,14 @@ onMounted(() => {
     }
     err.value = te(key) ? t(key, params) : t('login.loginFailed')
     router.replace({ path: route.path })
+    return
+  }
+  const reason = route.query.reason
+  if (typeof reason === 'string' && reason) {
+    const map = { session_expired: 'errors.session_expired', service_unavailable: 'errors.service_unavailable' }
+    const fallbackKey = map[reason]
+    err.value = fallbackKey && te(fallbackKey) ? t(fallbackKey) : t('login.loginFailed')
+    router.replace({ path: route.path })
   }
 })
 </script>
