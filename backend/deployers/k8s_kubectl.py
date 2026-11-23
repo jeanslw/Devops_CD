@@ -1,6 +1,7 @@
 """K8S kubectl 部署模式 - set image(默认) / YAML apply(高级) + 部署后镜像断言"""
 
 import logging
+import re
 import secrets
 import shlex
 
@@ -23,6 +24,21 @@ from backend.deployers.k8s_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _kubectl_delete_missing(err: str, out: str) -> bool:
+    """仅认 kubectl 明确的资源不存在报错,避免把含 'not found' 的其它错误当成删除成功.
+
+    kubectl 的真实格式:
+      Error from server (NotFound): deployments.apps "x" not found
+      Error from server (NotFound): the server could not find the requested resource
+    普通文本里的 'xxx not found'(如认证插件报错)不算.
+    """
+    text = f"{err or ''}\n{out or ''}".lower()
+    if "error from server (notfound)" in text:
+        return True
+    # 兼容老版本 kubectl 输出:deployments.apps "x" not found
+    return bool(re.search(r'\b(deployments?|pods?|services?|configmaps?)\b[^"\n]*"[^"]+"\s+not\s+found', text))
 
 
 class KubectlDeployer(K8sSubDeployer):
@@ -48,8 +64,6 @@ class KubectlDeployer(K8sSubDeployer):
         ssh = None
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
-
-            # ── 解析同源资源名:显式值 > YAML 中的 Deployment 名 > 项目短名 ──
             name = explicit_name or project.split("/")[-1]
             yaml_content = ""
             if yaml_path:
@@ -81,7 +95,7 @@ class KubectlDeployer(K8sSubDeployer):
                 cmd = f"kubectl delete deployment/{shlex.quote(name)}{ns_flag}"
 
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
-            success = ec == 0 or "not found" in (err or "").lower() or "not found" in (out or "").lower()
+            success = ec == 0 or _kubectl_delete_missing(err, out)
             return {
                 "success": success,
                 "output": (warning + (err or out))[: settings.log_truncate_chars],
@@ -99,7 +113,6 @@ class KubectlDeployer(K8sSubDeployer):
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
         ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
-        # 与 deploy / stop 同一命名策略:显式工作负载名 > YAML 声明名 > 项目短名
         explicit_name = (getattr(req, "target_app", "") or "").strip() or (getattr(req, "k8s_deploy", "") or "").strip()
 
         yaml_content = ""
@@ -133,7 +146,6 @@ class KubectlDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.exec_cmd", n=1, cmd=cmd))
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
 
-            # 等待回滚完成
             check_cancelled()
             rollout_out, rollout_err, rollout_ec = _exec_exit(
                 ssh,
@@ -166,7 +178,6 @@ class KubectlDeployer(K8sSubDeployer):
         """按 image_mode 分流:setimage(默认) / apply(高级)."""
         image_mode = (getattr(req, "image_mode", "") or "").strip().lower()
         if image_mode not in ("apply", "setimage"):
-            # 未显式指定:有 YAML 走 apply(兼容旧行为),无 YAML 走 set image
             image_mode = "apply" if getattr(req, "path", "") else "setimage"
         if image_mode == "setimage":
             return self._deploy_set_image(req, image, project, host, port, user, pwd, ssh_key, callback)
@@ -191,8 +202,6 @@ class KubectlDeployer(K8sSubDeployer):
         ssh = None
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
-
-            # ── 变更前:确认 Deployment 存在、容器名合法 ──
             doc, doc_err = _get_deployment_doc(ssh, deploy_name, namespace)
             if doc is None:
                 _log(callback, S("deploy_log.setimage_deploy_not_found", name=deploy_name))
@@ -223,7 +232,6 @@ class KubectlDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.current_version"))
             _log(callback, f"{container}: {before_image}")
 
-            # ── 一次变更:kubectl set image ──
             check_cancelled()
             image_arg = f"{container}={image}"
             cmd = f"kubectl set image deployment/{shlex.quote(deploy_name)} {shlex.quote(image_arg)}{ns_flag}"
@@ -238,7 +246,6 @@ class KubectlDeployer(K8sSubDeployer):
                 return {"success": False, "output": f"kubectl set image failed (exit {ec}):\n{out or err}"}
             _log(callback, S("deploy_log.setimage_applied", container=container, image=image))
 
-            # ── 原生完成信号:rollout status ──
             check_cancelled()
             _log(callback, S("deploy_log.waiting_pod"))
             rollout_out, rollout_err, rollout_ec = _exec_exit(
@@ -253,7 +260,6 @@ class KubectlDeployer(K8sSubDeployer):
             if rollout_err:
                 _log(callback, rollout_err)
 
-            # ── 变更后:断言实际镜像与目标一致 ──
             after_doc, after_err = _get_deployment_doc(ssh, deploy_name, namespace)
             after_image = _deployment_image(after_doc, container) if after_doc else ""
             if after_image:
@@ -298,7 +304,6 @@ class KubectlDeployer(K8sSubDeployer):
         tag = req.tag
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
-        # ns_flag 延后构建:留空 k8s_ns 时先解析 YAML 声明的 namespace(见 effective_ns)
 
         yaml_content = ""
         ssh = None
@@ -317,7 +322,6 @@ class KubectlDeployer(K8sSubDeployer):
             yaml_content = r.text
             _log(callback, S("deploy_log.yaml_download_ok"))
 
-        # 单次 SSH 连接:读取(本地文件),上传,部署全部共用
         ssh = ssh_connect(target, settings.ssh_timeout)
         try:
             if not req.path.startswith("http"):
@@ -329,10 +333,8 @@ class KubectlDeployer(K8sSubDeployer):
                     return {"success": False, "output": f"Remote YAML is empty or unreadable: {req.path}\n{err}"}
                 _log(callback, S("deploy_log.yaml_read_ok"))
 
-            # ── 先渲染再校验 ──
             yaml_content = _render_k8s_yaml(yaml_content, image, tag)
 
-            # kubectl 的 --namespace/-n 不覆盖 manifest 声明的 metadata.namespace;两者冲突时直接失败.
             try:
                 docs = list(yaml.safe_load_all(yaml_content))
             except yaml.YAMLError as exc:
@@ -348,7 +350,6 @@ class KubectlDeployer(K8sSubDeployer):
                 doc_ns = str(metadata.get("namespace") or "").strip()
                 if doc_ns and not manifest_ns:
                     manifest_ns = doc_ns
-                # rollout/pods 查询针对 Deployment,执行命名空间以 Deployment 声明为准
                 if kind == "Deployment" and doc_ns and not deploy_ns:
                     deploy_ns = doc_ns
                 if (
@@ -378,16 +379,12 @@ class KubectlDeployer(K8sSubDeployer):
                         ),
                     }
 
-            # 执行/验证统一使用的 namespace:请求填写优先;留空则以 YAML 声明为准.
-            # apply 不带 -n 时按 manifest 落位,rollout/pods 查询须带同一 -n.
             effective_ns = namespace or deploy_ns or manifest_ns
             ns_flag = f" -n {shlex.quote(effective_ns)}" if effective_ns else ""
 
             yaml_deploy_name = _get_deployment_name(yaml_content)
             if yaml_deploy_name and yaml_deploy_name != filter_name:
-                # 前端预检弹窗已确认,这里只打警告不拦截
                 _log(callback, S("deploy_log.yaml_name_mismatch", yaml_name=yaml_deploy_name, project=filter_name))
-            # 并发部署同一项目时固定路径会互相覆盖,故带随机后缀
             tmp = f"/tmp/k8s-{filter_name}-{secrets.token_hex(6)}.yaml"  # nosec
 
             _log(callback, S("deploy_log.uploading_yaml_k8s"))
@@ -399,7 +396,7 @@ class KubectlDeployer(K8sSubDeployer):
                 sftp.close()
             _log(callback, S("deploy_log.yaml_upload_k8s_ok"))
 
-            deploy_name = yaml_deploy_name or filter_name  # 以 YAML 声明的 Deployment 名为准
+            deploy_name = yaml_deploy_name or filter_name
             name_mismatch = yaml_deploy_name and yaml_deploy_name != filter_name
 
             deploy_log = []
@@ -413,7 +410,6 @@ class KubectlDeployer(K8sSubDeployer):
             is_first_deploy = False
             if not before.strip():
                 if name_mismatch:
-                    # 名字不匹配时 YAML Deployment 是新的,视为首次部署
                     is_first_deploy = True
                     _log(callback, S("deploy_log.first_deploy_pod", deploy=deploy_name))
                 else:
@@ -443,7 +439,6 @@ class KubectlDeployer(K8sSubDeployer):
             for i, c in enumerate(cmds):
                 check_cancelled()
                 _log(callback, S("deploy_log.exec_cmd", n=i + 1, cmd=c))
-                # kubectl apply 幂等,可安全重试;rollout restart 失败按原逻辑直接判败
                 if i == 0:
                     o, e, ec = retry_idempotent(
                         lambda: _exec_exit(ssh, c),
@@ -466,13 +461,11 @@ class KubectlDeployer(K8sSubDeployer):
                     _log(callback, S("deploy_log.deploy_error", error=e or f"exit code {ec}"))
                     return {"success": False, "output": f"{before_text}\n\nStep {i + 1} failed (exit {ec}):\n{o or e}"}
 
-            # 远端临时 YAML 用完即删,避免并发随机名文件长期堆积
             try:
                 ssh.exec_command(f"rm -f {shlex.quote(tmp)}")
             except Exception:
                 pass
 
-            # ── rollout status 等待部署完成 ──
             check_cancelled()
             _log(callback, S("deploy_log.waiting_pod"))
             rollout_cmd = f"kubectl rollout status deployment/{shlex.quote(deploy_name)}{ns_flag} --timeout={settings.k8s_rollout_timeout}s"
@@ -485,7 +478,6 @@ class KubectlDeployer(K8sSubDeployer):
             if rollout_err:
                 _log(callback, rollout_err)
 
-            # ── 部署后:查当前 Pod,排除旧 Pod ──
             _log(callback, S("deploy_log.after_version"))
             all_after = _kubectl_pods(ssh, deploy_name, effective_ns)
             if all_after.strip():
@@ -497,8 +489,6 @@ class KubectlDeployer(K8sSubDeployer):
                 after = all_after
             _log(callback, after)
 
-            # ── 成败判断:rollout status + 实际镜像断言 ──
-            # 只认 rollout 会放过"YAML 未引用 {IMAGE}:{TAG},实际没换镜像"的假成功.
             is_ok = rollout_ec == 0
             actual_images: list[str] = []
             assert_error = ""

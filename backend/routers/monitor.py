@@ -144,14 +144,12 @@ def _probe_server(srv) -> dict:
 
         elif monitor_type == "docker":
             entry["status"] = "available"
-            # 快速检测 docker 是否可用
             if not _ssh_cmd(ssh, "docker ps --format 'ok' 2>/dev/null | head -1"):
                 entry["status"] = "unavailable"
                 entry["hint"] = "Docker 不可用或权限不足"
 
-        else:  # ssh / 其他
+        else:
             entry["status"] = "available"
-            # 检测是否有支持的监控命令
             if not _ssh_cmd(ssh, "which top 2>/dev/null"):
                 entry["status"] = "unavailable"
                 entry["hint"] = "SSH 连接正常但缺少基础命令"

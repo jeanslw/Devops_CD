@@ -400,11 +400,11 @@ class TestFluxCD(unittest.TestCase):
                 return ("helmrelease.apps.toolkit.fluxcd.io/myapp", "", 0)
             return ("", "", 0)
 
-        name, kind = _discover_flux_resource(FakeSSH(handler), "myapp", "helmrelease")
+        name, kind = _discover_flux_resource(FakeSSH(handler), "myapp", kind="helmrelease")
         self.assertEqual((name, kind), ("myapp", "helmrelease"))
 
     def test_discover_flux_resource_fallback_empty(self):
-        _, kind = _discover_flux_resource(FakeSSH(lambda cmd: ("", "", 0)), "myapp", "helmrelease")
+        _, kind = _discover_flux_resource(FakeSSH(lambda cmd: ("", "", 0)), "myapp", kind="helmrelease")
         self.assertEqual(kind, "")
 
     def test_build_flux_image_patch_accepts_string_entries(self):
@@ -913,9 +913,20 @@ class TestKubectlStop(unittest.TestCase):
         self.assertNotIn("group/app", fake.commands[0])
 
     def test_falls_back_to_project_short_name(self):
-        result, fake = self._run(lambda cmd: ("", "not found", 1), self._req(target_app=""))
+        result, fake = self._run(
+            lambda cmd: (
+                "",
+                'Error from server (NotFound): deployments.apps "app" not found',
+                1,
+            ),
+            self._req(target_app=""),
+        )
         self.assertTrue(result["success"])
         self.assertIn("deployment/app", fake.commands[0])
+
+    def test_unrelated_not_found_is_not_success(self):
+        result, _ = self._run(lambda cmd: ("", "error: user not found in sudoers, permission denied", 1), self._req())
+        self.assertFalse(result["success"])
 
     def test_manifest_mode_warns_before_deleting_all_resources(self):
         result, fake = self._run(
@@ -953,6 +964,66 @@ class TestKubectlRollback(unittest.TestCase):
         req = types.SimpleNamespace(target_app="", k8s_deploy="", path="/opt/app.yaml", k8s_ns="")
         _, fake = self._run(handler, req)
         self.assertTrue(any("rollout undo deployment/api" in c for c in fake.commands), fake.commands)
+
+
+class TestArtifactDigestOnDemand(unittest.TestCase):
+    """v1.6.3 边界修复:digest 仅在按 digest 部署时解析,普通部署不做额外仓库查询."""
+
+    def _resolve(self, use_digest):
+        from backend.services.k8s_deploy_service import K8sDeployRequest, _resolve_image
+
+        req = K8sDeployRequest(project="group/app", tag="v1.0", cd_type="kubectl", use_digest=use_digest)
+        with (
+            patch("backend.services.k8s_deploy_service.CiService") as ci,
+            patch("backend.services.k8s_deploy_service.registry_base_url", return_value="hub.example.com"),
+            patch(
+                "backend.services.k8s_deploy_service.resolve_artifact_digest",
+                return_value="sha256:" + "a" * 64,
+            ) as resolve_mock,
+        ):
+            ci.return_value.resolve_harbor_repo.return_value = "group/app"
+            ci.return_value.resolve_project_key.return_value = "group/app"
+            image, _key, _short, digest = _resolve_image(MagicMock(), req)
+        return resolve_mock, image, digest
+
+    def test_use_digest_true_resolves_and_pins(self):
+        resolve_mock, image, digest = self._resolve(True)
+        resolve_mock.assert_called_once()
+        self.assertTrue(image.endswith("@sha256:" + "a" * 64))
+        self.assertEqual(digest, "sha256:" + "a" * 64)
+
+    def test_use_digest_false_skips_resolution(self):
+        resolve_mock, image, digest = self._resolve(False)
+        resolve_mock.assert_not_called()
+        self.assertEqual(image, "hub.example.com/group/app:v1.0")
+        self.assertEqual(digest, "")
+
+
+class TestArtifactDigestWrite(unittest.TestCase):
+    """部署记录 digest 落库收口:sha512 摘要 135 字符完整保存,超长异常值存空不写坏记录."""
+
+    def test_sha512_digest_kept_intact(self):
+        from backend.deploy_run import _artifact_digest_value
+
+        digest = "sha512:" + "b" * 128
+        self.assertEqual(_artifact_digest_value(digest), digest)
+
+    def test_sha256_digest_kept_intact(self):
+        from backend.deploy_run import _artifact_digest_value
+
+        digest = "sha256:" + "a" * 64
+        self.assertEqual(_artifact_digest_value(digest), digest)
+
+    def test_oversized_digest_dropped(self):
+        from backend.deploy_run import _artifact_digest_value
+
+        self.assertEqual(_artifact_digest_value("sha256:" + "a" * 400), "")
+
+    def test_blank_digest_stays_blank(self):
+        from backend.deploy_run import _artifact_digest_value
+
+        self.assertEqual(_artifact_digest_value(""), "")
+        self.assertEqual(_artifact_digest_value(None), "")
 
 
 if __name__ == "__main__":

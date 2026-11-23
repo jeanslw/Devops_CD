@@ -18,7 +18,6 @@ from backend.config import BASE_DIR, settings
 
 # SECRET_KEY 读取优先级: 环境变量 > CD 项目根目录的 .cd_secret_key 文件 > 自动生成并写入文件
 
-# 公开示例值视为未配置,强制使用随机密钥
 _INSECURE_DEFAULT_KEYS = frozenset({"devops_cd_2026", "change_me_to_secret"})
 
 # 兼容解密旧数据的固定盐
@@ -41,7 +40,6 @@ def _resolve_secret() -> str:
         try:
             stored = key_file.read_text(encoding="utf-8").strip()
         except (OSError, UnicodeDecodeError) as exc:
-            # 读取失败时中止启动,不覆盖原文件
             raise RuntimeError(
                 f"密钥文件 {key_file} 存在但读取失败（{exc}）。"
                 "请检查文件权限与内容，或备份后删除该文件并配置 SECRET_KEY。"
@@ -124,11 +122,8 @@ def _stored_salts() -> list[bytes]:
 
 
 _secret_raw = _resolve_secret()
-# 主密钥:盐从 SECRET_KEY 派生
 _fernet = Fernet(_derive_key(_secret_raw))
-# 兼容密钥 1:历史固定盐,解密旧数据
 _legacy_fernet = Fernet(_derive_key(_secret_raw, _LEGACY_SALT))
-# 兼容密钥 2..n:盐文件存在才加载,解密旧数据
 _salt_file_fernets = [Fernet(_derive_key(_secret_raw, salt)) for salt in _stored_salts()]
 
 # ── 公开 API ──
@@ -141,7 +136,7 @@ def encrypt(value: str) -> str:
     if not value:
         return value
     if value.startswith(ENCRYPT_PREFIX):
-        return value  # 已加密,不再重复加密
+        return value
     token = _fernet.encrypt(value.encode("utf-8"))
     return ENCRYPT_PREFIX + token.decode("utf-8")
 
@@ -157,22 +152,19 @@ def decrypt(value: str) -> str:
     if not value:
         return value
     if not value.startswith(ENCRYPT_PREFIX):
-        return value  # 明文历史数据,原样返回
+        return value
     token = value[len(ENCRYPT_PREFIX) :].encode("utf-8")
     try:
         return _fernet.decrypt(token).decode("utf-8")
     except InvalidToken:
-        # 旧数据:依次用兼容密钥重试
         for fallback in (_legacy_fernet, *_salt_file_fernets):
             try:
                 return fallback.decrypt(token).decode("utf-8")
             except InvalidToken:
                 continue
-        # 所有密钥均失败:密钥已更换或密文被篡改
         logging.getLogger(__name__).warning("decrypt failed: SECRET_KEY 已更换或密文被篡改，该字段按空值处理")
         return ""
     except ValueError:
-        # 非法 base64:密文损坏
         logging.getLogger(__name__).error("decrypt failed: 密文格式损坏（非法 base64），该字段按空值处理")
         return ""
 
@@ -195,7 +187,7 @@ def decrypt_strict(value: str) -> str:
     if not value:
         return value
     if not value.startswith(ENCRYPT_PREFIX):
-        return value  # 明文历史数据,原样返回
+        return value
     token = value[len(ENCRYPT_PREFIX) :].encode("utf-8")
     try:
         return _fernet.decrypt(token).decode("utf-8")

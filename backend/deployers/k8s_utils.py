@@ -7,7 +7,7 @@ import shlex
 import yaml
 
 from backend.deploy_run import DeployCancelled, get_cancel_checker
-from backend.deployers.base import _ssh_cmd  # 统一 SSH 工具(含 errors="replace")
+from backend.deployers.base import _ssh_cmd
 from backend.services.registry_provider import registry_base_url
 
 
@@ -29,7 +29,6 @@ def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:
     try:
         ec = stdout.channel.recv_exit_status()
     except Exception:
-        # channel 异常关闭时 fallback:有 stderr 则视为失败
         ec = 1
     return out, err, ec
 
@@ -69,7 +68,6 @@ def _deployment_image(doc: dict, container: str) -> str:
 
 def _kubectl_pods(ssh, deploy_name="", namespace="", label=""):
     """获取 K8S pod 列表:优先按 label 选择器,其次按 Deployment 名前缀,不盲猜子串"""
-    # namespace 可能来自用户请求 / YAML 声明,必须转义后再拼进远程 shell 命令
     ns_flag = f"-n {shlex.quote(namespace)} " if namespace else ""
     selector = f"-l {shlex.quote(label)} " if label else ""
     cmd = (
@@ -77,8 +75,6 @@ def _kubectl_pods(ssh, deploy_name="", namespace="", label=""):
         "STATUS:.status.phase,REASON:.status.reason,DELETING:.metadata.deletionTimestamp --no-headers 2>/dev/null"
     )
     if deploy_name and not label:
-        # 前缀匹配:K8s Pod 命名规则 = {deploy}-{rs-hash}-{pod-hash}
-        # grep "^{name}-" 锚定带 hash 的前缀,app 不匹配 app-backend
         cmd += f" | grep -E '^{re.escape(deploy_name)}-[a-f0-9]'"
     return _ssh_cmd(ssh, cmd)
 
@@ -131,7 +127,6 @@ def _rename_deployment_in_yaml(yaml_content: str, new_name: str) -> tuple[str, s
     if not old_name or old_name == new_name:
         return yaml_content, old_name
 
-    # 行级精确替换:只改 YAML key 值位置
     lines = yaml_content.split("\n")
     kv_prefixes = (
         "name:",
@@ -147,16 +142,13 @@ def _rename_deployment_in_yaml(yaml_content: str, new_name: str) -> tuple[str, s
         list_prefix = ""
         if stripped.startswith("- "):
             list_prefix = "- "
-            stripped = stripped[2:]  # 去掉 "- "
-        # 替换 label/name 值
+            stripped = stripped[2:]
         for prefix in kv_prefixes:
             if stripped.startswith(prefix) and stripped[len(prefix) :].strip() == old_name:
                 lines[i] = f"{indent}{list_prefix}{prefix} {new_name}"
                 break
-        # 替换 Service name 中 "{old_name}-svc" 模式
         if stripped.startswith("name:") and stripped[len("name:") :].strip() == f"{old_name}-svc":
             lines[i] = f"{indent}{list_prefix}name: {new_name}-svc"
-        # 替换 env value 引用
         if stripped.startswith("value:") and stripped[len("value:") :].strip() == f'"{old_name}"':
             lines[i] = f'{indent}{list_prefix}value: "{new_name}"'
 
@@ -180,7 +172,6 @@ def _get_deployment_name(yaml_content: str) -> str:
 
 def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     if "@" in image:
-        # digest 引用已固定内容,不再拼 tag,避免渲染出 repo@sha256:xxx:v2.0 这类非法引用
         repo = image.split("@", 1)[0]
         return (
             yaml_content.replace("{IMAGE}:{TAG}", image)
@@ -191,15 +182,12 @@ def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
     image_parts = image.rsplit(":", 1)
     full_image_name = image_parts[0]
     reg = registry_base_url()
-    # 剥离原始 registry,只保留镜像路径(如 mycode/diagnosis-runtime)
     image_name = full_image_name[len(reg) + 1 :] if reg and full_image_name.startswith(reg + "/") else full_image_name
-    # 统一以 .env 的 registry 拼接最终镜像地址
     final_image = f"{reg}/{image_name}:{tag}" if reg else f"{image_name}:{tag}"
     final_image_name = f"{reg}/{image_name}" if reg else image_name
 
     if "{IMAGE}:{TAG}" in yaml_content:
         yaml_content = yaml_content.replace("{IMAGE}:{TAG}", final_image)
-    # 注意:{IMAGE} 必须先于 {IMAGE_NAME} 替换
     return yaml_content.replace("{IMAGE}", final_image).replace("{IMAGE_NAME}", final_image_name).replace("{TAG}", tag)
 
 

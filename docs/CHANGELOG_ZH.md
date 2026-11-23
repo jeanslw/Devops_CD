@@ -8,6 +8,7 @@
   - Argo CD 部署校验同步操作状态，并要求 revision 推进或目标镜像已落地，避免停在旧版本却判成功。
   - Flux CD 部署必须显式填写资源名与类型（HelmRelease / Kustomization），不再扫描命名空间猜目标。
   - 部署时解析并记录 manifest digest；kubectl 与 SSH 可选按 `repo@sha256` 精确部署。
+  - 按 digest 部署的解析改为仅勾选时执行，普通部署不再为记录 digest 多查一次仓库全量 tag 列表。
   - SSH / Compose 新增「失败即停」与目标机验收命令（部署成功后执行，非 0 即判失败）。
   - Helm 镜像 values key 可配置，默认 `image.repository` / `image.tag`。
 - **变更**
@@ -21,6 +22,7 @@
   - kubectl 停止使用 `group/app` 拼出非法 Deployment 名，以及按 YAML 停止时连带删除 Service/ConfigMap 的问题。
   - kubectl 回滚未读取 `target_app`，工作负载名与项目短名不一致时可能回滚到错误对象；现与 deploy / stop 使用同一命名策略。
   - kubectl set image 未回退兼容字段 `k8s_deploy`，旧客户端仅填该字段时可能部署到项目短名；现与 stop / rollback 一致。
+  - 部署记录的 digest 列按 128 字符截断，sha512 摘要（135 字符）会变成无效值；列宽加到 256，超长异常值改为存空并记日志。
   - `use_digest` 与 YAML apply 组合会渲染出 `repo@sha256:tag` 非法引用；现在 apply 模式直接拒绝 digest 固定，渲染器也不再对 digest 拼接 tag。
   - Flux 被 suspend 或未协调时，旧 Deployment 的 `rollout status` 成功会被误判为部署成功；新增 Deployment 镜像断言，与 kubectl 判定对齐。
   - kubectl apply 多文档清单时，rollout / Pod 查询改为使用 Deployment 声明的命名空间，避免因首个资源的 namespace 不同而查错。

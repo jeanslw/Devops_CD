@@ -43,24 +43,24 @@ logger = logging.getLogger(__name__)
 class K8sDeployRequest(BaseModel):
     project: str
     tag: str
-    cd_type: str = "kubectl"  # kubectl | argocd | fluxcd | helm
+    cd_type: str = "kubectl"
     cluster_id: int = 0
-    path: str = ""  # YAML path for kubectl apply mode / chart path for helm
-    api_url: str = ""  # Argo CD / Flux API base
-    k8s_ns: str = ""  # 留空不传 -n,namespace 以 YAML 声明为准;填写后执行/验证统一使用该 namespace
-    image_mode: str = ""  # kubectl: setimage(默认) | apply(高级);留空按 path 推导
-    container: str = ""  # setimage 模式的目标容器名(必填,由集群校验)
-    target_app: str = ""  # 目标工作负载名:kubectl/Stop 的 Deployment、Flux 的 HelmRelease/Kustomization
-    k8s_deploy: str = ""  # 兼容字段:旧客户端用 k8s_deploy 指定 Deployment 名,target_app 为空时回退
-    flux_kind: str = ""  # Flux 资源类型:helmrelease(默认) | kustomization
-    helm_repo_key: str = ""  # Helm chart 的镜像仓库 values key,默认 image.repository
-    helm_tag_key: str = ""  # Helm chart 的镜像 tag values key,默认 image.tag
-    use_digest: bool = False  # kubectl 是否按 digest 部署(需能解析该 tag 的 manifest digest)
-    stop_mode: str = ""  # 停止方式:空=只删工作负载;manifest=按 YAML 删除清单内全部资源(高危)
-    deploy_note: str = ""  # 部署说明(记录到 cd_deploy_logs.deploy_note)
-    scheduled_at: str = ""  # 可选定时发布:'YYYY-MM-DD HH:MM[:SS]',空=不启用定时(按常规审批/直通流程)
+    path: str = ""
+    api_url: str = ""
+    k8s_ns: str = ""
+    image_mode: str = ""
+    container: str = ""
+    target_app: str = ""
+    k8s_deploy: str = ""
+    flux_kind: str = ""
+    helm_repo_key: str = ""
+    helm_tag_key: str = ""
+    use_digest: bool = False
+    stop_mode: str = ""
+    deploy_note: str = ""
+    scheduled_at: str = ""
     bot_id: int = 0
-    lang: str = "en"  # 前端当前语言 en/zh
+    lang: str = "en"
 
 
 def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
@@ -86,11 +86,7 @@ def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
 
 
 def _resolve_image(db, req):
-    """解析镜像地址,返回 (image, project_key, project_short, digest) 或抛异常.
-
-    digest 始终尽力解析并随部署记录保存;命中 use_digest 时用 `repo@sha256:...` 精确部署.
-    目前只允许 kubectl 按 digest 部署:Helm/Argo/Flux 的镜像参数约定不同,不静默降级.
-    """
+    """解析镜像地址,返回 (image, project_key, project_short, digest) 或抛异常"""
     svc = CiService(db)
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
@@ -104,8 +100,9 @@ def _resolve_image(db, req):
     except RegistryConfigError as e:
         # 仓库地址缺失:按参数校验失败返回(error_key=None → 前端展示 message)
         raise ValidationError(str(e), error_key=None) from e
-    digest = resolve_artifact_digest(harbor_repo, req.tag)
-    if getattr(req, "use_digest", False):
+    use_digest = bool(getattr(req, "use_digest", False))
+    digest = resolve_artifact_digest(harbor_repo, req.tag) if use_digest else ""
+    if use_digest:
         if req.cd_type != "kubectl":
             raise ValidationError(
                 "digest 固定当前仅支持 kubectl 模式；Helm/Argo/Flux 的镜像参数约定不同",
@@ -141,14 +138,7 @@ def _deploy_k8s_core(
     approval_id=0,
     artifact_digest="",
 ):
-    """执行 K8S 部署核心流程:并发锁 + running 记录 + 取消 + 耗时 + 参数快照.
-
-    返回 deployer 的结果 dict(含 deploy_id);被取消时返回 {'success': False, 'cancelled': True}.
-    通知由调用方负责(区分同步/流式),不阻塞 SSE 结束信号.
-
-    rollback=True 时走 deployer 原生回滚(kubectl rollout undo / helm rollback),
-    而非重放旧 tag 的普通部署.
-    """
+    """执行 K8S 部署核心流程:并发锁 + running 记录 + 取消 + 耗时 + 参数快照"""
     # ── tag 白名单(同步/流式/审批重放/回滚重放的统一收口)──
     try:
         validate_tag(req.tag)

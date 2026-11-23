@@ -86,7 +86,6 @@ def prepare_rollback(
       直接调集群原生回退命令(rollout undo / helm rollback / argocd rollback),不看 tag 记录.
     - 重放回滚(fluxcd/ssh/compose,tag 空):找上一版不同 tag 的成功记录,复用其参数快照重放.
     """
-    # 先定模式(用于判别原生回滚 + 取上下文):deploy_type 优先,否则取 before_deploy_id 记录的 deploy_type
     mode = deploy_type
     if before_deploy_id:
         ref = _find_record(db, project, before_deploy_id)
@@ -96,7 +95,6 @@ def prepare_rollback(
 
     native = mode in ("k8s/kubectl", "k8s/helm", "k8s/argocd")
 
-    # 回滚 tag 过同一白名单
     if tag:
         try:
             validate_tag(tag)
@@ -104,17 +102,14 @@ def prepare_rollback(
             raise ValidationError(str(e), error_key="errors.deploy_validation") from e
 
     if tag:
-        # 指定 tag → 重放:以被回滚记录为上下文(默认该模式最新成功记录),替换 tag
         source = (
             _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
         )
     elif native:
-        # 原生回滚:以被回滚记录为上下文
         source = (
             _find_record(db, project, before_deploy_id) if before_deploy_id else _find_latest_success(db, project, mode)
         )
     else:
-        # 重放回滚:找上一版不同 tag 的成功记录
         source = find_rollback_source(db, project, before_deploy_id, mode)
 
     if not source:
@@ -127,18 +122,14 @@ def prepare_rollback(
     if not params.get("deploy_type"):
         raise ValidationError("该部署记录缺少回滚所需参数快照", error_key="errors.rollback_unsupported")
 
-    # 指定 tag 属于 replay:按快照重放,目标 tag 替换为用户指定值
     rollback_type = "native" if (native and not tag) else "replay"
     params["rollback_type"] = rollback_type
 
-    # 指定 tag → 替换目标 tag(重放到该版本)
     if tag:
         params["tag"] = tag
 
-    # 说明 = 回滚标记(单级)+ 本次新填的说明;不复用源记录快照里的 deploy_note.
     marker = f"[回滚到 {tag}]" if tag else f"[回滚 #{source['id']}]"
     user_note = (note or "").strip()
-    # 列宽 512:优先保住回滚标记,超长部分截断用户说明
     max_note_len = 512 - len(marker) - 1
     if max_note_len > 0 and len(user_note) > max_note_len:
         user_note = user_note[:max_note_len]
@@ -150,7 +141,6 @@ def prepare_rollback(
     deploy_type_val = params["deploy_type"]
     server_ids = params.get("server_ids") or ""
 
-    # 仅"无 tag 且原生模式"走原生回退命令;指定 tag 或重放模式都走重放
     rollback_flag = native and not tag
     params["_rollback"] = rollback_flag
     gate = gate_deploy(

@@ -28,13 +28,11 @@ class HelmDeployer(K8sSubDeployer):
         release_name = project.split("/")[-1] if "/" in project else project
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
-            # 先查 release 是否存在
             _, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
             if list_ec != 0:
                 ssh.close()
                 return {"success": False, "output": f"helm list failed: {list_err or 'unknown error'}"}
 
-            # 执行 uninstall(始终执行,让 helm 告诉我们结果)
             cmd = f"helm uninstall {shlex.quote(release_name)}{ns_flag}"
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
             ssh.close()
@@ -56,7 +54,6 @@ class HelmDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.rollback_start", name=release_name))
             ssh = ssh_connect(target, settings.ssh_timeout)
 
-            # 先确认 release 存在
             _, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
             if list_ec != 0:
                 return {"success": False, "output": f"helm list failed (exit {list_ec}):\n{list_err or 'no output'}"}
@@ -93,10 +90,8 @@ class HelmDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.helm_connecting"))
             ssh = ssh_connect(target, settings.ssh_timeout)
 
-            # ── Release 名:直接用项目短名 ──
             helm_release = project.split("/")[-1]
 
-            # 检查 release 是否已存在
             existing, list_err, list_ec = _exec_exit(ssh, f"helm list -q{ns_flag}", timeout=settings.ssh_timeout)
             if list_ec != 0:
                 _log(
@@ -111,7 +106,6 @@ class HelmDeployer(K8sSubDeployer):
             else:
                 _log(callback, S("deploy_log.helm_installing", name=helm_release))
 
-            # ── 部署前快照 ──
             _log(callback, S("deploy_log.helm_getting_current"))
             before = _kubectl_pods(ssh, helm_release)
             if before.strip():
@@ -120,11 +114,8 @@ class HelmDeployer(K8sSubDeployer):
             else:
                 _log(callback, S("deploy_log.current_version_none"))
 
-            # ── 执行 helm upgrade --install ──
-            # 镜像 values key 可配置:默认 image.repository / image.tag,兼容常见 chart 约定
             repo_key = (getattr(req, "helm_repo_key", "") or "").strip() or "image.repository"
             tag_key = (getattr(req, "helm_tag_key", "") or "").strip() or "image.tag"
-            # 所有用户输入均经 shlex.quote()
             _log(callback, S("deploy_log.helm_start"))
             helm_cmd = (
                 f"helm upgrade --install {shlex.quote(helm_release)} {shlex.quote(chart)} "
@@ -138,13 +129,11 @@ class HelmDeployer(K8sSubDeployer):
             if helm_out:
                 _log(callback, helm_out)
 
-            # ── 部署后状态 ──
             _log(callback, S("deploy_log.helm_getting_after"))
             after = _kubectl_pods(ssh, helm_release)
             if after.strip():
                 _log(callback, after)
 
-            # helm status 也可能失败(release 未创建成功),用 _exec_exit 取退出码
             status_out, status_err, status_ec = _exec_exit(
                 ssh, f"helm status {shlex.quote(helm_release)}{ns_flag}", timeout=settings.ssh_timeout
             )
@@ -152,7 +141,6 @@ class HelmDeployer(K8sSubDeployer):
             if status_ec != 0:
                 status_out = f"(helm status unavailable: {status_err})" if status_err else "(helm status unavailable)"
 
-            # ── 成败判断:helm --wait 的 exit code ──
             if exit_code != 0:
                 hint = S("deploy_log.helm_value_key_hint", repo_key=repo_key, tag_key=tag_key)
                 _log(callback, S("deploy_log.helm_fail", error=helm_err or f"exit code {exit_code}"))
@@ -177,7 +165,6 @@ class HelmDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.helm_fail", error=str(e)))
             return {"success": False, "output": str(e)}
         finally:
-            # 提前 return / 抛异常的路径都要收口连接
             if ssh is not None:
                 try:
                     ssh.close()

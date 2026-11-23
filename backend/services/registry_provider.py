@@ -3,16 +3,6 @@
 对齐 Devops-Glue 2.11 的 RegistryProviderInterface:
   - HarborClient(harbor_client.py) → type="harbor",支持漏洞扫描 / 大小 / 推送时间
   - RegistryV2Provider(本文件)     → type="registry",只用 /v2/ 标准接口
-
-仓库标识统一为「至少两段的 OCI 仓库名」(如 mycode/runner-ci):Harbor 侧按首段拆 project,
-标准 registry 侧原样使用。
-
-上层(registry_service)只依赖本模块的抽象:契约下发的 registry_type 决定工厂产出哪个实现;
-能力开关(capabilities)随 GET /api/registry/config 下发给前端,前端据此隐藏
-不可用操作(标准 registry 无漏洞扫描接口与推送时间；digest / 大小由 Glue 解析 manifest 提供)。
-
-仓库类型与地址只取自 Glue 契约端点(GET /api/integration/services/cd)下发的 registry_type /
-registry_url;本地不再保存任何镜像仓库凭据,全部经 Glue API 代理(cd-service token)。
 """
 
 import logging
@@ -24,11 +14,8 @@ from backend.services.ci_client import CiClientError, get_ci_client
 
 logger = logging.getLogger("registry")
 
-# 能力开关:前端按此隐藏不可用列 / 按钮(Tag 删除已整体移除,两种类型都不提供)
 CAPABILITIES = {
     "harbor": {"scan": True, "size": True, "push_time": True},
-    # 标准 registry:2 无漏洞扫描接口、无推送时间(协议不记录)；
-    # 但 digest 与镜像大小可经 Glue 解析 manifest 提供，故 size=True。
     "registry": {"scan": False, "size": True, "push_time": False},
 }
 
@@ -42,10 +29,7 @@ HarborUnavailableError = RegistryUnavailableError
 
 
 class RegistryConfigError(RuntimeError):
-    """Glue 契约未下发镜像仓库地址时抛出(契约端点不可达,或 Glue 版本无该字段).
-
-    调用方转为 503 或参数错误;不返回本地回退地址.
-    """
+    """Glue 契约未下发镜像仓库地址时抛出,调用方转为 503 或参数错误;不返回本地回退地址"""
 
 
 class RegistryPermissionDeniedError(Exception):
@@ -53,29 +37,18 @@ class RegistryPermissionDeniedError(Exception):
 
 
 def registry_type_hint() -> str:
-    """契约下发的仓库类型原样提示:harbor | registry | ""(未取到).
-
-    取不到的原因:Glue 版本无该字段,或服务凭据缺 Harbor 查询权限(Glue 闸门将字段置空),
-    或契约端点短时不可达。显示层据此如实呈现「未知」,不得与默认类型混淆.
-    """
+    """契约下发的仓库类型原样提示:harbor | registry | ""."""
     hint, _ = contract_registry_hints()
     return (hint or "").strip().lower()
 
 
 def registry_type() -> str:
-    """当前镜像仓库类型(供提供方选择 / 能力开关):harbor(默认) | registry
-
-    契约提示为空时按 harbor 处理:旧版 Glue 只对接过 Harbor,取不到类型不等于标准仓库,
-    不能因脏值把扫描 / 大小 / 推送时间列全部隐藏.
-    """
+    """当前镜像仓库类型(供提供方选择 / 能力开关):harbor(默认) | registry"""
     return registry_type_hint() or "harbor"
 
 
 def registry_base_url() -> str:
-    """镜像仓库地址(scheme-less host[:port]),取自 Glue 契约下发的 registry_url
-
-    取不到时抛 RegistryConfigError。返回值不含 scheme 与尾部斜杠,客户端按需补 https / http 候选。
-    """
+    """镜像仓库地址(scheme-less host[:port]),取自 Glue 契约下发的 registry_url"""
     _, url = contract_registry_hints()
     if not url:
         raise RegistryConfigError(
@@ -91,20 +64,13 @@ def registry_base_url() -> str:
 
 
 def registry_url_raw() -> str:
-    """契约下发的原始仓库地址(保留 scheme,去掉尾部斜杠),未下发时返回 "".
-
-    与 registry_base_url() 的区别:此处不剥 scheme,供需要识别「明文 HTTP 仓库」的调用方
-    (部署前的 insecure-registries 放行校验)使用.
-    """
+    """契约下发的原始仓库地址(保留 scheme,去掉尾部斜杠),未下发时返回 ""."""
     _, url = contract_registry_hints()
     return (url or "").strip().rstrip("/")
 
 
 def registry_scheme() -> str:
-    """契约仓库地址声明的 scheme:http | https | ""(地址缺失或未声明 scheme).
-
-    未声明 scheme 时返回 "":docker 对无 scheme 的镜像引用默认走 HTTPS,故按 https 处理.
-    """
+    """契约仓库地址声明的 scheme:http | https | """ ""
     raw = registry_url_raw()
     if "://" not in raw:
         return ""
@@ -112,13 +78,7 @@ def registry_scheme() -> str:
 
 
 def registry_is_insecure() -> bool:
-    """契约是否把仓库声明为明文 HTTP(registry_url 以 http:// 开头).
-
-    声明为明文时,目标机 dockerd 必须把该 host[:port] 列入 daemon.json 的
-    insecure-registries,否则拉取只会走 HTTPS 并报
-    `server gave HTTP response to HTTPS client`——docker CLI 侧没有强制明文的开关,
-    这一步只能落到目标机配置上(见 deployers/registry_insecure.py).
-    """
+    """契约是否把仓库声明为明文 HTTP(registry_url 以 http:// 开头)."""
     return registry_scheme() == "http"
 
 
@@ -180,11 +140,7 @@ class RegistryProvider:
 
 
 class RegistryV2Provider(RegistryProvider):
-    """标准 OCI Distribution v2(registry:2)提供方:经 Glue /api/registry/* 代理.
-
-    该类型不提供漏洞扫描 / 推送时间能力(协议不记录推送时间)；
-    digest 与镜像大小由 Glue 解析 manifest 提供(能力开关 size=True).
-    """
+    """标准 OCI Distribution v2(registry:2)提供方:经 Glue /api/registry/* 代理."""
 
     type = "registry"
     CAPABILITIES = CAPABILITIES["registry"]
@@ -218,13 +174,6 @@ class RegistryV2Provider(RegistryProvider):
             raise HarborUnavailableError(f"镜像仓库不可用：{e}") from e
 
     def _fetch_all_tags(self, path: str) -> list:
-        """拉取全部 tag:Glue 2.11+ 的 tags 端点支持分页信封({items,total_pages,...}),按页遍历;
-        旧版 Glue / 降级路径返回裸数组(名称或详情对象),原样使用。
-
-        同步语义上要的是全量(tag 一个都不能少),分页的意义是把单次响应约束在
-        TAGS_PAGE_SIZE 条内(仓库 tag 上千时避免一次性大响应)。
-        任何一页失败照常抛错,由上层按同步失败处理,不静默丢页。
-        """
         first = self._get(path, params={"page": 1, "page_size": self.TAGS_PAGE_SIZE})
         if isinstance(first, dict) and isinstance(first.get("items"), list):
             all_tags = list(first["items"])
@@ -297,10 +246,7 @@ def get_registry_provider() -> RegistryProvider:
 
 
 def resolve_artifact_digest(repo_full: str, tag: str) -> str:
-    """按 tag 查 manifest digest(尽力而为).
-
-    仓库不可达 / 无权限 / 该 tag 尚未同步时返回 "";部署记录只做可追溯,不因取不到 digest 而失败.
-    """
+    """按 tag 查 manifest digest.仓库不可达 / 无权限 / 该 tag 尚未同步时返回 "";"""
     if not repo_full or not tag:
         return ""
     try:

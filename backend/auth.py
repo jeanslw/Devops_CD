@@ -16,14 +16,12 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 CD_SYSTEM = "cd"
-# 通配权限:Glue 对 super_admin 返回 ["*"];CD 侧识别该通配,不依赖角色名判断.
 WILDCARD_PERM = "*"
-# 两种拒绝措辞必须分开:先说"没启用"(去 CI 后台开开关),再说"表没建全"(按 provision 补表)
 CD_NOT_ENABLED_MSG = "CD 服务未启用：请在 Devops-Glue 后台「API集成服务」中启用 Devops-CD"
 CD_NOT_DEPLOYED_MSG = "CD 服务未部署：CD 数据表未建全"
 
 
-SESSION_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) ≈ 43 字符,256 位熵
+SESSION_TOKEN_BYTES = 32
 
 
 def _hash_token(token: str) -> str:
@@ -93,7 +91,6 @@ def cd_deploy_gate(db: Database) -> None:
     state = db.cd_integration_state()
     if not state.enabled:
         raise AppException(
-            # 动作细节走 detail.hint,不进入用户提示框
             CD_NOT_ENABLED_MSG,
             status_code=503,
             detail={"hint": cd_not_enabled_hint()},
@@ -164,7 +161,6 @@ def _oidc_identity(db: Database, token: str, username: str) -> dict:
         if exc.status_code in (401, 403):
             _revoke_session_quietly(db, token)
         raise
-    # 身份事实 → 准入判断(停用 / systems 不含 cd → 删会话行 + 401)
     if _identity_disabled(ident):
         _revoke_session_quietly(db, token)
         raise AppException("该账号已被停用，请联系管理员", status_code=401, error_key="errors.user_disabled")
@@ -185,7 +181,6 @@ def verify_token(
     if not token:
         raise HTTPException(401, "Please login first")
 
-    # 部署闸门先于会话查询:缺表时返回 503 而非 500
     cd_deploy_gate(db)
 
     sess = _oidc_session(db, token)
@@ -215,8 +210,6 @@ def get_current_user(
     token = _extract_token(request, credentials)
     if not token:
         raise HTTPException(401, "Please login first")
-
-    # 部署闸门:与 verify_token 一致
     cd_deploy_gate(db)
 
     sess = _oidc_session(db, token)
@@ -245,13 +238,10 @@ def require_perm(perm_key: str):
     return checker
 
 
-# ── 部署权限映射:deploy_type / cd_type → 需要的 permission key ──
-# 顶层 blanket 权限 cd.deploy-manage 隐含所有子权限(super_admin 也隐含所有)
 _DEPLOY_PERM_MAP: dict = {
     "ssh": "cd.deploy.single",
-    # 前端与部署器注册名为 "compose",权限键为 cd.deploy.docker
     "compose": "cd.deploy.docker",
-    "docker": "cd.deploy.docker",  # 兼容历史入参(老记录/外部脚本可能仍发 "docker")
+    "docker": "cd.deploy.docker",
     "k8s/kubectl": "cd.deploy.k8s",
     "k8s/argocd": "cd.deploy.k8s",
     "k8s/fluxcd": "cd.deploy.k8s",
@@ -268,7 +258,6 @@ def resolve_deploy_perm(deploy_type: str, cd_type: str = "") -> str:
         combined = f"{key}/{cd_type}" if key != "k8s" else f"k8s/{cd_type}"
         if combined in _DEPLOY_PERM_MAP:
             return _DEPLOY_PERM_MAP[combined]
-    # 纯类型匹配(ssh / docker / k8s)
     if key in _DEPLOY_PERM_MAP:
         return _DEPLOY_PERM_MAP[key]
     return _DEPLOY_PERM_MAP["ssh"]
@@ -307,7 +296,6 @@ def load_user_context(db: Database, username: str) -> dict:
     ident = glue_identity.get_identity(username)
     if _identity_disabled(ident):
         raise AppException("该账号已被停用，请联系管理员", status_code=403, error_key="errors.user_disabled")
-    # 与 _oidc_identity 同判据;本路径不删会话,用 403
     if not _has_system(ident.get("systems"), CD_SYSTEM):
         raise AppException(
             "该账号无 CD 访问权限，请联系管理员",

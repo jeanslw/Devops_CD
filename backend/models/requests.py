@@ -8,11 +8,11 @@ class ServerRequest(BaseModel):
     host: str
     port: int = 22
     user: str = "root"
-    auth_type: str = "password"  # password | key
+    auth_type: str = "password"
     password: str = ""
-    ssh_key: str = ""  # SSH 私钥内容(PEM 格式)
+    ssh_key: str = ""
     type: str = "ssh"
-    tags: str = ""  # 逗号分隔: prod,web
+    tags: str = ""
 
 
 class TagRequest(BaseModel):
@@ -21,62 +21,62 @@ class TagRequest(BaseModel):
 
 class BotRequest(BaseModel):
     name: str
-    type: str = "custom"  # dingtalk | wecom | custom
+    type: str = "custom"
     webhook_url: str
-    template: str = ""  # 消息模板,支持 {time}{project}{tag}{status}{image}{target}{mode}
+    template: str = ""
 
 
 class DeployRequest(BaseModel):
     project: str
     tag: str
-    deploy_type: str = "ssh"  # ssh | compose | k8s
-    server_ids: str = ""  # 逗号分隔的 server id,空=全部
-    target_path: str = ""  # compose路径 / K8s YAML / Ansible playbook
-    deploy_mode: str = ""  # docker | commands | ansible (SSH) / remote | commands (Compose)
-    commands: str = ""  # 自定义命令,支持 {image} {tag} {project} 占位符
-    yaml_content: str = ""  # 在线编写的 YAML,部署前写到服务器
-    k8s_ns: str = ""  # K8s namespace
-    k8s_deploy: str = ""  # K8s deployment 名
-    k8s_container: str = ""  # K8s container 名
-    env_file: str = ""  # docker-compose --env-file 路径,空=默认 .env
-    deploy_note: str = ""  # 部署说明(记录到 cd_deploy_logs.deploy_note)
-    cd_type: str = "kubectl"  # K8S 子模式:kubectl | helm | argocd | fluxcd
-    api_url: str = ""  # ArgoCD API 地址(带 scheme,如 https://argocd:30443),空则回退 https://{host}
-    stop_mode: str = ""  # K8s 停止方式:空=只删工作负载;manifest=按 YAML 删除清单内全部资源(高危)
-    target_app: str = ""  # 停止目标工作负载名(kubectl Deployment / Flux 资源)
-    flux_kind: str = ""  # Flux 停止时的资源类型:helmrelease | kustomization
-    use_digest: bool = False  # SSH 是否按 digest 部署(需能解析该 tag 的 manifest digest)
-    fail_fast: bool = False  # 批量部署首台失败即停止,剩余目标标记 skipped
-    health_cmd: str = ""  # 目标机侧验收命令(可选),在部署成功后于目标机执行,exit code 非 0 视为失败
-    scheduled_at: str = ""  # 可选定时发布:'YYYY-MM-DD HH:MM[:SS]',空=不启用定时(按常规审批/直通流程)
+    deploy_type: str = "ssh"
+    server_ids: str = ""
+    target_path: str = ""
+    deploy_mode: str = ""
+    commands: str = ""
+    yaml_content: str = ""
+    k8s_ns: str = ""
+    k8s_deploy: str = ""
+    k8s_container: str = ""
+    env_file: str = ""
+    deploy_note: str = ""
+    cd_type: str = "kubectl"
+    api_url: str = ""
+    stop_mode: str = ""
+    target_app: str = ""
+    flux_kind: str = ""
+    use_digest: bool = False
+    fail_fast: bool = False
+    health_cmd: str = ""
+    scheduled_at: str = ""
     bot_id: int = 0
-    lang: str = "en"  # 前端当前语言 en/zh,用于 bot 通知消息国际化
+    lang: str = "en"
 
 
 class CancelRequest(BaseModel):
-    deploy_id: int = 0  # 按部署 ID 取消(优先)
-    project: str = ""  # 无 deploy_id 时按项目定位进行中部署
+    deploy_id: int = 0
+    project: str = ""
 
 
 class RollbackRequest(BaseModel):
     project: str
-    deploy_id: int = 0  # 回滚到该记录之前的成功版本;0 = 回滚到最近一次成功版本的上一版
-    deploy_type: str = ""  # 限定回滚模式(如 k8s/argocd,compose,ssh),空则回滚最近成功版本的上一版(跨模式)
-    tag: str = ""  # 回滚到指定 tag(重放);空 = 无 tag(k8s 原生回退一步 / 其余重放上一版)
-    deploy_note: str = ""  # 本次回滚的部署说明(与回滚标记一起记录,不取源记录快照里的旧说明)
+    deploy_id: int = 0
+    deploy_type: str = ""
+    tag: str = ""
+    deploy_note: str = ""
     bot_id: int = 0
     lang: str = "en"
 
 
 class BuildTriggerRequest(BaseModel):
-    ref: str = ""  # GitLab CI 必填(分支/tag),Jenkins 可省略
-    variables: dict = {}  # 自定义构建变量
+    ref: str = ""
+    variables: dict = {}
 
 
 class WebhookRequest(BaseModel):
     name: str
-    bot_id: int = 0  # 关联 Bot,0 = 不自动转发
+    bot_id: int = 0
 
 
 class WebhookForwardRequest(BaseModel):
-    bot_id: int  # 手动转发到的目标 Bot
+    bot_id: int

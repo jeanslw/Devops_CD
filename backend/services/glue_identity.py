@@ -4,15 +4,6 @@ OIDC 模式下 CD 在请求路径上不读任何共享表:
   · 身份(role / systems / status)来自 GET /api/rbac/users/{username}
   · 权限(perm_key)来自 GET /api/rbac/roles/{role}/permissions
 其余判据都来自自有 cd_* 表.缓存只存进程内(单进程 uvicorn:不写数据库,零 DDL).
-
-三条不可动摇的语义:
-  1. 角色权限 404 ≠ 空权限:查不到角色是'身份不可用',fail-closed(拒绝),
-     不降级为空权限 -- 角色名写错/角色被删会成为一次静默降权(用户能登录,
-     界面正常,操作全 403,且没有任何诊断信号).
-  2. 软失败窗口(OIDC_STALE_GRACE_SECONDS):Glue 短暂不可达时用 last-known-good 放行,
-     超过窗口即 fail-closed;'身份已消失 / 角色悬空'这类明确否定立即生效,不进软失败.
-  3. role 原样透传(不 lower):Glue 侧 roleExists 精确匹配 roles.name,只 trim;
-     只有 username 需要 strip().lower().
 """
 
 import logging
@@ -33,9 +24,9 @@ logger = logging.getLogger("glue_identity")
 _USERS_PATH = "/api/rbac/users/{username}"
 _ROLE_PERMS_PATH = "/api/rbac/roles/{role}/permissions"
 _HTTP_TIMEOUT = 10
-_WARN_INTERVAL = 60  # 同一 key 的 WARN 最短间隔(秒):降权瞬间不刷日志
+_WARN_INTERVAL = 60
 
-_USERNAME_MAX_LEN = 128  # 与 Glue 侧 users.username 列宽同量级,超长即视为异常输入
+_USERNAME_MAX_LEN = 128
 
 
 class GlueIdentityError(AppException):
@@ -62,17 +53,11 @@ class _GlueUnavailable(Exception):
 # ── 进程内状态(键为 username / role)──
 
 _lock = threading.RLock()
-# username → {username, role, systems, status, permissions, usable, checked_at, last_ok_at}
 _identity_cache: dict[str, dict] = {}
-# role → {permissions, checked_at}:角色的权限清单(窗口 = OIDC_REVALIDATE_SECONDS).
-# 按**角色**缓存而非按用户:同一角色每窗口只查一次,N 个同角色用户共摊 1 次调用.
 _perm_cache: dict[str, dict] = {}
-# role → 负缓存过期时间戳:角色 404 在复核窗口内只查一次(fail-closed 但不高频打 Glue)
 _role_negative: dict[str, float] = {}
-# 限流日志:key → 上次 WARN 时间戳
 _last_warn: dict[str, float] = {}
 
-# GET 是幂等的,可带重试(瞬时 5xx / 连接抖动不该直接判用户登录失败)
 _session = requests.Session()
 _retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
 _session.mount("http://", HTTPAdapter(max_retries=_retry))
@@ -97,7 +82,6 @@ def _glue_get(path: str) -> tuple[int, Any]:
     """
     base = (settings.ci_api_url or "").rstrip("/")
     if not base:
-        # OIDC 模式下 CI_API_URL / CI_API_TOKEN 是身份来源,缺了就是"身份不可用"
         raise _GlueUnavailable("CI_API_URL 未配置：oidc 模式需要 Glue 地址作为身份来源")
     if not settings.ci_api_token:
         raise _GlueUnavailable("CI_API_TOKEN 未配置：oidc 模式下所有 Glue 调用都用 dg_ 服务 token（§3.1）")
@@ -129,9 +113,9 @@ def role_permissions(role: str) -> list[str]:
     · 200 但 permissions 为空数组 即 真实事实(角色存在但零权限)即 正常返回 [],由调用方按 deny 处理.
     · 非 200/404 即 暂时性失败(_GlueUnavailable),交给软失败窗口.
     """
-    role = (role or "").strip()  # 只 trim,不 lower(lower 会导致 404)
+    role = (role or "").strip()
     if not role:
-        return []  # 无角色:deny-by-default(与 local 模式"无角色 = 空权限"同口径)
+        return []
 
     now = time.time()
     window = max(settings.oidc_revalidate_seconds, 1)
@@ -170,7 +154,7 @@ def role_permissions(role: str) -> list[str]:
     resolved = [str(p) for p in perms]
     with _lock:
         _perm_cache[role] = {"permissions": resolved, "checked_at": time.time()}
-        _role_negative.pop(role, None)  # 角色已恢复:立刻解除负缓存
+        _role_negative.pop(role, None)
     return list(resolved)
 
 
@@ -249,8 +233,6 @@ def get_identity(username: str, *, force: bool = False) -> dict:
     if cached is not None and not force and now - cached["checked_at"] < window:
         if cached["usable"]:
             return cached
-        # 窗口内已知该账号身份不可用(角色悬空):零 Glue 调用继续 fail-closed,
-        # "降权/悬空瞬间"不会把 Glue 打满
         raise GlueIdentityError(
             f"账号 {key!r} 的身份当前不可用（角色悬空，详见 WARN 日志）",
             status_code=401,
@@ -260,19 +242,14 @@ def get_identity(username: str, *, force: bool = False) -> dict:
     try:
         ident = _fetch_identity(key)
     except GlueIdentityError:
-        invalidate(key)  # 明确否定:立即丢弃缓存,不保留 last-known-good
+        invalidate(key)
         raise
     except _GlueUnavailable as exc:
         return _soft_fail_or_raise(key, cached, exc)
 
-    # 每个复核窗口都刷新一次该角色的权限:只看"角色名是否变化"不够 --
-    # 同角色被去掉某个 perm_key 或角色行被删都必须在窗口内生效.
-    # 权限按角色缓存,同一角色在同一窗口内只查一次(N 个用户共享 1 次调用).
     try:
         permissions = role_permissions(ident["role"])
     except GlueIdentityError:
-        # 角色悬空:写一份 usable=False 的负缓存(窗口内不再打 Glue),但每次都 fail-closed;
-        # 角色行恢复后 ≤1 个窗口自动恢复
         with _lock:
             _identity_cache[key] = {
                 **ident,

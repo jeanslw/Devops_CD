@@ -9,9 +9,6 @@ from backend.services.ci_client import CiClientError, get_ci_client
 
 logger = logging.getLogger(__name__)
 
-# 进程内短 TTL 缓存:Glue 的项目聚合(每项目最新 tag / pipeline)一次要几十到上百毫秒,
-# 首页 / 部署页 / 审批页会在同一时间窗内反复拉取完全相同的内容.
-# 缓存放在模块级:路由每请求都 new CiService(),实例级缓存命中不了.
 _PROJECTS_TTL = 30  # 秒
 _projects_lock = threading.Lock()
 _projects_cache: list[dict] | None = None
@@ -34,7 +31,7 @@ def _load_projects() -> list[dict]:
     except CiClientError as e:
         logger.warning("CI projects 拉取失败: %s", e)
         return []
-    except Exception as e:  # noqa: BLE001 - 上游返回结构异常同样降级为空列表
+    except Exception as e:
         logger.warning("CI projects 解析失败: %s", e)
         return []
     with _projects_lock:
@@ -55,7 +52,6 @@ class CiService:
     """从 CI HTTP API 读取项目,pipeline,tag 信息"""
 
     def __init__(self, db: Database | None = None):
-        # db 参数保留以兼容既有调用方
         self._db = db
 
     def _projects_via_api(self) -> list[dict]:

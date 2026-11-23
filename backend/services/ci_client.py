@@ -11,37 +11,32 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger("ci_client")
 
-# Glue 无 /refs 路由时的负缓存窗口(秒):窗口内走 /branches.
-# 404 无法区分"路由不存在"(老 Glue)与"仓库映射缺失"(新 Glue 的 git.query_failed),一律按前者处理;
-# 真故障时 /branches 会同样失败,错误照旧上抛.
 _REFS_MISSING_TTL = 300.0
-# 契约读(GET /api/integration/services/{service})的超时(秒):在请求路径上,问不到即快速失败.
 _CONTRACT_TIMEOUT = 5.0
 
 # ── CI API 路径(来源:CI 的 /api/openapi.json)──
 API = {
-    "login": "/api/admin/login",  # POST {user, password} → {token}
-    "projects": "/api/build/jobs/list",  # GET → [{job_name, ci_provider, project_id, current_path}]
-    "builds": "/api/build/{path}/pipelines",  # GET → {build_provider, project_id, pipelines: [...]}
-    "projects_full": "/api/build/projects",  # GET → [{job_name, ..., latest_tag, latest_pipeline, tag_time}]
-    "tags": "/api/build/{path}/tags",  # GET → {items, total, page, page_size, total_pages}
-    "trigger": "/api/build/{path}/trigger",  # POST {ref, variables} → trigger result
-    "log": "/api/build/{path}/logs/{id}",  # GET → text/plain(id=job id)
-    "pipeline_log": "/api/build/{path}/pipelines/{id}/logs",  # GET → text/plain(Gitea 专属:id=run id)
-    "variables": "/api/build/{path}/variables",  # GET → {key: options}
-    "branches": "/api/build/{path}/branches",  # GET → ["main", "master", ...]
-    "refs": "/api/git/{path}/refs",  # GET → {"branches": [...], "tags": [...]}(Glue ≥ 2.9.0)
-    "service_contract": "/api/integration/services/{service}",  # GET → {service, enabled, provision, token_active, updated_at, registry_type, registry_url(后两者 Glue ≥ 2.11)}
-    "retry": "/api/build/{path}/pipelines/{id}/retry",  # POST → 重试 Pipeline(仅 GitLab CI)
-    "cancel": "/api/build/{path}/pipelines/{id}/cancel",  # POST → 取消 Pipeline(仅 GitLab CI)
-    "rbac_users": "/api/rbac/users",  # GET 用户列表(账号写操作在 CI 侧完成)
-    "rbac_roles": "/api/rbac/roles",  # GET 角色目录 → {roles: [{name, description}]}
+    "login": "/api/admin/login",
+    "projects": "/api/build/jobs/list",
+    "builds": "/api/build/{path}/pipelines",
+    "projects_full": "/api/build/projects",
+    "tags": "/api/build/{path}/tags",
+    "trigger": "/api/build/{path}/trigger",
+    "log": "/api/build/{path}/logs/{id}",
+    "pipeline_log": "/api/build/{path}/pipelines/{id}/logs",
+    "variables": "/api/build/{path}/variables",
+    "branches": "/api/build/{path}/branches",
+    "refs": "/api/git/{path}/refs",
+    "service_contract": "/api/integration/services/{service}",
+    "retry": "/api/build/{path}/pipelines/{id}/retry",
+    "cancel": "/api/build/{path}/pipelines/{id}/cancel",
+    "rbac_users": "/api/rbac/users",
+    "rbac_roles": "/api/rbac/roles",
 }
 
 
 class CiClientError(Exception):
     """CI API 调用异常.
-
     status_code:   上游 HTTP 状态码(写接口错误映射用,如 400/403/404/409;读接口为 None)
     remote_message: 上游 jsonError 返回的 message(已翻译,仅诊断,非稳定标识)
     """
@@ -73,13 +68,10 @@ class CiClient:
         self._username = username
         self._password = password
         self._timeout = timeout
-        # API token 模式:token 已在构造时确定,无需登录/刷新
         self._token: str | None = token or None
         self._static_token: bool = bool(token)
         self._token_expiry: float = 0
         self._lock = threading.Lock()
-        # 已知该 Glue 没有 /refs 路由时的截止时间戳(秒):窗口内直接走 /branches.
-        # 只读写一个 float,竞态无害(最坏情况是多发一次 404).
         self._refs_missing_until: float = 0.0
 
         retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
@@ -124,7 +116,7 @@ class CiClient:
                 return
             try:
                 self._token = self._login()
-                self._token_expiry = time.time() + 86400  # CI token 24h
+                self._token_expiry = time.time() + 86400
                 logger.info("CI token 已刷新")
             except requests.RequestException as e:
                 raise CiClientError(f"CI 登录失败: {e}") from e
@@ -151,10 +143,8 @@ class CiClient:
                 f"CI API GET 失败 [{url}]: {remote or e}", status_code=status, remote_message=remote
             ) from e
         except requests.RequestException as e:
-            # 超时 / 连接中断 / DNS 失败等,不再是裸异常穿透到 500
             raise CiClientError(f"CI 请求失败 [{url}]: {e}") from e
         except ValueError as e:
-            # 响应体非 JSON(代理错误页 / 网关 HTML)时 resp.json() 抛 ValueError
             raise CiClientError(f"CI API 返回非 JSON [{url}]: {e}") from e
 
     def _post(self, url: str, body: dict) -> Any:
@@ -202,7 +192,6 @@ class CiClient:
         return {"Authorization": f"Bearer {self._token}"}
 
     def _force_relogin(self):
-        # API token 模式无账号可重登:401 即 token 失效(撤销/过期),直接报错
         if self._static_token:
             raise CiClientError("CI API token 无效（已撤销或过期），请在 CI「API 管理」重新生成")
         with self._lock:
@@ -225,7 +214,6 @@ class CiClient:
     def list_projects(self) -> Any:
         """GET /api/build/jobs/list?format=json → [{job_name, ci_provider, project_id, current_path}]"""
         result = self._get(self._url(API["projects"]), params={"format": "json"})
-        # CI 实际返回 {"data": [...]}
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result
@@ -233,7 +221,6 @@ class CiClient:
     def get_builds(self, project: str) -> Any:
         """GET /api/build/{path}/pipelines?format=json → {build_provider, project_id, pipelines: [...]}"""
         result = self._get(self._url(API["builds"], path=project), params={"format": "json"})
-        # CI 可能返回 {"data": {...}} 包装
         if isinstance(result, dict) and "data" in result and isinstance(result["data"], dict):
             return result["data"]
         return result
@@ -347,7 +334,7 @@ class CiClient:
         """
         result = self._get(self._url(API["service_contract"], service=service), timeout=_CONTRACT_TIMEOUT)
         if isinstance(result, dict) and isinstance(result.get("data"), dict):
-            return result["data"]  # 响应可能被包一层 {"data": ...}
+            return result["data"]
         return result
 
     def retry_pipeline(self, project: str, build_id: int | str) -> Any:
@@ -394,7 +381,6 @@ def get_ci_client() -> CiClient:
 
         if not settings.ci_api_url:
             raise CiClientError("CI_API_URL 未配置，请在 .env 中设置")
-        # 优先 API token;未配置时回退账号密码登录
         _client_instance = CiClient(
             base_url=settings.ci_api_url,
             username=settings.ci_admin_user,

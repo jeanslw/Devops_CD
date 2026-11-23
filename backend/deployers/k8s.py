@@ -36,7 +36,6 @@ def _get_yaml_metadata(ssh, yaml_path):
     for doc in docs:
         if not isinstance(doc, dict):
             continue
-        # 单文档直接是 Deployment;List 类型(kind: List)则遍历 items
         if doc.get("kind") == "Deployment":
             meta = doc.get("metadata") or {}
             return str(meta.get("name") or ""), str(meta.get("namespace") or "")
@@ -71,7 +70,6 @@ class K8sDeployer(Deployer):
 
         try:
             with ssh_session(target, settings.ssh_timeout) as ssh:
-                # ── 从 YAML 提取 Deployment 名 + namespace ──
                 if target.path:
                     deploy_name, namespace = _get_yaml_metadata(ssh, target.path)
                     if not deploy_name:
@@ -81,14 +79,12 @@ class K8sDeployer(Deployer):
                             output=f"YAML [{target.path}] 中未找到 Deployment 定义",
                         )
                     if filter_name != deploy_name:
-                        # 名称不一致只告警,不拦截
                         self._log(
                             callback, S("deploy_log.yaml_name_mismatch", yaml_name=deploy_name, project=filter_name)
                         )
                 else:
                     deploy_name = deployment_name
-                    namespace = ""  # 没 YAML,留空不传 -n
-                    # 无 YAML → 必须先有 Deployment 才允许 set image
+                    namespace = ""
                     check_name = deploy_name
                     _, check_stdout, _ = ssh.exec_command(
                         f"kubectl get deployment/{shlex.quote(check_name)} "
@@ -104,7 +100,6 @@ class K8sDeployer(Deployer):
 
                 ns_flag = f"-n {shlex.quote(namespace)}" if namespace else ""
 
-                # ── 部署前:当前运行版本 ──
                 self._log(callback, S("deploy_log.current_version"))
                 before = _kubectl_pods(ssh, deploy_name, namespace)
                 before_text = f"当前运行版本:\n{before}" if before.strip() else "当前运行版本: (无)"
@@ -117,7 +112,6 @@ class K8sDeployer(Deployer):
 
                 self._log(callback, S("deploy_log.starting_deploy"))
 
-                # ── 执行部署 ──
                 if target.path:
                     deploy_cmds = [f"kubectl apply -f {shlex.quote(target.path)}"]
                 else:
@@ -139,7 +133,6 @@ class K8sDeployer(Deployer):
                         deploy_log.append(e)
                         self._log(callback, e)
 
-                # ── rollout status 等待部署完成 ──
                 self._log(callback, S("deploy_log.waiting_pod"))
                 rollout_cmd = (
                     f"kubectl rollout status deployment/{shlex.quote(deploy_name)} {ns_flag} --timeout=120s".strip()
@@ -151,7 +144,6 @@ class K8sDeployer(Deployer):
                 elif rollout_err:
                     self._log(callback, rollout_err)
 
-                # ── 部署后:查当前 Pod,排除旧 Pod,只看新的 ──
                 self._log(callback, S("deploy_log.after_version"))
                 all_after = _kubectl_pods(ssh, deploy_name, namespace)
                 if all_after.strip():
@@ -163,7 +155,6 @@ class K8sDeployer(Deployer):
                     after = all_after
                 self._log(callback, after)
 
-                # ── 成败判断:命令退出码 + rollout status 输出双重校验 ──
                 is_ok = deploy_ok and rollout_ec == 0 and "successfully rolled out" in rollout_output
                 if is_ok:
                     running_count = sum(1 for line in after.split("\n") if "Running" in line)

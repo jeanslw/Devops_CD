@@ -8,6 +8,7 @@
   - Argo CD deployments verify the sync operation and require the revision to advance or the target image to land, so a stale revision is no longer reported as success.
   - Flux CD deployments require an explicit resource name and kind (HelmRelease / Kustomization) instead of scanning the namespace to guess a target.
   - The manifest digest is resolved and recorded on every deploy; kubectl and SSH can optionally deploy by `repo@sha256`.
+  - Digest resolution now runs only when deploying by digest; normal deploys no longer pay an extra full tag-list query to the registry just to record a digest.
   - SSH / Compose gain "fail fast" and an optional target-side health check (runs after deploy, non-zero exit fails the target).
   - Helm image values keys are configurable, defaulting to `image.repository` / `image.tag`.
 - **Changed**
@@ -21,6 +22,7 @@
   - kubectl stop built an invalid Deployment name from `group/app`, and stopping via YAML could delete Services/ConfigMaps along with the workload.
   - kubectl rollback ignored `target_app`, so a workload name different from the project short name could roll back the wrong object; it now follows the same naming policy as deploy / stop.
   - kubectl set image did not fall back to the compatibility field `k8s_deploy`, so older clients that only set it could deploy to the project short name; it now matches stop / rollback.
+  - The deploy-record digest column was truncated to 128 characters, turning a sha512 digest (135 characters) into an invalid value; the column is widened to 256 and over-long values are stored empty with a warning instead.
   - `use_digest` combined with YAML apply rendered an invalid `repo@sha256:tag` reference; apply mode now rejects digest pinning and the renderer no longer appends a tag to a digest.
   - A suspended or unreconciled Flux resource could report success from the old Deployment's `rollout status`; Flux now asserts the Deployment image, matching kubectl.
   - With multi-document kubectl manifests, rollout / Pod queries now use the namespace declared by the Deployment instead of the first resource's namespace.
