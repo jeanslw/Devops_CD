@@ -42,6 +42,12 @@ class DeployRequest(BaseModel):
     deploy_note: str = ""  # 部署说明(记录到 cd_deploy_logs.deploy_note)
     cd_type: str = "kubectl"  # K8S 子模式:kubectl | helm | argocd | fluxcd
     api_url: str = ""  # ArgoCD API 地址(带 scheme,如 https://argocd:30443),空则回退 https://{host}
+    stop_mode: str = ""  # K8s 停止方式:空=只删工作负载;manifest=按 YAML 删除清单内全部资源(高危)
+    target_app: str = ""  # 停止目标工作负载名(kubectl Deployment / Flux 资源)
+    flux_kind: str = ""  # Flux 停止时的资源类型:helmrelease | kustomization
+    use_digest: bool = False  # SSH 是否按 digest 部署(需能解析该 tag 的 manifest digest)
+    fail_fast: bool = False  # 批量部署首台失败即停止,剩余目标标记 skipped
+    health_cmd: str = ""  # 目标机侧验收命令(可选),在部署成功后于目标机执行,exit code 非 0 视为失败
     scheduled_at: str = ""  # 可选定时发布:'YYYY-MM-DD HH:MM[:SS]',空=不启用定时(按常规审批/直通流程)
     bot_id: int = 0
     lang: str = "en"  # 前端当前语言 en/zh,用于 bot 通知消息国际化

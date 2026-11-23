@@ -285,6 +285,7 @@ def start_deploy_record(
     params_json: str = "",
     rollback_type: str = "manual",
     approval_id: int = 0,
+    artifact_digest: str = "",
 ) -> int:
     """插入一条 running 记录,返回部署记录 id(自增主键,即部署编号).
 
@@ -300,8 +301,8 @@ def start_deploy_record(
             cur = conn.execute(
                 "INSERT INTO cd_deploy_logs "
                 "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, "
-                "lock_key, params_json, rollback_type, approval_id, runner, heartbeat_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "lock_key, params_json, rollback_type, approval_id, runner, heartbeat_at, artifact_digest) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     project,
                     tag,
@@ -318,6 +319,7 @@ def start_deploy_record(
                     int(approval_id or 0),
                     INSTANCE_ID,
                     _now_padded(),
+                    (artifact_digest or "")[:128],
                 ),
             )
         except Exception as e:

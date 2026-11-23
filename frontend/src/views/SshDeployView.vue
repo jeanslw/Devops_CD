@@ -72,6 +72,26 @@
           <label>{{ $t('deploy.commands') }}</label>
           <textarea v-model="commands" rows="6" :placeholder="$t('sshDeploy.commandsPlaceholder')" style="width:100%;resize:vertical;font-family:monospace"></textarea>
         </div>
+        <div class="grid2" style="margin-bottom:8px">
+          <div>
+            <label style="display:flex;align-items:center;gap:6px;text-transform:none">
+              <input type="checkbox" v-model="failFast" style="width:auto">
+              {{ $t('deploy.failFast') }}
+            </label>
+            <div style="font-size:11px;color:var(--text-dim)">{{ $t('deploy.failFastHint') }}</div>
+          </div>
+          <div>
+            <label style="display:flex;align-items:center;gap:6px;text-transform:none">
+              <input type="checkbox" v-model="useDigest" style="width:auto">
+              {{ $t('deploy.useDigest') }}
+            </label>
+            <div style="font-size:11px;color:var(--text-dim)">{{ $t('deploy.useDigestHint') }}</div>
+          </div>
+          <div style="grid-column:1 / -1">
+            <label>{{ $t('deploy.healthCmd') }}</label>
+            <input v-model="healthCmd" :placeholder="$t('deploy.healthCmdPlaceholder')">
+          </div>
+        </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
         <ApprovalFlowPanel
@@ -129,6 +149,9 @@ const inventory = ref('')
 const commands = ref('')
 const deployNote = ref('')
 const schedule = ref('')
+const failFast = ref(false)
+const useDigest = ref(false)
+const healthCmd = ref('')
 
 async function onProjectChange() {
   resetPanel()
@@ -169,6 +192,9 @@ async function doDeploy() {
     deploy_mode: mode.value,
     target_path: path.value,
     commands: cmdStr,
+    fail_fast: failFast.value,
+    use_digest: useDigest.value,
+    health_cmd: healthCmd.value.trim(),
     deploy_note: deployNote.value,
     scheduled_at: localInputToUtc(schedule.value),
     bot_id: parseInt(botId.value) || 0,

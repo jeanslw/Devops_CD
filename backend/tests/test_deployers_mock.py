@@ -321,6 +321,29 @@ class TestArgoCD(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("Sync status", result["output"])
 
+    def test_requires_revision_advance_or_target_image(self):
+        # Healthy/Synced 但 revision 未推进且目标镜像未落地时,不能判成功
+        app = {
+            "spec": {"source": {"kustomize": {"images": []}}},
+            "status": {
+                "health": {"status": "Healthy"},
+                "sync": {"status": "Synced", "revision": "same-commit"},
+                "operationState": {"phase": "Succeeded", "operation": {"sync": {"revision": "same-commit"}}},
+                "summary": {"images": ["hub.example.com/repo/app:v1.0"]},
+            },
+        }
+        with (
+            patch("requests.get", MagicMock(return_value=_Resp(200, app))),
+            patch("requests.put", MagicMock(return_value=_Resp(200))),
+            patch("requests.post", MagicMock(return_value=_Resp(200))),
+            patch("time.sleep", return_value=None),
+        ):
+            result = ArgoCDDeployer().deploy(
+                self._req(), "hub.example.com/repo/app:v2.0", "group/app", "argocd-host", pwd="token"
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("revision", result["output"])
+
 
 # ─────────────────────────────────────────────────────────────
 # Flux CD 部署器(k8s_fluxcd.py)
@@ -769,6 +792,40 @@ class TestKubectlSetImage(unittest.TestCase):
         result, fake = self._run(lambda cmd: ("", "", 0), self._req(container=""))
         self.assertFalse(result["success"])
         self.assertEqual(fake.commands, [])
+
+
+class TestKubectlStop(unittest.TestCase):
+    """v1.6.3: 停止与部署同源,默认只删 Deployment;manifest 模式才删整份清单."""
+
+    def _req(self, **kw):
+        base = dict(stop_mode="", target_app="app", k8s_deploy="", target_path="", k8s_ns="prod")
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def _run(self, handler, req):
+        fake = FakeSSH(handler)
+        with patch("backend.deployers.k8s_kubectl.ssh_connect", return_value=fake):
+            result = KubectlDeployer().stop(req, "group/app", "k8s-host")
+        return result, fake
+
+    def test_default_deletes_deployment_with_explicit_name(self):
+        result, fake = self._run(lambda cmd: ("deployment.apps/app deleted", "", 0), self._req())
+        self.assertTrue(result["success"])
+        self.assertIn("kubectl delete deployment/app", fake.commands[0])
+        self.assertNotIn("group/app", fake.commands[0])
+
+    def test_falls_back_to_project_short_name(self):
+        result, fake = self._run(lambda cmd: ("", "not found", 1), self._req(target_app=""))
+        self.assertTrue(result["success"])
+        self.assertIn("deployment/app", fake.commands[0])
+
+    def test_manifest_mode_warns_before_deleting_all_resources(self):
+        result, fake = self._run(
+            lambda cmd: ("deleted", "", 0), self._req(stop_mode="manifest", target_path="/opt/app.yaml")
+        )
+        self.assertTrue(result["success"])
+        self.assertIn("kubectl delete -n prod -f /opt/app.yaml", fake.commands[-1])
+        self.assertIn("⚠️", result["output"])
 
 
 if __name__ == "__main__":

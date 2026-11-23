@@ -34,36 +34,26 @@ def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
     return {"spec": {"images": patched}}
 
 
-def _discover_flux_resource(ssh, project_fallback, image_name):
-    """发现 Flux CD 资源名(HelmRelease / Kustomization),不盲猜等于项目名"""
+def _discover_flux_resource(ssh, name, kind=""):
+    """按显式资源名精确定位 Flux 资源,不再扫描 flux-system 猜目标.
+
+    返回 (name, kind);未找到时 kind 为空.以找不到就失败代替「猜一个最像的」.
+    """
     ns_q = shlex.quote(settings.flux_namespace)
-    # 先尝试精确匹配
-    for kind in ("helmrelease", "kustomization"):
+    kinds = (kind,) if kind in ("helmrelease", "kustomization") else ("helmrelease", "kustomization")
+    for item_kind in kinds:
         r = _ssh_cmd(
             ssh,
-            f"kubectl get {shlex.quote(kind)} {shlex.quote(project_fallback)} -n {ns_q} -o name 2>/dev/null",
+            f"kubectl get {shlex.quote(item_kind)} {shlex.quote(name)} -n {ns_q} -o name 2>/dev/null",
         )
         if r:
-            return project_fallback, kind
+            return name, item_kind
+    return name, ""
 
-    # 搜索 flux-system 下所有资源,按镜像名匹配
-    for kind in ("helmrelease", "kustomization"):
-        r = _ssh_cmd(
-            ssh,
-            f"kubectl get {shlex.quote(kind)} -n {ns_q} -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null",
-        )
-        if not r:
-            continue
-        for name in r.split("\n"):
-            name = name.strip()
-            if not name:
-                continue
-            spec = _ssh_cmd(ssh, f"kubectl get {shlex.quote(kind)} {shlex.quote(name)} -n {ns_q} -o yaml 2>/dev/null")
-            if (image_name and image_name in spec) or project_fallback in spec:
-                return name, kind
 
-    # 没找到,fallback 到项目短名
-    return project_fallback, ""
+def _flux_pod_label(name: str) -> str:
+    """Flux/Helm 生成的 Pod 通用实例标签,优先于按 release 名做前缀猜测."""
+    return f"app.kubernetes.io/instance={name}"
 
 
 class FluxCDDeployer(K8sSubDeployer):
@@ -79,7 +69,13 @@ class FluxCDDeployer(K8sSubDeployer):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
-            flux_name, flux_kind = _discover_flux_resource(ssh, project.split("/")[-1], "")
+            stop_name = (
+                (getattr(req, "target_app", "") or "").strip()
+                or (getattr(req, "k8s_deploy", "") or "").strip()
+                or project.split("/")[-1]
+            )
+            stop_kind = (getattr(req, "flux_kind", "") or "").strip().lower()
+            flux_name, flux_kind = _discover_flux_resource(ssh, stop_name, stop_kind)
             if not flux_kind:
                 ssh.close()
                 return {"success": False, "output": f"Flux resource not found: {project}"}
@@ -130,22 +126,30 @@ class FluxCDDeployer(K8sSubDeployer):
             _log(callback, S("deploy_log.flux_connecting"))
             ssh = ssh_connect(target, settings.ssh_timeout)
 
-            # ── 发现 Flux 资源名,不盲猜等于项目名 ──
-            flux_name, flux_kind = _discover_flux_resource(ssh, project.split("/")[-1], img_name)
+            # ── 用显式资源名精确定位,不再扫描 flux-system 猜目标 ──
+            target_name = (getattr(req, "target_app", "") or "").strip() or project.split("/")[-1]
+            target_kind = (getattr(req, "flux_kind", "") or "").strip().lower()
+            flux_name, flux_kind = _discover_flux_resource(ssh, target_name, target_kind)
             if not flux_kind:
-                _log(callback, S("deploy_log.flux_resource_not_found", image=img_name))
+                _log(callback, S("deploy_log.flux_resource_not_found", name=target_name))
                 ssh.close()
                 return {
                     "success": False,
-                    "output": f"No Flux resource (HelmRelease/Kustomization) referencing image [{img_name}] found in flux-system namespace.",
+                    "output": (
+                        f"Flux resource [{target_name}] not found in namespace {settings.flux_namespace}. "
+                        "Please specify the HelmRelease / Kustomization metadata.name and kind."
+                    ),
                 }
-            if flux_name != project.split("/")[-1]:
-                _log(callback, S("deploy_log.flux_name_diff", name=flux_name, project=project.split("/")[-1]))
             _log(callback, S("deploy_log.flux_detected", kind=flux_kind, name=flux_name))
+
+            def _flux_pods():
+                """按实例标签取 Pod;标签为空才回退到名称前缀,避免把同名系其他工作负载算进来."""
+                pods = _kubectl_pods(ssh, "", label=_flux_pod_label(flux_name))
+                return pods if pods.strip() else _kubectl_pods(ssh, flux_name)
 
             # 1. 获取部署前状态
             _log(callback, S("deploy_log.helm_getting_current"))
-            before = _kubectl_pods(ssh, flux_name)
+            before = _flux_pods()
             before_text = f"当前运行版本:\n{before or '(无)'}" if before.strip() else "当前运行版本: (无)"
             before_pod_names = {b.split()[0] for b in before.split("\n") if b.strip()} if before else set()
             if before.strip():
@@ -253,7 +257,7 @@ class FluxCDDeployer(K8sSubDeployer):
                             "output": f"{before_text}\n\nDeploy started:\nImage updated, Flux reconcile triggered\n\nFlux deploy failed: {flux_err}",
                         }
 
-                after = _kubectl_pods(ssh, flux_name)
+                after = _flux_pods()
                 current_pod_names = {line.split()[0] for line in after.split("\n") if line.strip()} if after else set()
                 new_names = current_pod_names - before_pod_names
                 terminating = any("Terminating" in line for line in after.split("\n")) if after else False
@@ -278,14 +282,24 @@ class FluxCDDeployer(K8sSubDeployer):
 
             # 5. 用 deployment 名进行 rollout status(从集群提取,不盲猜)
             rollout_result = ""
-            # flux_name 可能来自项目名(请求参数),正则元字符与 shell 元字符都要转义
-            pat1 = shlex.quote(f"^{re.escape(flux_name)}-")
-            pat2 = shlex.quote(re.escape(flux_name))
+            # 依次尝试:实例标签 → 同名 Deployment → 历史前缀兜底(最后手段)
             deploy_name = _ssh_cmd(
                 ssh,
-                f"kubectl get deploy -o name 2>/dev/null | grep -E {pat1} | head -1 | cut -d'/' -f2 || "
-                f"kubectl get deploy -o name 2>/dev/null | grep -E {pat2} | head -1 | cut -d'/' -f2",
+                f"kubectl get deploy -l {shlex.quote(_flux_pod_label(flux_name))} -o name 2>/dev/null "
+                "| head -1 | cut -d'/' -f2",
             )
+            if not deploy_name:
+                deploy_name = _ssh_cmd(
+                    ssh,
+                    f"kubectl get deploy {shlex.quote(flux_name)} -o name 2>/dev/null | cut -d'/' -f2",
+                )
+            if not deploy_name:
+                # flux_name 可能来自请求参数,正则元字符与 shell 元字符都要转义
+                pat = shlex.quote(f"^{re.escape(flux_name)}-")
+                deploy_name = _ssh_cmd(
+                    ssh,
+                    f"kubectl get deploy -o name 2>/dev/null | grep -E {pat} | head -1 | cut -d'/' -f2",
+                )
             if deploy_name:
                 _log(callback, S("deploy_log.flux_rollout", deploy=deploy_name))
                 rollout_out, rollout_err, rollout_ec = _exec_exit(
@@ -303,7 +317,7 @@ class FluxCDDeployer(K8sSubDeployer):
 
             # 6. 部署后状态(rollout status 已做主裁判,这里仅展示 Pod 列表)
             _log(callback, S("deploy_log.flux_verify"))
-            after = _kubectl_pods(ssh, flux_name)
+            after = _flux_pods()
             ssh.close()
 
             if after.strip():

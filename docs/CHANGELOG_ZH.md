@@ -5,11 +5,19 @@
 - **新增**
   - K8S kubectl 部署新增「变更方式」：默认 `set image`，只对已存在的 Deployment 改镜像；`YAML apply` 保留为高级模式。
   - `set image` 模式需填写容器名，执行前用集群中的 Deployment 校验容器是否存在；填错时直接失败并列出可选容器。
+  - Argo CD 部署校验同步操作状态，并要求 revision 推进或目标镜像已落地，避免停在旧版本却判成功。
+  - Flux CD 部署必须显式填写资源名与类型（HelmRelease / Kustomization），不再扫描命名空间猜目标。
+  - 部署时解析并记录 manifest digest；kubectl 与 SSH 可选按 `repo@sha256` 精确部署。
+  - SSH / Compose 新增「失败即停」与目标机验收命令（部署成功后执行，非 0 即判失败）。
+  - Helm 镜像 values key 可配置，默认 `image.repository` / `image.tag`。
 - **变更**
   - K8S kubectl 部署后增加镜像断言：读取 Deployment 的实际镜像并与目标比对，不一致即判为失败。
-  - K8S 部署表单按部署类型联动：kubectl 显示变更方式/容器/工作负载，Helm 显示 Chart 路径，Argo CD 显示 API 地址与命名空间。
+  - K8S 部署表单按部署类型联动：kubectl 显示变更方式/容器/工作负载，Helm 显示 Chart 路径与 values key，Argo CD 显示 API 地址与命名空间，Flux CD 显示资源名/类型。
+  - kubectl 停止与部署使用同一资源名；默认只删 Deployment，按 YAML 删除整份清单改为高级选项并提示风险。
+  - Flux 的 Pod / Deployment 优先按实例标签定位，名称前缀仅作最后兜底。
 - **修复**
   - YAML 中写死镜像（未引用 `{IMAGE}:{TAG}`）时，kubectl 部署实际未更换镜像却返回成功的问题。
+  - kubectl 停止使用 `group/app` 拼出非法 Deployment 名，以及按 YAML 停止时连带删除 Service/ConfigMap 的问题。
 
 ## v1.6.2 (2026-11-04)
 

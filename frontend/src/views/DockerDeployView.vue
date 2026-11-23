@@ -80,6 +80,19 @@
           <label>{{ $t('deploy.commands') }}</label>
           <textarea v-model="commands" rows="6" style="width:100%;resize:vertical;font-family:monospace"></textarea>
         </div>
+        <div class="grid2" style="margin-bottom:8px">
+          <div>
+            <label style="display:flex;align-items:center;gap:6px;text-transform:none">
+              <input type="checkbox" v-model="failFast" style="width:auto">
+              {{ $t('deploy.failFast') }}
+            </label>
+            <div style="font-size:11px;color:var(--text-dim)">{{ $t('deploy.failFastHint') }}</div>
+          </div>
+          <div style="grid-column:1 / -1">
+            <label>{{ $t('deploy.healthCmd') }}</label>
+            <input v-model="healthCmd" :placeholder="$t('deploy.healthCmdPlaceholder')">
+          </div>
+        </div>
         <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
         <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
         <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
@@ -139,6 +152,8 @@ const yamlContent = ref('')
 const yamlExpanded = ref(false)
 const deployNote = ref('')
 const schedule = ref('')
+const failFast = ref(false)
+const healthCmd = ref('')
 
 async function onProjectChange() {
   resetPanel()
@@ -179,6 +194,8 @@ async function doDeploy() {
     commands: commands.value,
     yaml_content: yamlContent.value,
     env_file: envFile.value,
+    fail_fast: failFast.value,
+    health_cmd: healthCmd.value.trim(),
     deploy_note: deployNote.value,
     scheduled_at: localInputToUtc(schedule.value),
     bot_id: parseInt(botId.value) || 0,

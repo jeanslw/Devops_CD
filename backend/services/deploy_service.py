@@ -23,8 +23,12 @@ from backend.deploy_run import (
     start_deploy_record,
 )
 from backend.deployers import DeployTarget, deployer_registry
-from backend.deployers.base import validate_tag
-from backend.services.registry_provider import RegistryConfigError, registry_base_url
+from backend.deployers.base import run_remote_probe, validate_tag
+from backend.services.registry_provider import (
+    RegistryConfigError,
+    registry_base_url,
+    resolve_artifact_digest,
+)
 
 from .ci_service import CiService
 from .notification import notify_deploy
@@ -134,6 +138,9 @@ class DeployService:
         k8s_deploy: str = "",
         k8s_container: str = "",
         env_file: str = "",
+        use_digest: bool = False,
+        fail_fast: bool = False,
+        health_cmd: str = "",
         deploy_note: str = "",
         rollback_type: str = "manual",
         bot_id: int = 0,
@@ -171,7 +178,22 @@ class DeployService:
         except RegistryConfigError as e:
             # 仓库地址缺失:按参数错误返回(与本服务其它配置缺失一致)
             raise ValueError(str(e)) from e
-        image = f"{registry}/{harbor_repo}:{tag}"
+        # digest 始终尽力解析并写入部署记录;use_digest 时用 repo@sha256 精确部署(仅 SSH)
+        digest = resolve_artifact_digest(harbor_repo, tag)
+        if use_digest:
+            if deploy_type != "ssh":
+                raise ValidationError(
+                    "digest 固定当前仅支持 SSH 部署；Compose 的 IMAGE/TAG 变量无法携带 digest",
+                    error_key="errors.deploy_validation",
+                )
+            if not digest:
+                raise ValidationError(
+                    f"未能解析 tag '{tag}' 的 digest（仓库未同步或不可达），无法按 digest 部署",
+                    error_key="errors.deploy_validation",
+                )
+            image = f"{registry}/{harbor_repo}@{digest}"
+        else:
+            image = f"{registry}/{harbor_repo}:{tag}"
         project_key = self._ci.resolve_project_key(project) or project
 
         # ── 并发锁:同一项目同时只允许一个进行中部署 ──
@@ -218,6 +240,9 @@ class DeployService:
                 "k8s_deploy": k8s_deploy,
                 "k8s_container": k8s_container,
                 "env_file": env_file,
+                "use_digest": use_digest,
+                "fail_fast": fail_fast,
+                "health_cmd": health_cmd,
                 "deploy_note": deploy_note,
                 "rollback_type": rollback_type,
                 "bot_id": bot_id,
@@ -242,6 +267,7 @@ class DeployService:
                     params_json=params_json,
                     rollback_type=rollback_type,
                     approval_id=approval_id,
+                    artifact_digest=digest,
                 )
         except ValueError as e:
             # 唯一索引冲突(同项目已有 running)= busy,包装为与 K8S 路径一致的语义异常
@@ -254,6 +280,21 @@ class DeployService:
         total = len(targets)
         is_batch = total > 1
         started = time.time()
+
+        def _skip_remaining(start_index: int) -> None:
+            """失败即停:把未执行的目标标记为 skipped,保留完整的目标清单."""
+            for sid2, t2 in targets[start_index:]:
+                results.append(
+                    {
+                        "server_id": sid2,
+                        "host": t2.host,
+                        "status": "skipped",
+                        "output": "Skipped: fail_fast is enabled and an earlier target failed.",
+                    }
+                )
+                stage_times.append({"server_id": sid2, "host": t2.host, "status": "skipped", "duration_ms": 0})
+            if callback:
+                callback(S("deploy_log.fail_fast_skip", count=total - start_index))
 
         try:
             for i, (sid, target) in enumerate(targets):
@@ -283,6 +324,9 @@ class DeployService:
                         callback(
                             S("deploy_log.batch_server_end", current=i + 1, total=total, host=host_label, result="fail")
                         )
+                    if fail_fast and i + 1 < total:
+                        _skip_remaining(i + 1)
+                        break
                     continue
 
                 try:
@@ -293,6 +337,23 @@ class DeployService:
                 except Exception as e:
                     logger.error("Deploy service failed", exc_info=e)
                     results.append({"server_id": sid, "host": target.host, "status": "failed", "output": str(e)})
+
+                # ── 可选:目标机侧验收命令,失败即视为该目标部署失败 ──
+                probe_cmd = (health_cmd or "").strip()
+                if probe_cmd and results[-1]["status"] == "ok":
+                    if callback:
+                        callback(S("deploy_log.probe_start", cmd=probe_cmd))
+                    probe_ok, probe_out = run_remote_probe(target, probe_cmd)
+                    if probe_ok:
+                        if callback:
+                            callback(S("deploy_log.probe_ok"))
+                    else:
+                        results[-1]["status"] = "failed"
+                        results[-1]["output"] = (f"{results[-1]['output']}\n\n[probe] {probe_out}")[
+                            : settings.log_truncate_chars
+                        ]
+                        if callback:
+                            callback(S("deploy_log.probe_failed", output=probe_out))
 
                 stage_times.append(
                     {
@@ -312,6 +373,9 @@ class DeployService:
                             result=results[-1]["status"],
                         )
                     )
+                if fail_fast and results[-1]["status"] != "ok" and i + 1 < total:
+                    _skip_remaining(i + 1)
+                    break
 
             duration_ms = int((time.time() - started) * 1000)
 

@@ -294,3 +294,21 @@ def get_registry_provider() -> RegistryProvider:
     from backend.services.harbor_client import HarborClient
 
     return HarborClient()
+
+
+def resolve_artifact_digest(repo_full: str, tag: str) -> str:
+    """按 tag 查 manifest digest(尽力而为).
+
+    仓库不可达 / 无权限 / 该 tag 尚未同步时返回 "";部署记录只做可追溯,不因取不到 digest 而失败.
+    """
+    if not repo_full or not tag:
+        return ""
+    try:
+        artifacts = get_registry_provider().list_artifacts(repo_full)
+    except Exception as exc:  # noqa: BLE001 - digest 是附加信息,任何查询失败都不阻断部署
+        logger.debug("resolve_artifact_digest failed repo=%s tag=%s: %s", repo_full, tag, exc)
+        return ""
+    for item in artifacts or []:
+        if isinstance(item, dict) and item.get("tag") == tag:
+            return str(item.get("digest") or "")
+    return ""

@@ -34,23 +34,64 @@ class KubectlDeployer(K8sSubDeployer):
     def stop(
         self, req, project: str, host: str, port: int = 22, user: str = "root", pwd: str = "", ssh_key: str = ""
     ) -> dict:
-        """停止:kubectl delete -f <yaml> 或 kubectl delete deployment"""
+        """停止:默认只删 Deployment;stop_mode=manifest 时才按 YAML 删除整份清单(高危).
+
+        资源名与 deploy 同源:优先显式工作负载名,其次从 YAML 解析,最后回退项目短名.
+        """
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
         ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
-        if req.target_path:
-            cmd = f"kubectl delete{ns_flag} -f {shlex.quote(req.target_path)}"
-        else:
-            cmd = f"kubectl delete deployment/{shlex.quote(project)}{ns_flag}"
+        stop_mode = (getattr(req, "stop_mode", "") or "").strip().lower()
+        yaml_path = (getattr(req, "target_path", "") or "").strip() or (getattr(req, "path", "") or "").strip()
+        explicit_name = (getattr(req, "target_app", "") or "").strip() or (getattr(req, "k8s_deploy", "") or "").strip()
+
+        ssh = None
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
+
+            # ── 解析同源资源名:显式值 > YAML 中的 Deployment 名 > 项目短名 ──
+            name = explicit_name or project.split("/")[-1]
+            yaml_content = ""
+            if yaml_path:
+                if yaml_path.startswith(("http://", "https://")):
+                    try:
+                        import requests
+
+                        r = requests.get(yaml_path, timeout=10)
+                        yaml_content = r.text if r.ok else ""
+                    except Exception:
+                        yaml_content = ""
+                else:
+                    yaml_content, _, _ = _exec_exit(ssh, f"cat {shlex.quote(yaml_path)} 2>/dev/null")
+            if not explicit_name and yaml_content:
+                parsed = _get_deployment_name(yaml_content)
+                if parsed:
+                    name = parsed
+
+            warning = ""
+            if stop_mode == "manifest":
+                if not yaml_path or yaml_path.startswith(("http://", "https://")):
+                    return {
+                        "success": False,
+                        "output": "manifest 模式需要在集群上可直接访问的本地 YAML 路径（不支持 URL）",
+                    }
+                warning = "⚠️ manifest 模式会删除该 YAML 中声明的全部资源（含 Service/ConfigMap 等）。\n"
+                cmd = f"kubectl delete{ns_flag} -f {shlex.quote(yaml_path)}"
+            else:
+                cmd = f"kubectl delete deployment/{shlex.quote(name)}{ns_flag}"
+
             out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
-            ssh.close()
             success = ec == 0 or "not found" in (err or "").lower() or "not found" in (out or "").lower()
-            return {"success": success, "output": (err or out)[: settings.log_truncate_chars]}
+            return {
+                "success": success,
+                "output": (warning + (err or out))[: settings.log_truncate_chars],
+            }
         except Exception as ex:
             logger.error("Kubectl stop failed", exc_info=ex)
             return {"success": False, "output": "Stop service failed, please contact administrator"}
+        finally:
+            if ssh:
+                ssh.close()
 
     def rollback(self, req, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
         """原生回滚:kubectl rollout undo deployment/<name>(回退到上一版本)."""

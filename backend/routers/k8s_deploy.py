@@ -142,7 +142,7 @@ def deploy_k8s_check(
                 DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key),
                 settings.ssh_timeout,
             )
-            flux_name, flux_kind = _discover_flux_resource(ssh, filter_name, "")
+            flux_name, flux_kind = _discover_flux_resource(ssh, filter_name)
             ssh.close()
         except AppException:
             return result
@@ -288,10 +288,23 @@ def deploy_k8s(
             "message": gate.get("message", "部署已提交审批"),
             "scheduled": gate.get("scheduled", False),
         }
-    image, project_key, project_short = _resolve_image(db, req)
+    image, project_key, project_short, artifact_digest = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
 
-    result = _deploy_k8s_core(db, req, user, image, project_key, project_short, host, port, user_srv, pwd, ssh_key)
+    result = _deploy_k8s_core(
+        db,
+        req,
+        user,
+        image,
+        project_key,
+        project_short,
+        host,
+        port,
+        user_srv,
+        pwd,
+        ssh_key,
+        artifact_digest=artifact_digest,
+    )
 
     if not result.get("cancelled"):
         _notify_k8s(
@@ -342,7 +355,7 @@ async def deploy_k8s_stream(
     deploy_result = {}
 
     try:
-        image, project_key, project_short = _resolve_image(db, req)
+        image, project_key, project_short, artifact_digest = _resolve_image(db, req)
     except AppException as e:
         msg = e.message
 
@@ -381,6 +394,7 @@ async def deploy_k8s_stream(
                 pwd,
                 ssh_key,
                 callback=log_callback,
+                artifact_digest=artifact_digest,
             )
 
             deploy_result = {"success": True, "data": result}

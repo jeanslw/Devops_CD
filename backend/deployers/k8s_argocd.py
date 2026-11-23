@@ -231,6 +231,11 @@ class ArgoCDDeployer(K8sSubDeployer):
                     return {"success": False, "output": msg}
 
             app = r.json()
+            before_revision = (
+                app.get("status", {}).get("sync", {}).get("revision")
+                or app.get("status", {}).get("operationState", {}).get("operation", {}).get("sync", {}).get("revision")
+                or ""
+            )
 
             log(S("deploy_log.argocd_prepare"))
             params = app.get("spec", {}).get("source", {}).get("helm", {}).get("parameters", [])
@@ -267,6 +272,8 @@ class ArgoCDDeployer(K8sSubDeployer):
             log(S("deploy_log.argocd_update_ok"))
 
             log(S("deploy_log.argocd_sync"))
+            # 记录触发时间:参数型同步不推进 Git revision,用本次操作完成时间作为补充证据
+            sync_requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             r = requests.post(
                 f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=_VERIFY
             )
@@ -278,6 +285,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             health = ""
             sync = ""
             revision = ""
+            phase = ""
             for i in range(30):
                 check_cancelled()
                 time.sleep(2)
@@ -297,17 +305,39 @@ class ArgoCDDeployer(K8sSubDeployer):
                     .get("revision")
                     or ""
                 )
+                op_state = a.get("status", {}).get("operationState", {}) or {}
+                phase = op_state.get("phase", "") or ""
+                finished_at = op_state.get("finishedAt", "") or ""
+                images = a.get("status", {}).get("summary", {}).get("images", []) or []
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
-                if health == "Healthy" and sync == "Synced":
-                    log(S("deploy_log.argocd_healthy", sync=sync))
-                    success = True
+
+                # 同步操作本身失败时立即结束,不必等到 30 轮超时
+                if phase in ("Failed", "Error"):
+                    log(S("deploy_log.argocd_sync_phase_failed", phase=phase))
                     break
+
+                if health == "Healthy" and sync == "Synced":
+                    # 参数型同步不会推进 Git revision,因此用「revision 推进 或 目标镜像已落地」判定变更生效
+                    revision_advanced = bool(before_revision and revision and revision != before_revision)
+                    image_applied = any(img == image or str(img).startswith(image + "@") for img in images)
+                    # Argo 的 revision 是 Git commit:仅改 Helm 参数时不会推进,
+                    # 因此承认「本次触发的 Sync 已成功完成」作为等价证据
+                    operation_done = phase == "Succeeded" and finished_at >= sync_requested_at
+                    if revision_advanced or image_applied or not before_revision or operation_done:
+                        log(S("deploy_log.argocd_healthy", sync=sync))
+                        success = True
+                        break
+                    log(
+                        f"[argocd] Healthy/Synced but still on revision {revision or 'Unknown'} "
+                        f"and target image {image} not in summary.images; waiting for the change to take effect"
+                    )
             else:
                 log(S("deploy_log.argocd_timeout"))
 
             if not success:
                 log(
-                    f"[argocd] Sync status={sync or 'Unknown'}; health={health or 'Unknown'}; revision={revision or 'Unknown'}"
+                    f"[argocd] Sync status={sync or 'Unknown'}; health={health or 'Unknown'}; "
+                    f"revision={revision or 'Unknown'}; phase={phase or 'Unknown'}"
                 )
 
             return {"success": success, "output": "\n".join(output)}

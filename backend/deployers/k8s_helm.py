@@ -121,12 +121,15 @@ class HelmDeployer(K8sSubDeployer):
                 _log(callback, S("deploy_log.current_version_none"))
 
             # ── 执行 helm upgrade --install ──
+            # 镜像 values key 可配置:默认 image.repository / image.tag,兼容常见 chart 约定
+            repo_key = (getattr(req, "helm_repo_key", "") or "").strip() or "image.repository"
+            tag_key = (getattr(req, "helm_tag_key", "") or "").strip() or "image.tag"
             # 所有用户输入均经 shlex.quote()
             _log(callback, S("deploy_log.helm_start"))
             helm_cmd = (
                 f"helm upgrade --install {shlex.quote(helm_release)} {shlex.quote(chart)} "
-                f"--set image.tag={shlex.quote(tag)} "
-                f"--set image.repository={shlex.quote(image_repo)}"
+                f"--set {shlex.quote(f'{tag_key}={tag}')} "
+                f"--set {shlex.quote(f'{repo_key}={image_repo}')}"
                 f"{ns_flag} --wait --timeout {settings.k8s_helm_timeout}s"
             )
             _log(callback, S("deploy_log.helm_cmd", cmd=helm_cmd))
@@ -151,11 +154,14 @@ class HelmDeployer(K8sSubDeployer):
 
             # ── 成败判断:helm --wait 的 exit code ──
             if exit_code != 0:
+                hint = S("deploy_log.helm_value_key_hint", repo_key=repo_key, tag_key=tag_key)
                 _log(callback, S("deploy_log.helm_fail", error=helm_err or f"exit code {exit_code}"))
+                _log(callback, hint)
                 return {
                     "success": False,
                     "output": (
                         f"Helm upgrade failed (exit {exit_code}):\n{helm_err or helm_out}"
+                        f"\n\n{hint}"
                         f"\n\nPod status:\n{after or '(none)'}"
                         f"\n\n{status_out}"
                     )[: settings.log_truncate_chars],

@@ -5,11 +5,19 @@
 - **Added**
   - K8S kubectl deployment gains a "change mode": `set image` by default, which only updates the image of an existing Deployment; `YAML apply` remains as an advanced mode.
   - `set image` requires a container name, validated against the Deployment in the cluster before execution; a wrong name fails with the available containers listed.
+  - Argo CD deployments verify the sync operation and require the revision to advance or the target image to land, so a stale revision is no longer reported as success.
+  - Flux CD deployments require an explicit resource name and kind (HelmRelease / Kustomization) instead of scanning the namespace to guess a target.
+  - The manifest digest is resolved and recorded on every deploy; kubectl and SSH can optionally deploy by `repo@sha256`.
+  - SSH / Compose gain "fail fast" and an optional target-side health check (runs after deploy, non-zero exit fails the target).
+  - Helm image values keys are configurable, defaulting to `image.repository` / `image.tag`.
 - **Changed**
   - K8S kubectl deployment now asserts the image after rollout: the Deployment's actual image is read and compared with the target, and a mismatch fails the deployment.
-  - The K8S deployment form follows the deployment type: kubectl shows mode/container/workload, Helm shows the chart path, Argo CD shows API URL and namespace.
+  - The K8S deployment form follows the deployment type: kubectl shows mode/container/workload, Helm shows chart path and values keys, Argo CD shows API URL and namespace, Flux CD shows resource name/kind.
+  - kubectl stop now uses the same resource name as deploy; it deletes only the Deployment by default, and deleting the whole YAML manifest is an advanced option with an explicit warning.
+  - Flux Pods / Deployments are located by the instance label first, with name-prefix matching only as the last resort.
 - **Fixed**
   - A hard-coded image in YAML (without `{IMAGE}:{TAG}`) no longer reports success while the image is actually unchanged.
+  - kubectl stop built an invalid Deployment name from `group/app`, and stopping via YAML could delete Services/ConfigMaps along with the workload.
 
 ## v1.6.2 (2026-11-04)
 

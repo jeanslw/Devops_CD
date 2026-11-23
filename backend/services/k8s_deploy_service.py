@@ -31,7 +31,11 @@ from backend.deployers.registry import deployer_registry
 from backend.exceptions import AppException, NotFoundError, ValidationError
 from backend.services.ci_service import CiService
 from backend.services.notification import notify_deploy
-from backend.services.registry_provider import RegistryConfigError, registry_base_url
+from backend.services.registry_provider import (
+    RegistryConfigError,
+    registry_base_url,
+    resolve_artifact_digest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +50,12 @@ class K8sDeployRequest(BaseModel):
     k8s_ns: str = ""  # 留空不传 -n,namespace 以 YAML 声明为准;填写后执行/验证统一使用该 namespace
     image_mode: str = ""  # kubectl: setimage(默认) | apply(高级);留空按 path 推导
     container: str = ""  # setimage 模式的目标容器名(必填,由集群校验)
-    target_app: str = ""  # 目标工作负载名,留空取项目短名
+    target_app: str = ""  # 目标工作负载名:kubectl/Stop 的 Deployment、Flux 的 HelmRelease/Kustomization
+    flux_kind: str = ""  # Flux 资源类型:helmrelease(默认) | kustomization
+    helm_repo_key: str = ""  # Helm chart 的镜像仓库 values key,默认 image.repository
+    helm_tag_key: str = ""  # Helm chart 的镜像 tag values key,默认 image.tag
+    use_digest: bool = False  # kubectl 是否按 digest 部署(需能解析该 tag 的 manifest digest)
+    stop_mode: str = ""  # 停止方式:空=只删工作负载;manifest=按 YAML 删除清单内全部资源(高危)
     deploy_note: str = ""  # 部署说明(记录到 cd_deploy_logs.deploy_note)
     scheduled_at: str = ""  # 可选定时发布:'YYYY-MM-DD HH:MM[:SS]',空=不启用定时(按常规审批/直通流程)
     bot_id: int = 0
@@ -76,7 +85,11 @@ def _resolve_cluster(db, req) -> tuple[str, int, str, str, str]:
 
 
 def _resolve_image(db, req):
-    """解析镜像地址,返回 (image, project_key, project_short) 或抛异常"""
+    """解析镜像地址,返回 (image, project_key, project_short, digest) 或抛异常.
+
+    digest 始终尽力解析并随部署记录保存;命中 use_digest 时用 `repo@sha256:...` 精确部署.
+    目前只允许 kubectl 按 digest 部署:Helm/Argo/Flux 的镜像参数约定不同,不静默降级.
+    """
     svc = CiService(db)
     harbor_repo = svc.resolve_harbor_repo(req.project)
     if not harbor_repo:
@@ -90,10 +103,24 @@ def _resolve_image(db, req):
     except RegistryConfigError as e:
         # 仓库地址缺失:按参数校验失败返回(error_key=None → 前端展示 message)
         raise ValidationError(str(e), error_key=None) from e
-    image = f"{registry}/{harbor_repo}:{req.tag}"
+    digest = resolve_artifact_digest(harbor_repo, req.tag)
+    if getattr(req, "use_digest", False):
+        if req.cd_type != "kubectl":
+            raise ValidationError(
+                "digest 固定当前仅支持 kubectl 模式；Helm/Argo/Flux 的镜像参数约定不同",
+                error_key="errors.deploy_validation",
+            )
+        if not digest:
+            raise ValidationError(
+                f"未能解析 tag '{req.tag}' 的 digest（仓库未同步或不可达），无法按 digest 部署",
+                error_key="errors.deploy_validation",
+            )
+        image = f"{registry}/{harbor_repo}@{digest}"
+    else:
+        image = f"{registry}/{harbor_repo}:{req.tag}"
     project_key = svc.resolve_project_key(req.project) or req.project
     project_short = project_key.split("/")[-1]
-    return image, project_key, project_short
+    return image, project_key, project_short, digest
 
 
 def _deploy_k8s_core(
@@ -111,6 +138,7 @@ def _deploy_k8s_core(
     callback=None,
     rollback=False,
     approval_id=0,
+    artifact_digest="",
 ):
     """执行 K8S 部署核心流程:并发锁 + running 记录 + 取消 + 耗时 + 参数快照.
 
@@ -136,6 +164,19 @@ def _deploy_k8s_core(
             raise ValidationError("set image 模式需要指定容器名", error_key="errors.deploy_validation")
         if mode == "apply" and not req.path:
             raise ValidationError("YAML apply 模式需要填写 YAML 路径或 URL", error_key="errors.deploy_validation")
+
+    # ── Flux 参数校验:资源名必填,不再按镜像名扫描猜测目标 ──
+    if req.cd_type == "fluxcd" and not rollback:
+        if not (req.target_app or "").strip():
+            raise ValidationError(
+                "Flux 部署需要填写资源名（HelmRelease / Kustomization 的 metadata.name）",
+                error_key="errors.deploy_validation",
+            )
+        if (req.flux_kind or "").strip().lower() not in ("", "helmrelease", "kustomization"):
+            raise ValidationError(
+                "Flux 资源类型仅支持 helmrelease 或 kustomization",
+                error_key="errors.deploy_validation",
+            )
 
     # ── 并发锁:同一项目同时只允许一个进行中部署 ──
     running = find_running_deploy(db, project_key)
@@ -167,6 +208,7 @@ def _deploy_k8s_core(
                 target=host,
                 params_json=params_json,
                 approval_id=int(approval_id or 0),
+                artifact_digest=artifact_digest,
             )
     except ValueError as e:
         raise ValidationError(str(e), error_key="errors.deploy_busy") from e

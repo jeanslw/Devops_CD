@@ -327,6 +327,21 @@ def ssh_session(target: "DeployTarget", timeout: int):
         ssh.close()
 
 
+def run_remote_probe(target: "DeployTarget", cmd: str, timeout: int = 30) -> tuple[bool, str]:
+    """在目标机侧执行验收命令(可选),exit code 非 0 视为失败.
+
+    独立建连执行,避免复用部署器的连接状态;命令由用户显式提供,原样执行.
+    """
+    try:
+        with ssh_session(target, timeout) as ssh:
+            out, err, ec = _exec_on(ssh, cmd, timeout=timeout)
+            return ec == 0, (out or err or f"exit code {ec}")
+    except DeployCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 验收失败要转成部署失败,不向上抛网络异常
+        return False, str(exc)
+
+
 def _exec_on(ssh, cmd: str, timeout: int = 130) -> tuple[str, str, int]:
     """在已建立的 SSH 连接上执行单条命令,返回 (stdout, stderr, exit_code).
 

@@ -67,15 +67,16 @@ def _deployment_image(doc: dict, container: str) -> str:
     return ""
 
 
-def _kubectl_pods(ssh, deploy_name="", namespace=""):
-    """获取 K8S pod 列表,按 Deployment 名前缀匹配,不盲猜子串"""
+def _kubectl_pods(ssh, deploy_name="", namespace="", label=""):
+    """获取 K8S pod 列表:优先按 label 选择器,其次按 Deployment 名前缀,不盲猜子串"""
     # namespace 可能来自用户请求 / YAML 声明,必须转义后再拼进远程 shell 命令
     ns_flag = f"-n {shlex.quote(namespace)} " if namespace else ""
+    selector = f"-l {shlex.quote(label)} " if label else ""
     cmd = (
-        f"kubectl get pods {ns_flag}-o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,"
+        f"kubectl get pods {ns_flag}{selector}-o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,"
         "STATUS:.status.phase,REASON:.status.reason,DELETING:.metadata.deletionTimestamp --no-headers 2>/dev/null"
     )
-    if deploy_name:
+    if deploy_name and not label:
         # 前缀匹配:K8s Pod 命名规则 = {deploy}-{rs-hash}-{pod-hash}
         # grep "^{name}-" 锚定带 hash 的前缀,app 不匹配 app-backend
         cmd += f" | grep -E '^{re.escape(deploy_name)}-[a-f0-9]'"

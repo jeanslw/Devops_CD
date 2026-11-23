@@ -47,9 +47,22 @@
         </div>
       </div>
       <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px;font-size:11px;color:#667">Flux CD {{ $t('k8sDeploy.fluxNamespaceHint') }}</div>
-      <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px">
-        <label>{{ $t('k8sDeploy.fluxPath') }}</label>
-        <input v-model="path" placeholder="./">
+      <div v-if="cdType === 'fluxcd'" class="grid2" style="margin-bottom:8px">
+        <div>
+          <label>{{ $t('k8sDeploy.fluxResource') }} <span style="color:#e5484d">*</span></label>
+          <input v-model="targetApp" :placeholder="$t('k8sDeploy.fluxResourcePlaceholder')">
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.fluxKind') }}</label>
+          <select v-model="fluxKind">
+            <option value="helmrelease">HelmRelease</option>
+            <option value="kustomization">Kustomization</option>
+          </select>
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.fluxPath') }}</label>
+          <input v-model="path" placeholder="./">
+        </div>
       </div>
       <div v-if="cdType === 'argocd'" class="grid2" style="margin-bottom:8px">
         <div>
@@ -86,6 +99,20 @@
           <label>{{ $t('k8sDeploy.yamlPath') }} <span style="color:#e5484d">*</span></label>
           <input v-model="path" placeholder="/opt/k8s/deploy.yaml">
         </div>
+        <div v-if="kubectlMode === 'setimage'" style="grid-column:1 / -1">
+          <label style="display:flex;align-items:center;gap:6px;text-transform:none">
+            <input type="checkbox" v-model="useDigest" style="width:auto">
+            {{ $t('k8sDeploy.useDigest') }}
+          </label>
+          <div style="font-size:11px;color:var(--text-dim)">{{ $t('k8sDeploy.useDigestHint') }}</div>
+        </div>
+        <div v-if="kubectlMode === 'apply'" style="grid-column:1 / -1">
+          <label style="display:flex;align-items:center;gap:6px;text-transform:none">
+            <input type="checkbox" v-model="stopManifest" style="width:auto">
+            {{ $t('k8sDeploy.stopManifest') }}
+          </label>
+          <div style="font-size:11px;color:#e5484d">{{ $t('k8sDeploy.stopManifestHint') }}</div>
+        </div>
       </div>
       <div v-if="cdType === 'helm'" class="grid2" style="margin-bottom:8px">
         <div>
@@ -95,6 +122,14 @@
         <div>
           <label>{{ $t('k8sDeploy.namespace') }}</label>
           <input v-model="k8sNs" placeholder="namespace">
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.helmRepoKey') }}</label>
+          <input v-model="helmRepoKey" placeholder="image.repository">
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.helmTagKey') }}</label>
+          <input v-model="helmTagKey" placeholder="image.tag">
         </div>
       </div>
       <div style="margin-bottom:8px;font-size:11px;color:#667">{{ $t('k8sDeploy.namespaceHint') }}</div>
@@ -191,6 +226,11 @@ const schedule = ref('')
 const kubectlMode = ref('setimage')
 const container = ref('')
 const targetApp = ref('')
+const fluxKind = ref('helmrelease')
+const helmRepoKey = ref('')
+const helmTagKey = ref('')
+const useDigest = ref(false)
+const stopManifest = ref(false)
 const defaultAppName = computed(() => (selectedProject.value || '').split('/').pop() || '')
 
 const checkModal = reactive({
@@ -273,6 +313,7 @@ async function doDeploy() {
     if (kubectlMode.value === 'apply' && !path.value.trim()) return toast(t('k8sDeploy.pathRequired'), false)
   }
   if (cdType.value === 'helm' && !path.value.trim()) return toast(t('k8sDeploy.pathRequired'), false)
+  if (cdType.value === 'fluxcd' && !targetApp.value.trim()) return toast(t('k8sDeploy.fluxResourceRequired'), false)
 
   const body = {
     project: selectedProject.value,
@@ -285,7 +326,13 @@ async function doDeploy() {
     k8s_ns: k8sNs.value.trim(),
     image_mode: cdType.value === 'kubectl' ? kubectlMode.value : '',
     container: cdType.value === 'kubectl' && kubectlMode.value === 'setimage' ? container.value.trim() : '',
-    target_app: cdType.value === 'kubectl' && kubectlMode.value === 'setimage' ? targetApp.value.trim() : '',
+    target_app: cdType.value === 'fluxcd'
+      ? targetApp.value.trim()
+      : (cdType.value === 'kubectl' && kubectlMode.value === 'setimage' ? targetApp.value.trim() : ''),
+    flux_kind: cdType.value === 'fluxcd' ? fluxKind.value : '',
+    helm_repo_key: cdType.value === 'helm' ? helmRepoKey.value.trim() : '',
+    helm_tag_key: cdType.value === 'helm' ? helmTagKey.value.trim() : '',
+    use_digest: cdType.value === 'kubectl' && kubectlMode.value === 'setimage' && useDigest.value,
     deploy_note: deployNote.value,
     scheduled_at: localInputToUtc(schedule.value),
     bot_id: parseInt(botId.value) || 0,
@@ -334,7 +381,8 @@ async function doCancel() {
 }
 
 async function doStop() {
-  if (!await confirm({ text: t('deploy.confirmStop'), danger: true })) return
+  const manifestStop = cdType.value === 'kubectl' && kubectlMode.value === 'apply' && stopManifest.value
+  if (!await confirm({ text: t(manifestStop ? 'deploy.confirmStopManifest' : 'deploy.confirmStop'), danger: true })) return
   const cid = parseInt(clusterId.value) || 0
   if (!cid) return toast('请选择集群', false)
   const body = {
@@ -345,6 +393,11 @@ async function doStop() {
     cd_type: cdType.value,
     api_url: apiUrl.value,
     k8s_ns: k8sNs.value.trim(),
+    // 停止与部署同源:显式工作负载名优先,Flux 还需资源类型
+    k8s_deploy: targetApp.value.trim(),
+    target_app: targetApp.value.trim(),
+    flux_kind: cdType.value === 'fluxcd' ? fluxKind.value : '',
+    stop_mode: manifestStop ? 'manifest' : '',
   }
   try {
     const r = await fetch('/api/stop-k8s', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth.A() }, body: JSON.stringify(body) })

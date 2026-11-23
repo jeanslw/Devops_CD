@@ -35,6 +35,9 @@ _SSH_FIELDS = (
     "k8s_deploy",
     "k8s_container",
     "env_file",
+    "use_digest",
+    "fail_fast",
+    "health_cmd",
     "deploy_note",
     "bot_id",
     "lang",
@@ -51,6 +54,10 @@ _K8S_FIELDS = (
     "image_mode",
     "container",
     "target_app",
+    "flux_kind",
+    "helm_repo_key",
+    "helm_tag_key",
+    "use_digest",
     "deploy_note",
     "bot_id",
     "lang",
@@ -77,6 +84,9 @@ def ssh_params(req) -> dict:
         "k8s_deploy": req.k8s_deploy,
         "k8s_container": req.k8s_container,
         "env_file": req.env_file,
+        "use_digest": req.use_digest,
+        "fail_fast": req.fail_fast,
+        "health_cmd": req.health_cmd,
         "deploy_note": req.deploy_note,
         "bot_id": req.bot_id,
         "lang": req.lang,
@@ -97,6 +107,10 @@ def k8s_params(req) -> dict:
         "image_mode": req.image_mode,
         "container": req.container,
         "target_app": req.target_app,
+        "flux_kind": req.flux_kind,
+        "helm_repo_key": req.helm_repo_key,
+        "helm_tag_key": req.helm_tag_key,
+        "use_digest": req.use_digest,
         "deploy_note": req.deploy_note,
         "bot_id": req.bot_id,
         "lang": req.lang,
@@ -142,6 +156,9 @@ def _execute_ssh(db, params: dict, user: dict, callback=None, approval_id: int =
     kwargs.setdefault("k8s_deploy", "")
     kwargs.setdefault("k8s_container", "")
     kwargs.setdefault("env_file", "")
+    kwargs.setdefault("use_digest", False)
+    kwargs.setdefault("fail_fast", False)
+    kwargs.setdefault("health_cmd", "")
     kwargs.setdefault("deploy_note", "")
     kwargs.setdefault("rollback_type", "manual")
     kwargs.setdefault("lang", "en")
@@ -160,7 +177,7 @@ def _execute_ssh(db, params: dict, user: dict, callback=None, approval_id: int =
 
 def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = False, approval_id: int = 0) -> dict:
     req = K8sDeployRequest(**{k: params[k] for k in _K8S_FIELDS if k in params})
-    image, project_key, project_short = _resolve_image(db, req)
+    image, project_key, project_short, artifact_digest = _resolve_image(db, req)
     host, port, user_srv, pwd, ssh_key = _resolve_cluster(db, req)
     result = _deploy_k8s_core(
         db,
@@ -177,6 +194,7 @@ def _execute_k8s(db, params: dict, user: dict, callback=None, rollback: bool = F
         callback=callback,
         rollback=rollback,
         approval_id=approval_id,
+        artifact_digest=artifact_digest,
     )
 
     if not result.get("cancelled"):
