@@ -444,6 +444,16 @@ tbody tr:last-child td { border-bottom: none; }
 .btn-active { background: var(--accent); color: #fff; font-weight: 600; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
 
+/* ── 部署页操作按钮:窄屏自动换行,避免按钮把卡片顶出横向滚动 ── */
+.action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.action-row .btn { margin-left: 0; }
+.action-row .btn-tip { margin-left: 0; }
+@media(max-width:768px) {
+  .action-row .btn { flex: 1 1 auto; justify-content: center; }
+  .action-row .btn-wide { flex: 1 1 100%; }
+  .action-row .btn-tip { flex-basis: 100%; line-height: 1.5; }
+}
+
 /* ── Tag 分页 ── */
 .tag-pager { display: flex; align-items: center; gap: 2px; }
 .tag-pager select { flex: 1; min-width: 80px; }
@@ -908,6 +918,9 @@ pre.output {
   .card h3 { flex-wrap: wrap; }
   .grid2 { grid-template-columns: 1fr; }
   .grid3 { grid-template-columns: 1fr; }
+  /* 表单列内容可收缩:长项目名/长路径不会把卡片顶宽 */
+  .grid2 > *, .grid3 > * { min-width: 0; }
+  .card input, .card select, .card textarea { max-width: 100%; }
 }
 
 

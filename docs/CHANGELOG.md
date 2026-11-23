@@ -15,6 +15,7 @@
   - The K8S deployment form follows the deployment type: kubectl shows mode/container/workload, Helm shows chart path and values keys, Argo CD shows API URL and namespace, Flux CD shows resource name/kind.
   - kubectl stop now uses the same resource name as deploy; it deletes only the Deployment by default, and deleting the whole YAML manifest is an advanced option with an explicit warning.
   - Flux Pods / Deployments are located by the instance label first, with name-prefix matching only as the last resort.
+  - Docker Compose / K8S deployment buttons wrap on narrow screens, with long actions taking their own row; form columns can shrink to avoid horizontal overflow.
 - **Fixed**
   - A hard-coded image in YAML (without `{IMAGE}:{TAG}`) no longer reports success while the image is actually unchanged.
   - kubectl stop built an invalid Deployment name from `group/app`, and stopping via YAML could delete Services/ConfigMaps along with the workload.

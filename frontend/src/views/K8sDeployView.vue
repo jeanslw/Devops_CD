@@ -151,12 +151,14 @@
           <div style="font-size:11px;color:var(--text-dim)">{{ $t('deploy.scheduleHint') }}</div>
         </div>
       </div>
-      <button class="btn btn-green" style="margin-top:8px" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
-      <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
-      <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
-      <button class="btn btn-blue" style="margin-left:8px" @click="doRollbackToTag" :disabled="loading || !selectedTag" :title="$t('deploy.rollbackToTagTip')">{{ $t('deploy.rollbackToTag') }}</button>
-      <button v-if="cdType !== 'fluxcd'" class="btn btn-blue" style="margin-left:8px" @click="doRollbackOneStep" :disabled="loading" :title="$t('deploy.rollbackOneStepTip')">{{ $t('deploy.rollbackOneStep') }}</button>
-      <span class="btn-tip">{{ $t('deploy.rollbackTip') }}</span>
+      <div class="action-row">
+        <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
+        <button class="btn btn-red" @click="doStop">{{ $t('deploy.stop') }}</button>
+        <button class="btn btn-orange" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
+        <button class="btn btn-blue btn-wide" @click="doRollbackToTag" :disabled="loading || !selectedTag" :title="$t('deploy.rollbackToTagTip')">{{ $t('deploy.rollbackToTag') }}</button>
+        <button v-if="cdType !== 'fluxcd'" class="btn btn-blue btn-wide" @click="doRollbackOneStep" :disabled="loading" :title="$t('deploy.rollbackOneStepTip')">{{ $t('deploy.rollbackOneStep') }}</button>
+        <span class="btn-tip">{{ $t('deploy.rollbackTip') }}</span>
+      </div>
       <ApprovalFlowPanel
         v-if="panelApprovalId"
         :approval-id="panelApprovalId"

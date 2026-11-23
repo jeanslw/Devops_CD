@@ -93,10 +93,12 @@
             <input v-model="healthCmd" :placeholder="$t('deploy.healthCmdPlaceholder')">
           </div>
         </div>
-        <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
-        <button class="btn btn-red" style="margin-left:8px" @click="doStop">{{ $t('deploy.stop') }}</button>
-        <button class="btn btn-orange" style="margin-left:8px" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
-        <button class="btn btn-blue" style="margin-left:8px" @click="doRollback" :disabled="loading || !selectedTag">{{ $t('deploy.rollbackToTag') }}</button>
+        <div class="action-row">
+          <button class="btn btn-green" @click="doDeploy" :disabled="loading">{{ $t('deploy.deploy') }}</button>
+          <button class="btn btn-red" @click="doStop">{{ $t('deploy.stop') }}</button>
+          <button class="btn btn-orange" @click="doCancel" :disabled="!loading">{{ $t('deploy.cancel') }}</button>
+          <button class="btn btn-blue btn-wide" @click="doRollback" :disabled="loading || !selectedTag">{{ $t('deploy.rollbackToTag') }}</button>
+        </div>
         <ApprovalFlowPanel
           v-if="panelApprovalId"
           :approval-id="panelApprovalId"

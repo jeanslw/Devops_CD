@@ -15,6 +15,7 @@
   - K8S 部署表单按部署类型联动：kubectl 显示变更方式/容器/工作负载，Helm 显示 Chart 路径与 values key，Argo CD 显示 API 地址与命名空间，Flux CD 显示资源名/类型。
   - kubectl 停止与部署使用同一资源名；默认只删 Deployment，按 YAML 删除整份清单改为高级选项并提示风险。
   - Flux 的 Pod / Deployment 优先按实例标签定位，名称前缀仅作最后兜底。
+  - Docker Compose / K8S 部署页按钮组在窄屏自动换行，长操作按钮独占一行；表单列可收缩，避免小屏横向溢出。
 - **修复**
   - YAML 中写死镜像（未引用 `{IMAGE}:{TAG}`）时，kubectl 部署实际未更换镜像却返回成功的问题。
   - kubectl 停止使用 `group/app` 拼出非法 Deployment 名，以及按 YAML 停止时连带删除 Service/ConfigMap 的问题。
