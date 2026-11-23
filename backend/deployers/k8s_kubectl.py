@@ -1,4 +1,4 @@
-"""K8S kubectl 部署模式 - SSH 远程 kubectl apply + rollout restart"""
+"""K8S kubectl 部署模式 - set image(默认) / YAML apply(高级) + 部署后镜像断言"""
 
 import logging
 import secrets
@@ -11,7 +11,10 @@ from backend.deploy_log import S
 from backend.deployers.base import DeployTarget, retry_idempotent, ssh_connect
 from backend.deployers.k8s_base import K8sSubDeployer
 from backend.deployers.k8s_utils import (
+    _deployment_containers,
+    _deployment_image,
     _exec_exit,
+    _get_deployment_doc,
     _get_deployment_name,
     _kubectl_pods,
     _log,
@@ -118,6 +121,132 @@ class KubectlDeployer(K8sSubDeployer):
                 ssh.close()
 
     def deploy(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        """按 image_mode 分流:setimage(默认) / apply(高级)."""
+        image_mode = (getattr(req, "image_mode", "") or "").strip().lower()
+        if image_mode not in ("apply", "setimage"):
+            # 未显式指定:有 YAML 走 apply(兼容旧行为),无 YAML 走 set image
+            image_mode = "apply" if getattr(req, "path", "") else "setimage"
+        if image_mode == "setimage":
+            return self._deploy_set_image(req, image, project, host, port, user, pwd, ssh_key, callback)
+        return self._deploy_apply(req, image, project, host, port, user, pwd, ssh_key, callback)
+
+    def _deploy_set_image(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        """触发器主路径:对已存在的 Deployment 发出一次 set image,并用镜像断言证明变更生效."""
+        target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
+        namespace = (getattr(req, "k8s_ns", "") or "").strip()
+        ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
+        deploy_name = (getattr(req, "target_app", "") or "").strip() or project.split("/")[-1]
+        container = (getattr(req, "container", "") or "").strip()
+
+        if not container:
+            _log(callback, S("deploy_log.setimage_no_container"))
+            return {"success": False, "output": "set image requires a container name"}
+
+        ssh = None
+        try:
+            ssh = ssh_connect(target, settings.ssh_timeout)
+
+            # ── 变更前:确认 Deployment 存在、容器名合法 ──
+            doc, doc_err = _get_deployment_doc(ssh, deploy_name, namespace)
+            if doc is None:
+                _log(callback, S("deploy_log.setimage_deploy_not_found", name=deploy_name))
+                return {
+                    "success": False,
+                    "output": f"Deployment [{deploy_name}] not found: {doc_err}. "
+                    "First deployment requires YAML apply mode.",
+                }
+
+            containers = _deployment_containers(doc)
+            names = [str(c.get("name") or "") for c in containers if c.get("name")]
+            if container not in names:
+                _log(
+                    callback,
+                    S(
+                        "deploy_log.setimage_container_missing",
+                        name=deploy_name,
+                        container=container,
+                        containers=", ".join(names) or "(none)",
+                    ),
+                )
+                return {
+                    "success": False,
+                    "output": f"container [{container}] not found in deployment [{deploy_name}]; available: {names}",
+                }
+
+            before_image = _deployment_image(doc, container) or "(none)"
+            _log(callback, S("deploy_log.current_version"))
+            _log(callback, f"{container}: {before_image}")
+
+            # ── 一次变更:kubectl set image ──
+            check_cancelled()
+            image_arg = f"{container}={image}"
+            cmd = f"kubectl set image deployment/{shlex.quote(deploy_name)} {shlex.quote(image_arg)}{ns_flag}"
+            _log(callback, S("deploy_log.exec_cmd", n=1, cmd=cmd))
+            out, err, ec = _exec_exit(ssh, cmd, timeout=settings.ssh_timeout)
+            if out:
+                _log(callback, out)
+            if err:
+                _log(callback, err)
+            if ec != 0:
+                _log(callback, S("deploy_log.deploy_error", error=err or f"exit code {ec}"))
+                return {"success": False, "output": f"kubectl set image failed (exit {ec}):\n{out or err}"}
+            _log(callback, S("deploy_log.setimage_applied", container=container, image=image))
+
+            # ── 原生完成信号:rollout status ──
+            check_cancelled()
+            _log(callback, S("deploy_log.waiting_pod"))
+            rollout_out, rollout_err, rollout_ec = _exec_exit(
+                ssh,
+                f"kubectl rollout status deployment/{shlex.quote(deploy_name)}{ns_flag} "
+                f"--timeout={settings.k8s_rollout_timeout}s",
+                timeout=settings.k8s_rollout_timeout + 30,
+            )
+            rollout_text = (rollout_out or rollout_err or "").strip()
+            if rollout_out:
+                _log(callback, rollout_out)
+            if rollout_err:
+                _log(callback, rollout_err)
+
+            # ── 变更后:断言实际镜像与目标一致 ──
+            after_doc, after_err = _get_deployment_doc(ssh, deploy_name, namespace)
+            after_image = _deployment_image(after_doc, container) if after_doc else ""
+            if after_image:
+                _log(callback, S("deploy_log.after_version"))
+                _log(callback, f"{container}: {after_image}")
+
+            is_ok = ec == 0 and rollout_ec == 0 and after_image == image
+            if is_ok:
+                _log(callback, S("deploy_log.image_assert_ok", image=image))
+                _log(callback, S("deploy_log.verify_ok"))
+            else:
+                _log(callback, S("deploy_log.verify_fail"))
+                if after_image != image:
+                    _log(
+                        callback,
+                        S(
+                            "deploy_log.image_assert_fail",
+                            actual=after_image or after_err or "(none)",
+                            expected=image,
+                        ),
+                    )
+
+            status_text = "验证部署: ✅ 部署成功！" if is_ok else "验证部署: ❌ 部署失败！"
+            result = (
+                f"Workload: deployment/{deploy_name} container={container}\n"
+                f"Image: {before_image} -> {after_image or image}\n\n"
+                f"{rollout_text}\n\n{status_text}"
+            )
+            return {"success": is_ok, "output": result[: settings.log_truncate_chars]}
+        except Exception as e:
+            logger.error("Kubectl set image failed", exc_info=e)
+            _log(callback, S("deploy_log.deploy_error", error=str(e)))
+            return {"success": False, "output": str(e)}
+        finally:
+            if ssh:
+                ssh.close()
+
+    def _deploy_apply(self, req, image, project, host, port=22, user="root", pwd="", ssh_key="", callback=None):
+        """高级模式:整份 YAML apply,并在 rollout 后断言镜像确实变为目标镜像."""
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
 
         tag = req.tag
@@ -318,10 +447,24 @@ class KubectlDeployer(K8sSubDeployer):
                 after = all_after
             _log(callback, after)
 
-            # ── 成败判断:rollout status exit code ──
+            # ── 成败判断:rollout status + 实际镜像断言 ──
+            # 只认 rollout 会放过"YAML 未引用 {IMAGE}:{TAG},实际没换镜像"的假成功.
             is_ok = rollout_ec == 0
+            actual_images: list[str] = []
+            assert_error = ""
+            if is_ok:
+                after_doc, after_doc_err = _get_deployment_doc(ssh, deploy_name, effective_ns)
+                if after_doc is None:
+                    is_ok = False
+                    assert_error = after_doc_err or "deployment unreadable"
+                else:
+                    actual_images = [str(c.get("image") or "") for c in _deployment_containers(after_doc)]
+                    if image not in actual_images:
+                        is_ok = False
+                        assert_error = ", ".join(i for i in actual_images if i) or "(none)"
             if is_ok:
                 running_count = sum(1 for line in after.split("\n") if "Running" in line)
+                _log(callback, S("deploy_log.image_assert_ok", image=image))
                 _log(callback, S("deploy_log.verify_ok"))
                 result = (
                     f"{before_text}\n\n开始部署:\n"
@@ -330,12 +473,20 @@ class KubectlDeployer(K8sSubDeployer):
                     + f"\n\n已部署: {running_count} 个 Running Pod\n\n验证部署: ✅ 部署成功！"
                 )
             else:
-                _log(callback, S("deploy_log.verify_fail_timeout"))
+                if assert_error:
+                    _log(
+                        callback,
+                        S("deploy_log.image_assert_fail", actual=assert_error, expected=image),
+                    )
+                    _log(callback, S("deploy_log.verify_fail_version"))
+                else:
+                    _log(callback, S("deploy_log.verify_fail_timeout"))
                 result = (
                     f"{before_text}\n\n开始部署:\n"
                     + "\n".join(deploy_log)
                     + f"\n\n{rollout_output}\n\n部署后运行版本:\n{after}"
                     + "\n\n验证部署: ❌ 部署失败！"
+                    + (f"\n实际镜像: {assert_error}\n期望镜像: {image}" if assert_error else "")
                 )
 
             return {"success": is_ok, "output": result[: settings.log_truncate_chars]}

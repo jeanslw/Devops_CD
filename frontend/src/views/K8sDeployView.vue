@@ -46,27 +46,58 @@
           </div>
         </div>
       </div>
-      <div style="margin-bottom:8px;font-size:11px;color:#667">{{ $t('k8sDeploy.namespaceHint') }}</div>
       <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px;font-size:11px;color:#667">Flux CD {{ $t('k8sDeploy.fluxNamespaceHint') }}</div>
       <div v-if="cdType === 'fluxcd'" style="margin-bottom:8px">
         <label>{{ $t('k8sDeploy.fluxPath') }}</label>
         <input v-model="path" placeholder="./">
       </div>
-      <div v-if="cdType === 'argocd'" style="margin-bottom:8px">
-        <label>{{ $t('k8sDeploy.apiUrl') }}</label>
-        <input v-model="apiUrl" placeholder="https://argocd:30443">
-      </div>
-      <!-- YAML 路径 + 命名空间 同一行(grid2);Argo CD 无 YAML 路径,命名空间单独占左列 -->
-      <div v-if="cdType === 'kubectl' || cdType === 'helm' || cdType === 'argocd'" class="grid2" style="margin-bottom:8px">
-        <div v-if="cdType === 'kubectl' || cdType === 'helm'">
-          <label>{{ $t('k8sDeploy.yamlPath') }}</label>
-          <input v-model="path" placeholder="/opt/k8s/deploy.yaml">
+      <div v-if="cdType === 'argocd'" class="grid2" style="margin-bottom:8px">
+        <div>
+          <label>{{ $t('k8sDeploy.apiUrl') }}</label>
+          <input v-model="apiUrl" placeholder="https://argocd:30443">
         </div>
         <div>
           <label>{{ $t('k8sDeploy.namespace') }}</label>
           <input v-model="k8sNs" placeholder="namespace">
         </div>
       </div>
+      <!-- kubectl:默认 set image;YAML apply 作为高级模式 -->
+      <div v-if="cdType === 'kubectl'" class="grid2" style="margin-bottom:8px">
+        <div>
+          <label>{{ $t('k8sDeploy.kubectlMode') }}</label>
+          <select v-model="kubectlMode">
+            <option value="setimage">{{ $t('k8sDeploy.modeSetImage') }}</option>
+            <option value="apply">{{ $t('k8sDeploy.modeApply') }}</option>
+          </select>
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.namespace') }}</label>
+          <input v-model="k8sNs" placeholder="namespace">
+        </div>
+        <div v-if="kubectlMode === 'setimage'">
+          <label>{{ $t('k8sDeploy.container') }} <span style="color:#e5484d">*</span></label>
+          <input v-model="container" :placeholder="$t('k8sDeploy.containerPlaceholder')">
+        </div>
+        <div v-if="kubectlMode === 'setimage'">
+          <label>{{ $t('k8sDeploy.targetApp') }}</label>
+          <input v-model="targetApp" :placeholder="defaultAppName || $t('k8sDeploy.targetAppPlaceholder')">
+        </div>
+        <div v-if="kubectlMode === 'apply'" style="grid-column:1 / -1">
+          <label>{{ $t('k8sDeploy.yamlPath') }} <span style="color:#e5484d">*</span></label>
+          <input v-model="path" placeholder="/opt/k8s/deploy.yaml">
+        </div>
+      </div>
+      <div v-if="cdType === 'helm'" class="grid2" style="margin-bottom:8px">
+        <div>
+          <label>{{ $t('k8sDeploy.yamlPath') }}</label>
+          <input v-model="path" placeholder="/opt/charts/app">
+        </div>
+        <div>
+          <label>{{ $t('k8sDeploy.namespace') }}</label>
+          <input v-model="k8sNs" placeholder="namespace">
+        </div>
+      </div>
+      <div style="margin-bottom:8px;font-size:11px;color:#667">{{ $t('k8sDeploy.namespaceHint') }}</div>
       <div class="grid2" style="margin-bottom:8px">
         <div>
           <label>{{ $t('deploy.notify') }}</label>
@@ -121,7 +152,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuth } from '@/composables/useAuth'
@@ -156,6 +187,11 @@ const apiUrl = ref('')
 const k8sNs = ref('default')
 const deployNote = ref('')
 const schedule = ref('')
+// kubectl 主路径:set image;YAML apply 作为高级模式保留
+const kubectlMode = ref('setimage')
+const container = ref('')
+const targetApp = ref('')
+const defaultAppName = computed(() => (selectedProject.value || '').split('/').pop() || '')
 
 const checkModal = reactive({
   show: false, text: '', warning: '', confirming: false,
@@ -231,15 +267,25 @@ async function doDeploy() {
   if (!selectedTag.value) return toast(t('deploy.noTag'), false)
   const cid = parseInt(clusterId.value) || 0
   if (!cid) return toast(t('deploy.selectCluster'), false)
+  // kubectl 主路径必须有容器名;apply / helm 必须有路径
+  if (cdType.value === 'kubectl') {
+    if (kubectlMode.value === 'setimage' && !container.value.trim()) return toast(t('k8sDeploy.containerRequired'), false)
+    if (kubectlMode.value === 'apply' && !path.value.trim()) return toast(t('k8sDeploy.pathRequired'), false)
+  }
+  if (cdType.value === 'helm' && !path.value.trim()) return toast(t('k8sDeploy.pathRequired'), false)
 
   const body = {
     project: selectedProject.value,
     tag: selectedTag.value,
     cd_type: cdType.value,
     cluster_id: cid,
-    path: path.value,
+    // set image 模式不使用 YAML,避免切换模式后残留的路径触发预检
+    path: cdType.value === 'kubectl' && kubectlMode.value === 'setimage' ? '' : path.value,
     api_url: apiUrl.value,
     k8s_ns: k8sNs.value.trim(),
+    image_mode: cdType.value === 'kubectl' ? kubectlMode.value : '',
+    container: cdType.value === 'kubectl' && kubectlMode.value === 'setimage' ? container.value.trim() : '',
+    target_app: cdType.value === 'kubectl' && kubectlMode.value === 'setimage' ? targetApp.value.trim() : '',
     deploy_note: deployNote.value,
     scheduled_at: localInputToUtc(schedule.value),
     bot_id: parseInt(botId.value) || 0,
