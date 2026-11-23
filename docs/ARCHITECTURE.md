@@ -2,28 +2,11 @@
 
 ## Overall Data Flow
 
+![System Architecture](Images/devops-glue-arch.png)
+
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                CODE PUSH                                     │
-│          GitLab / Gitee / GitHub / Gitea  →  Webhook Trigger                 │
-└────────────────────────────────────┬─────────────────────────────────────────┘
-                                     ↓
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                     CI 层：Devops-Glue API (PHP)                             │
-│                                                                              │
-│  ┌──────────────┐  ┌──────────────┐   ┌──────────────┐    ┌───────────────┐  │
-│  │   Jenkins    │  │  GitLab CI   │   │   Gitea CI   │    │  Custom Push  │<──── User CI
-│  │ BuildProvider│  │ BuildProvider│   │ BuildProvider│    │ (custom_push) │  │   (pusher)
-│  └──────┬───────┘  └──────┬───────┘   └──────┬───────┘    └───────┬───────┘  │
-│         └─────────────────┼──────────────────┼────────── ─────────┼          │
-│                                   ↓                                          │
-│                    Build → Docker Image → Harbor Registry                    │
-│                                   ↓                                          │
-│                      scan-sync → ci_pipeline_artifacts                       │
-└───────────────────────────────────┬─────┬────────────────────────────────────┘
-                                    ↓     ↓
 		┌───────────────────────────────────────────────────────────────┐
-		│                     CD 层：devops-cd (Python)                 │
+		│                     CD Layer: devops-cd                       │
 		│                                                               │
 		│  ┌────────────────────────┐     ┌────────────────────────┐    │
 		│  │Build manage(HTTP API)  │     │ Webhook Receive/Forward│    │
@@ -46,19 +29,15 @@
 		│          DingTalk / WeCom / Custom Webhook Notifications      │
 		└───────────────────────────────────────────────────────────────┘
 ```
+
 ## Component Relationships
 
 ```
-		┌─────────────────────────────────────────────┐
-		│ Database (SQLite / MySQL / MariaDB)         │
-		│                                             │
-		│  ci_pipeline_artifacts ← CI write           │
-		│  cd_servers            ←  CD maintain       │
-		│  cd_deploy_logs        ← CD write           │
-		│  cd_approvals(_rules)  ←  CD write          │
-		│  cd_sessions           ← CD write / delete  │
-		│  cd_bots               ← CD maintain        │
-		└──────────────────────┬──────────────────────┘
+		┌────────────────────────────────────────────┐
+		│ Database (SQLite / MySQL / MariaDB)        │
+		│  ci_*             ← CI read/write          │
+		│  cd_*             ← CD read/write          │
+		└──────────────────────┬─────────────────────┘
 							   │
 					  ┌────────┴────────┐
 					  ↓                 ↓
