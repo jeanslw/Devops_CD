@@ -23,8 +23,6 @@ def split_image_ref(image: str) -> tuple[str, str]:
     return repo, tag
 
 
-# OCI Distribution / Docker tag 规范:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}
-# 所有部署器在把 tag 拼进 shell 命令前都必须先过此校验.
 _TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
 
 
@@ -292,8 +290,6 @@ def ssh_connect(target: "DeployTarget", timeout: int, trust: bool = False):
         try:
             ssh.connect(**kwargs)  # type: ignore[arg-type]
         except paramiko.SSHException as e:
-            # RejectPolicy 不认识 host 时会抛 SSHException("Server ... not found in known_hosts")
-            # 仅在用户明确 trust=True(前端点了"测试连接/信任"按钮)时,先存 host key 再重试
             if trust and "not found in known_hosts" in str(e).lower():
                 _save_first_host_key(target.host, target.port, timeout)
                 ssh.close()
@@ -338,7 +334,7 @@ def run_remote_probe(target: "DeployTarget", cmd: str, timeout: int = 30) -> tup
             return ec == 0, (out or err or f"exit code {ec}")
     except DeployCancelled:
         raise
-    except Exception as exc:  # noqa: BLE001 - 验收失败要转成部署失败,不向上抛网络异常
+    except Exception as exc:  # noqa: BLE001
         return False, str(exc)
 
 
@@ -347,13 +343,12 @@ def _exec_on(ssh, cmd: str, timeout: int = 130) -> tuple[str, str, int]:
 
     timeout 为 SSH 通道读超时(秒),默认 130s;远端挂死时 read() 抛 socket.timeout.
     """
-    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)  # nosec
+    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
     o = stdout.read().decode(errors="replace").strip()
     e = stderr.read().decode(errors="replace").strip()
     try:
         exit_code = stdout.channel.recv_exit_status()
     except Exception:
-        # 通道异常关闭(如超时)时 fallback:有 stderr 则视为失败
         exit_code = 1
     return o, e, exit_code
 
@@ -393,12 +388,10 @@ def retry_idempotent(
             return result
         if attempt < attempts:
             time.sleep(delay)
-    # attempts >= 1 时循环至少执行一次,last 必已赋值;给非法 attempts 一个明确错误而非返回 None
     assert last is not None, "retry_idempotent: attempts 必须 >= 1"
     return last
 
 
-# 进度条特征:终端用 \r 刷新,形如 "[==>                ]" 或 "[=====>     ]"
 _PROGRESS_BAR = re.compile(r"\[[=> ]+\]")
 
 
@@ -418,9 +411,7 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
         buf_size = 65536
 
         def _clean(line: str) -> str:
-            # 去掉 ANSI 转义码,\r 分段去重:相邻进度条段只保留最后一段
             line = ANSI_RE.sub("", line)
-            # 不含 \r 的普通行原样返回
             if "\r" not in line:
                 return line
             segments = [p.strip() for p in line.split("\r") if p.strip()]
@@ -434,7 +425,6 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
                     kept.append(seg)
                     continue
                 prev = kept[-1]
-                # 相邻两段都是进度条 → 替换(去重)
                 if _PROGRESS_BAR.search(seg) and _PROGRESS_BAR.search(prev):
                     kept[-1] = seg
                 else:
@@ -448,7 +438,6 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
 
         check_cancel = get_cancel_checker()
         while not channel.exit_status_ready():
-            # 部署取消检查:用户调用 cancel 接口后,尽快中断远端长命令
             if check_cancel is not None and check_cancel():
                 log_fn("\n[deploy cancelled by user]")
                 raise DeployCancelled()
@@ -476,14 +465,11 @@ def ssh_exec_stream(ssh, cmd: str, log_fn) -> tuple[str, int]:
             if not had_data:
                 time.sleep(0.005)
 
-        # 阻塞等待退出状态码接收完毕(确保远端已刷新所有 stdout/stderr)
-        # 取不到退出码时按失败处理:通道异常中断不能被误判为部署成功
         try:
             exit_code = channel.recv_exit_status()
         except Exception:
             exit_code = 1
 
-        # 补读残留数据,最多重试 5 次(含短暂延时,应对网络延迟导致的数据滞后到达)
         for _ in range(5):
             had = False
             while channel.recv_ready():
@@ -533,16 +519,16 @@ class DeployTarget:
     port: int = 22
     user: str = "root"
     password: str = ""
-    ssh_key: str = ""  # SSH 私钥内容(PEM 格式)
-    path: str = ""  # compose路径 / K8s YAML路径 / Ansible playbook路径
-    mode: str = ""  # docker | commands | ansible (SSH) / remote | commands (Compose)
-    options: dict = field(default_factory=dict)  # commands / namespace / deployment / container
+    ssh_key: str = ""
+    path: str = ""
+    mode: str = ""
+    options: dict = field(default_factory=dict)
 
 
 @dataclass
 class DeployResult:
     image: str
-    status: str  # ok | failed | skipped
+    status: str
     output: str = ""
 
 

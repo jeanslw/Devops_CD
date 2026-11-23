@@ -75,9 +75,6 @@ class DeployService:
                 placeholders = ",".join("?" * len(ids))
                 rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()  # nosec
             else:
-                # server_ids 为空 = 部署到全部可用服务器;K8S 集群(type=k8s/argocd/fluxcd)
-                # 只能走 /api/deploy-k8s(cluster_id 指定),不属于本 SSH/Compose 路线,
-                # 须过滤掉(空选择会把 K8S 集群误当 SSH/Compose 目标,签名错位).
                 rows = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name").fetchall()
 
             def _build_target(r):
@@ -149,23 +146,14 @@ class DeployService:
         user: dict | None = None,
         approval_id: int = 0,
     ) -> dict:
-        """批量部署到一台或多台服务器.
-        user 参数:当前登录用户信息 dict(含 role / permissions / username),
-                 用于部署前的二次权限校验与审计日志 triggered_by 字段,
-                 传入 None 时跳过校验(仅限内部可信调用).
-        部署开始插入 running 记录(并发锁 + 取消依据),结束时更新
-        状态 / 耗时 / 分阶段耗时 / 说明.
-        """
-        # K8S 子模式必须走 _deploy_k8s_core
+        """批量部署到一台或多台服务器."""
         if deploy_type.startswith("k8s/"):
             raise ValueError(
                 f"部署类型 '{deploy_type}' 不属于 SSH/Compose 路线，"
                 "请使用 DeployService 之外的 K8S 专用流程（routers/k8s_deploy._deploy_k8s_core）"
             )
-        # ── 部署时二次权限校验 ──
         if user is not None:
             enforce_deploy_perm(user, deploy_type)
-        # ── tag 白名单校验(必须在任何 SSH 命令拼接之前;非法 tag 直接拒绝)──
         validate_tag(tag)
         triggered_by = (user or {}).get("username", "")
 
@@ -176,10 +164,8 @@ class DeployService:
         try:
             registry = registry_base_url()
         except RegistryConfigError as e:
-            # 仓库地址缺失:按参数错误返回(与本服务其它配置缺失一致)
             raise ValueError(str(e)) from e
-        # digest 始终尽力解析并写入部署记录;use_digest 时用 repo@sha256 精确部署(仅 SSH)
-        digest = resolve_artifact_digest(harbor_repo, tag)
+        digest = resolve_artifact_digest(harbor_repo, tag) if use_digest else ""
         if use_digest:
             if deploy_type != "ssh":
                 raise ValidationError(
@@ -472,11 +458,7 @@ class DeployService:
             clear_cancel_checker()
 
     def list_logs(self, project: str = "", page: int = 1, page_size: int = 15) -> dict:
-        """查询部署记录(分页).
-
-        列表页只取渲染所需列,剔除 params_json(完整请求快照)/ stage_times(阶段耗时 JSON)
-        两个大字段(前端日志页不消费).
-        """
+        """查询部署记录(分页)"""
         page = max(page, 1)
         page_size = max(min(page_size, 100), 1)
         offset = (page - 1) * page_size

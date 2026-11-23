@@ -20,7 +20,7 @@ def mask_query(path: str) -> str:
     """把敏感参数的值换成 <masked>,其余部分逐字符保留."""
     base, sep, query = path.partition("?")
     if not sep or not base.startswith(MASK_PATH_PREFIXES):
-        return path  # 非目标路由 / 无 query:原样返回
+        return path
     kept = []
     for chunk in query.split("&"):
         key, key_sep, _value = chunk.partition("=")
@@ -34,21 +34,19 @@ class MaskCredentialQueryFilter(logging.Filter):
     仅在命中敏感参数时改写 record。
     """
 
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - logging.Filter 约定名
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-            # uvicorn.access: (client_addr, method, full_path, http_version, status_code)
             masked = mask_query(args[2])
             if masked != args[2]:
                 record.args = (*args[:2], masked, *args[3:])
         elif isinstance(args, dict):
-            # uvicorn 的 websocket 访问日志用 dict 参数(键:client_addr / path / status_code ...)
             path = args.get("path")
             if isinstance(path, str):
                 masked = mask_query(path)
                 if masked != path:
-                    record.args = {**args, "path": masked}  # 复制而非就地改写:不影响其他 handler
-        return True  # 只改写,不过滤任何记录
+                    record.args = {**args, "path": masked}
+        return True
 
 
 def install_access_log_filter(logger_name: str = "uvicorn.access") -> None:

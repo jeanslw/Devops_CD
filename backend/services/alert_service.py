@@ -12,10 +12,8 @@ from backend.services.notification import send_webhook
 
 logger = logging.getLogger("cd.alert")
 
-# ── 告警冷却记录(内存): "rule_server_entity" → last_alert_ts ──
 _cooldowns: dict[str, float] = {}
 
-# ── 持续超标追踪(内存): "rule_server_entity" → first_exceeded_ts ──
 _durations: dict[str, float] = {}
 
 _runner: threading.Thread | None = None
@@ -51,7 +49,6 @@ _DEFAULT_TEMPLATES = {
     },
 }
 
-# 资源名称中英文
 _RESOURCE_NAMES = {
     "zh": {
         "cpu": "CPU",
@@ -77,7 +74,6 @@ _RESOURCE_NAMES = {
     },
 }
 
-# K8S/CD type 名称
 _TYPE_NAMES = {
     "zh": {"pod": "Pod", "docker": "容器", "process": "进程"},
     "en": {"pod": "Pod", "docker": "Container", "process": "Process"},
@@ -100,7 +96,6 @@ def _set_cooldown(rule_id: int, server_id: int, entity: str = ""):
     """记录告警发送时间"""
     key = _track_key(rule_id, server_id, entity)
     _cooldowns[key] = time.time()
-    # 清理过期记录(>1 天)
     for k in list(_cooldowns):
         if time.time() - _cooldowns[k] > 86400:
             del _cooldowns[k]
@@ -114,7 +109,6 @@ def _mark_exceeded(rule_id: int, server_id: int, entity: str = ""):
     key = _track_key(rule_id, server_id, entity)
     if key not in _durations:
         _durations[key] = time.time()
-    # 清理过期记录(>1 天)
     for k in list(_durations):
         if time.time() - _durations[k] > 86400:
             del _durations[k]
@@ -176,7 +170,6 @@ def _check_one(db, rule: dict):
         try:
             results = collect_alert_metrics(db, rule, server)
         except Exception as e:
-            # 采集失败 ≠ 未超标:跳过本台,保留持续时间追踪不被清零
             logger.warning("Alert: skip server %s (rule %s), collection failed: %s", sid, rule_id, e)
             continue
 
@@ -184,10 +177,8 @@ def _check_one(db, rule: dict):
             for r in results:
                 entity = r.get("entity_label", "")
 
-                # 有超标项 -- 追踪持续时间(按实体)
                 _mark_exceeded(rule_id, sid, entity)
 
-                # 检查是否已达标持续时间
                 elapsed = _get_exceeded_seconds(rule_id, sid, entity)
                 required = duration_minutes * 60
 
@@ -197,7 +188,6 @@ def _check_one(db, rule: dict):
                 if _check_cooldown(rule_id, sid, cooldown, entity):
                     continue
 
-                # 持续时间满足 + 冷却期已过 → 发送告警
                 _set_cooldown(rule_id, sid, entity)
                 _clear_duration(rule_id, sid, entity)
 
@@ -220,7 +210,6 @@ def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     resource_type = result["resource"]
 
-    # 自定义资源:用监控项名称作为显示名
     if resource_type.startswith("custom_"):
         resource_name = result.get("name", resource_type)
     else:
@@ -230,7 +219,6 @@ def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang
 
     tpl = template or _DEFAULT_TEMPLATES.get(target_type, _DEFAULT_TEMPLATES["system"]).get(lang, "")
 
-    # 添加 unit / raw / entity / metric 到模板变量
     raw_val = result.get("raw", "")
     entity_label = result.get("entity_label", "")
     metric_name = result.get("metric_name", "")
@@ -263,14 +251,12 @@ def _run_loop():
                 from backend.database import Database
                 from backend.dlock import acquire
 
-                # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
                 if not acquire(Database(), "alert_check", ttl_seconds=max(interval * 3, 90)):
                     continue
                 check_all_rules()
             except Exception as e:
                 logger.error(f"Alert check error: {e}")
     finally:
-        # 线程退出时主动释放锁,避免 TTL 内其他实例无法接管告警检测
         try:
             from backend.database import Database
             from backend.dlock import release

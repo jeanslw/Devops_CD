@@ -55,7 +55,7 @@ def _validate_monitor_command(command: str):
 class MetricDef(BaseModel):
     """单个指标定义"""
 
-    id: int | None = None  # 编辑时传, 新建时 null
+    id: int | None = None
     name: str = ""
     field_key: str = ""
     unit: str = ""
@@ -115,25 +115,22 @@ def _parse_csv(raw: str, metrics: list[dict]) -> list[dict]:
         headers = [h.strip() for h in (reader.fieldnames or [])]
         rows = list(reader)
     else:
-        # 变长空白(如 free -m): 按空白拆分
         split_lines = [re.split(r"\s+", line.strip()) for line in lines if line.strip()]
         if len(split_lines) < 2:
             return results
         headers = split_lines[0]
         rows = []
         for parts in split_lines[1:]:
-            # 仿 DictReader: 第一列可能是行标签
             if len(parts) == len(headers) + 1:
                 row = {"": parts[0]}
                 for h, v in zip(headers, parts[1:], strict=True):
                     row[h] = v
             else:
-                row = dict(zip(headers, parts))  # noqa: B905  # 长度不一致时保留截断行为
+                row = dict(zip(headers, parts))  # noqa: B905
             rows.append(row)
 
     for row in rows:
         entity = {k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
-        # 行标签列(如果有, 空字符串 key "") 作为 entity_label, 否则用第一列值
         entity_label = entity.pop("", "") or (next(iter(entity.values())) if entity else "")
         for m in metrics:
             fk = m.get("field_key", "").strip()
@@ -202,7 +199,6 @@ def _parse_json(raw: str, metrics: list[dict]) -> list[dict]:
             fk = m.get("field_key", "").strip()
             if not fk:
                 continue
-            # 支持嵌套 key 如 "gpu.utilization"
             val = _json_get(obj, fk)
             if val is None:
                 continue
@@ -228,7 +224,6 @@ def _parse_auto(raw: str, metrics: list[dict]) -> list[dict]:
         r = _parse_csv(raw, metrics)
         if r:
             return r
-    # 回退: 单值提取
     val = _parse_number(raw)
     if val is None:
         return []
@@ -271,7 +266,6 @@ def _try_float(s: str) -> float | None:
     if not s:
         return None
     s = s.rstrip("%").replace(",", "")
-    # 剥离容量单位后缀(不换算, 只提取数字): 20G -> 20, 1.5GiB -> 1.5, 300M -> 300
     s = re.sub(r"(?i)([kmgtp]i?b?|b)$", r"", s)
     try:
         return float(s)
@@ -300,8 +294,6 @@ def _diagnose_parse(raw: str, metrics: list[dict]) -> dict | None:
     if len(lines) < 2:
         return None
 
-    # 尝试从第一行提取表头
-    # 先尝试 Sniffer 探测分隔符
     delim = None
     with suppress(Exception):
         delim = csv.Sniffer().sniff(text[:4096], delimiters=",\t;|").delimiter
@@ -313,7 +305,6 @@ def _diagnose_parse(raw: str, metrics: list[dict]) -> dict | None:
 
     configured_keys = [m.get("field_key", "").strip() for m in metrics if m.get("field_key", "").strip()]
 
-    # 逐列精确匹配检测
     matched_headers = [h for h in headers if h in configured_keys]
     unmatched_keys = [k for k in configured_keys if k not in headers]
 
@@ -453,7 +444,6 @@ def test_monitor(
             ids = [int(x) for x in server_ids_str.split(",") if x.strip().isdigit()]
             if ids:
                 placeholders = ", ".join(["?"] * len(ids))
-                # 参数化查询: placeholders 仅含 ? 占位符, ids 作为参数单独传递, 无注入风险
                 query = f"SELECT * FROM cd_servers WHERE id IN ({placeholders})"  # nosec
                 servers = conn.execute(query, ids).fetchall()
             else:
@@ -482,7 +472,6 @@ def test_monitor(
                 "parsed": parsed,
                 "error": "",
             }
-            # 解析为空但输出非空 -> 附加诊断信息
             if (not parsed) and out.strip() and metrics:
                 diag = _diagnose_parse(out, metrics)
                 if diag:

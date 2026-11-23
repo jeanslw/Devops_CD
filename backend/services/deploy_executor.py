@@ -21,7 +21,6 @@ from backend.services.k8s_deploy_service import (
 
 logger = logging.getLogger(__name__)
 
-# DeployService.execute 接受的参数(与 DeployRequest 字段一一对应)
 _SSH_FIELDS = (
     "project",
     "tag",
@@ -42,7 +41,6 @@ _SSH_FIELDS = (
     "bot_id",
     "lang",
 )
-# K8sDeployRequest 字段
 _K8S_FIELDS = (
     "project",
     "tag",

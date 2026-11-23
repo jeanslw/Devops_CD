@@ -31,16 +31,13 @@ def acquire(db, name: str, ttl_seconds: int = 90) -> bool:
                     conn.execute("INSERT INTO cd_config (key_name, value) VALUES (?,?)", (key, value))
                     return True
                 except Exception:
-                    # 主键冲突:另一实例恰好抢先插入
                     return False
             old = row["value"] or ""
             old_owner, _, old_ts = old.partition("|")
             is_mine = old_owner == INSTANCE_ID
-            # 格式非法视为已过期,允许接管
             is_stale = (not old_ts.isdigit()) or (now - int(old_ts)) >= ttl_seconds
             if not (is_mine or is_stale):
                 return False
-            # 仅当 value 仍为旧值时写入,并发下只有一个实例成功
             cur = conn.execute(
                 "UPDATE cd_config SET value=? WHERE key_name=? AND value=?",
                 (value, key, old),

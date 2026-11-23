@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-logging.Formatter.converter = time.gmtime  # 日志时间戳统一为 UTC
+logging.Formatter.converter = time.gmtime
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,8 +101,7 @@ async def lifespan(app: FastAPI):
         interval = -1
     start_background_sync(lambda: Database(), interval)
     start_alert_checker()
-    # 审批:进程重启后清僵尸部署锁,把 deploying 审批单按部署记录终态收敛;
-    # 并启动定时发布调度器(到点以申请人身份自动执行已批准的定时单据)
+
     try:
         from backend.services.approval_service import (
             recover_on_startup,
@@ -115,7 +114,6 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).exception("approval recovery/scheduler bootstrap failed")
     yield
 
-    # ── 优雅停机:先停后台线程,再取消进行中的部署并等待收尾 ──
     import logging as _logging
 
     _log = _logging.getLogger(__name__)
@@ -142,7 +140,6 @@ app = FastAPI(title="Devops-Glue CD", version=__version__, lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
 _STARTED_AT = datetime.now(timezone.utc)
 
-# 导入期安装,覆盖三种启动方式
 install_access_log_filter()
 install_console_log_filter()
 install_ip_family()
@@ -280,7 +277,7 @@ def _probe_contract() -> tuple[int | None, bool | None, str | None]:
             p = str(data.get("provision") or "").strip().lower()
             provision = "manual" if p == "manual" else "auto"
     except Exception:
-        pass  # 响应不是预期 JSON:enabled / provision 保持 None,按无法判定处理
+        pass
     return resp.status_code, enabled, provision
 
 
@@ -338,7 +335,6 @@ def _status_detail() -> dict:
         else:
             status, detail = "unreachable", "unreachable"
     elif contract_enabled is None:
-        # 契约响应 200 但 enabled 缺失 / 不可解析:按无法判定处理
         status, detail = "unreachable", "unreachable"
     elif not contract_enabled:
         status, detail = "stopped", "not_enabled"
@@ -416,7 +412,6 @@ def metrics():
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
-# SPA 兜底路由,承接所有 Vue History 路由;HTML 不缓存
 @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
 def vue_spa(full_path: str):
     html = (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")

@@ -1,6 +1,6 @@
 """进行中部署的运行期管理 - 取消信号 + 线程上下文 + 部署记录生命周期.
 
-三个能力:
+能力:
 1. 取消机制:cancel 接口把 running 记录标记为 terminated,并置位内存信号;
    ssh_exec_stream 等低层函数在循环里轮询该信号,及时中断长命令.
 2. 并发锁:同一项目同时只允许一个 running 记录,部署前检查.
@@ -26,6 +26,17 @@ from backend.dlock import INSTANCE_ID
 def _now_padded() -> str:
     """当前 epoch 秒的 13 位零填充字符串(定长,字典序比较即数值比较,双驱动通用)."""
     return f"{int(time.time()):013d}"
+
+
+def _artifact_digest_value(artifact_digest: str) -> str:
+    """摘要落库前的收口:列宽 256 放得下 sha256/sha512;超长异常值存空,不写坏整条部署记录."""
+    digest = (artifact_digest or "").strip()
+    if len(digest) <= 256:
+        return digest
+    import logging
+
+    logging.getLogger(__name__).warning("artifact_digest 超长(%d 字符)，已按空值落库", len(digest))
+    return ""
 
 
 def normalize_deploy_status(raw: str | None) -> str:
@@ -151,11 +162,7 @@ class DeployRunManager:
 deploy_run_manager = DeployRunManager()
 
 
-# ── 心跳:多副本 / 多 worker 隔离 ──
-# running 记录带 runner(进程实例标识)+ heartbeat_at,证明持锁进程仍存活;其他进程启动恢复
-# (recover_stale_running)时只清"无实例标识或心跳已过期"的记录,不动其他进程正在执行的部署.
-# 心跳间隔须远小于恢复的过期阈值.
-_HEARTBEAT_INTERVAL = 15  # 秒
+_HEARTBEAT_INTERVAL = 15
 _heartbeat_thread = None
 _heartbeat_stop = threading.Event()
 
@@ -188,7 +195,6 @@ def _heartbeat_loop():
                     (_now_padded(), *ids, INSTANCE_ID),
                 )
         except Exception:
-            # DB 不可用时置空 holder,下一周期重新构造(自动重连)
             db_holder[0] = None
             import logging
 
@@ -263,7 +269,6 @@ def cancel_checker_for(db, deploy_id: int):
                 row = conn.execute("SELECT status FROM cd_deploy_logs WHERE id=?", (deploy_id,)).fetchone()
             return bool(row) and row["status"] != "running"
         except Exception:
-            # 库不可用时不对是否取消下断言,退回进程内信号
             return False
 
     return _check
@@ -319,7 +324,7 @@ def start_deploy_record(
                     int(approval_id or 0),
                     INSTANCE_ID,
                     _now_padded(),
-                    (artifact_digest or "")[:128],
+                    _artifact_digest_value(artifact_digest),
                 ),
             )
         except Exception as e:
@@ -454,8 +459,6 @@ def finish_deploy_record(
     output_truncated = (output or "")[: settings.log_truncate_chars]
     stage_times_json = json.dumps(stage_times or [], ensure_ascii=False)
 
-    # terminated 由部署线程自身检测到取消时写入(cancel 可能已置过 terminated),按 id 无条件
-    # 更新以补 output/duration;其余终态只终结仍为 running 的记录,不覆盖并发 cancel 的写入.
     where_clause = "WHERE id=?" if normalized_status == "terminated" else "WHERE id=? AND status='running'"
     note_clause = ", deploy_note=?" if note is not None else ""
     note_value = (note or "")[:512] if note is not None else None
@@ -472,8 +475,6 @@ def finish_deploy_record(
                 params,
             )
         else:
-            # 没有 deploy_id 时按 project 精确更新 running 记录;
-            # 不裸更新全部 running(并发多项目部署会互相覆盖终态).
             params = [normalized_status, target, output_truncated, duration_ms, stage_times_json]
             if note_value is not None:
                 params.append(note_value)

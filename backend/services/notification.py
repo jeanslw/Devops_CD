@@ -44,14 +44,11 @@ def send_webhook(url: str, message: str, bot_type: str = "") -> bool:
     """
     if not url or not message:
         return False
-    # 内网地址一律拒绝(custom 也适用):避免服务端被当成本机 / 内网探测代理
     if _is_private_address(url):
         return False
-    # custom 类型跳过域名白名单
     if (bot_type or "").lower() != "custom" and not _is_allowed_webhook(url):
         return False
     try:
-        # 钉钉加签
         secret = settings.dingtalk_secret
         if secret and "oapi.dingtalk.com" in url:
             timestamp = str(round(time.time() * 1000))
@@ -115,7 +112,6 @@ def _t(lang: str, field: str, value: str) -> str:
     """根据 lang 翻译 status/mode 值,lang 非 zh/en 则原样返回."""
     if lang not in _LANG_MAP or field not in _LANG_MAP[lang]:
         return value
-    # 状态可能是 " Partial success 2/3" 这种带数字格式,做前缀匹配
     if field == "status":
         for en_key, zh_val in _LANG_MAP[lang]["status"].items():
             if value.startswith(en_key):
@@ -143,7 +139,6 @@ def notify_deploy(
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     target_str = ", ".join(targets)
 
-    # 翻译 status 和 mode
     display_status = _t(lang, "status", status)
     display_mode = _t(lang, "mode", deploy_mode)
 

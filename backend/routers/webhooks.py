@@ -17,7 +17,6 @@ from backend.services.notification import send_webhook
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
-# 单次接收的 payload 上限,避免超大 body 撑爆事件表与转发链路
 _MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -247,7 +246,6 @@ async def receive_webhook(
             raise ValidationError("Webhook payload 过大", error_key="errors.webhook_payload_too_large")
         payload_str = body.decode("utf-8") if body else "{}"
 
-        # lastrowid 兼容 SQLite 与 pymysql
         cur = conn.execute(
             "INSERT INTO cd_webhook_events (webhook_id, payload) VALUES (?,?)",
             (wh["id"], payload_str),
@@ -263,7 +261,6 @@ async def receive_webhook(
                 except Exception:
                     data = {}
                 msg = _format_event_message(data, bot)
-                # 只在真的投递成功时标记 forwarded,失败留作可重试
                 sent = send_webhook(bot["webhook_url"], msg, bot["type"])
                 conn.execute(
                     "UPDATE cd_webhook_events SET forwarded=?, forwarded_at=? WHERE id=?",

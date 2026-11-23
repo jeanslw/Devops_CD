@@ -150,8 +150,28 @@ CALL __add_column('cd_deploy_logs', 'lock_key', 'VARCHAR(255) DEFAULT NULL');
 CALL __add_column('cd_deploy_logs', 'params_json', 'TEXT');
 CALL __add_column('cd_deploy_logs', 'rollback_type', "VARCHAR(32) DEFAULT 'manual'");
 CALL __add_column('cd_deploy_logs', 'artifact_id', 'INT DEFAULT 0');
-CALL __add_column('cd_deploy_logs', 'artifact_digest', "VARCHAR(128) DEFAULT ''");
+CALL __add_column('cd_deploy_logs', 'artifact_digest', "VARCHAR(256) DEFAULT ''");
 CALL __add_column('cd_deploy_logs', 'approval_id', 'INT DEFAULT 0');
+
+-- 列宽迁移（幂等）：已有 varchar 列比目标窄时 MODIFY 加宽。
+-- artifact_digest 128 → 256：sha512 摘要 135 字符会被 128 截断成无效值。
+DROP PROCEDURE IF EXISTS __modify_column$$
+DELIMITER $$
+CREATE PROCEDURE __modify_column(IN tbl VARCHAR(64), IN col VARCHAR(64), IN col_def VARCHAR(256), IN min_len INT)
+BEGIN
+    DECLARE _need INT DEFAULT 0;
+    SELECT COUNT(*) INTO _need FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = tbl AND COLUMN_NAME = col
+          AND DATA_TYPE = 'varchar' AND CHARACTER_MAXIMUM_LENGTH < min_len;
+    IF _need > 0 THEN
+        SET @_ddl = CONCAT('ALTER TABLE ', tbl, ' MODIFY COLUMN ', col, ' ', col_def);
+        PREPARE _stmt FROM @_ddl; EXECUTE _stmt; DEALLOCATE PREPARE _stmt;
+    END IF;
+END $$
+DELIMITER ;
+
+CALL __modify_column('cd_deploy_logs', 'artifact_digest', "VARCHAR(256) DEFAULT ''", 256);
+DROP PROCEDURE IF EXISTS __modify_column;
 
 -- 审批单关联索引：按审批单反查部署记录 / 记录页筛选
 CALL __add_index('cd_deploy_logs', 'idx_cdl_approval_id', 'approval_id');
@@ -225,6 +245,8 @@ DROP PROCEDURE IF EXISTS __drop_column;
 DROP PROCEDURE IF EXISTS __add_column;
 
 DROP PROCEDURE IF EXISTS __add_index;
+
+DROP PROCEDURE IF EXISTS __modify_column;
 
 -- 系统配置表（键值对）
 CREATE TABLE IF NOT EXISTS cd_config (

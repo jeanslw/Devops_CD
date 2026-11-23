@@ -42,10 +42,8 @@ class ComposeDeployer(Deployer):
 
         mode = target.mode or "remote"
         image_name = split_image_ref(image)[0]  # hub.abc.com/project/app
-        # 二次校验 tag 白名单
         validate_tag(tag)
 
-        # ── commands 模式:纯透传,不做任何 compose/docker 假设 ──
         if mode == "commands":
             template = target.options.get("commands", "")
             if not template:
@@ -60,7 +58,6 @@ class ComposeDeployer(Deployer):
                 with ssh_session(target, settings.ssh_timeout) as ssh:
                     self._log(callback, S("deploy_log.starting_deploy"))
                     output, exit_code = self._ssh_exec_stream(ssh, cmd, callback)
-                    # commands 模式无后置校验,命令 exit code 是唯一成败信号
                     status = "ok" if exit_code == 0 else "failed"
                     return DeployResult(image=image, status=status, output=output)
             except Exception as e:
@@ -77,9 +74,8 @@ class ComposeDeployer(Deployer):
 
         try:
             project_short = project.split("/")[-1]
-            path_q = shlex.quote(target.path)  # 路径含空格/特殊字符时安全
+            path_q = shlex.quote(target.path)
             with ssh_session(target, settings.ssh_timeout) as ssh:
-                # 1. 校验路径
                 self._log(callback, S("deploy_log.verifying_path"))
                 path_check = self._ssh_run(ssh, f"test -d {path_q} && echo 'OK' || echo 'NOT_FOUND'", image)
                 if path_check.output.strip() != "OK":
@@ -89,7 +85,6 @@ class ComposeDeployer(Deployer):
                     )
                 self._log(callback, S("deploy_log.path_ok", path=target.path))
 
-                # 2. 上传 YAML(如果有)
                 if yaml_content:
                     self._log(callback, S("deploy_log.uploading_yaml"))
                     content = (
@@ -104,7 +99,6 @@ class ComposeDeployer(Deployer):
                         return DeployResult(image=image, status="failed", output=f"YAML upload failed: {err}")
                     self._log(callback, S("deploy_log.yaml_upload_ok"))
 
-                # 3. 写入 IMAGE / TAG 到 env 文件
                 self._log(callback, S("deploy_log.writing_env", image=image_name, tag=tag))
                 if env_file:
                     env_flag = f"--env-file {shlex.quote(env_file)}"
@@ -113,7 +107,6 @@ class ComposeDeployer(Deployer):
                     env_flag = ""
                 env_file_q = shlex.quote(env_file)
 
-                # 重写 .env:剔除旧 IMAGE/TAG 行后追加新值
                 def _rewrite_env(image_ref: str) -> str:
                     payload = shlex.quote(f"IMAGE={image_ref}\nTAG={tag}\n")
                     return (
@@ -125,21 +118,17 @@ class ComposeDeployer(Deployer):
 
                 self._ssh_run(ssh, _rewrite_env(image_name), image)
 
-                # 验证 .env 写入成功(直接看 stdout,忽略 stderr)
                 out, _, _ = _exec_on(ssh, f"cd {path_q} && cat {env_file_q}")
                 if image_name not in out or tag not in out:
                     self._log(callback, S("deploy_log.env_write_fail"))
                     return DeployResult(image=image, status="failed", output=f".env write failed:\n{out}")
 
-                # 4. 仓库登录 & 镜像拉取
                 registry = registry_base_url()
                 has_creds = bool(
                     getattr(settings, "registry_user", None) and getattr(settings, "registry_password", None)
                 )
 
-                # 判断镜像是否来自已配置的私有仓库
                 is_private = bool(registry) and image_name.startswith(registry + "/")
-                # Docker Hub 回退镜像名(剥离仓库前缀)
                 dh_image = image_name[len(registry) + 1 :] if is_private else image_name
 
                 def _image_exists(img):
@@ -153,7 +142,6 @@ class ComposeDeployer(Deployer):
 
                 def _remote_manifest_digest(img):
                     """获取远程 registry 的 manifest digest(仅拉 manifest,不下载层)"""
-                    # 不过滤 stderr
                     r = self._ssh_run(
                         ssh,
                         f"timeout 10 docker manifest inspect {shlex.quote(img + ':' + tag)} 2>&1 "
@@ -191,11 +179,6 @@ class ComposeDeployer(Deployer):
                         return False
                     return True
 
-                # 4a-0. 明文 HTTP 仓库(契约 registry_url 声明 http://):
-                #       dockerd 对未列入 insecure-registries 的仓库只尝试 HTTPS,拉取与登录都会失败,
-                #       且 docker CLI 没有强制明文的开关,故先确认目标机已放行,再进入登录/拉取.
-                #       注:未放行时 docker manifest inspect 同样走 HTTPS 失败,_needs_pull 必然判为需要拉取,
-                #       因此此处无需先判定是否需要拉取,不改变既有日志顺序.
                 if is_private and registry_is_insecure():
                     self._log(callback, S("deploy_log.registry_insecure_check", registry=registry))
                     check = ensure_insecure_registry(ssh, registry, allow_auto=settings.registry_insecure_auto)
@@ -215,7 +198,6 @@ class ComposeDeployer(Deployer):
                     else:
                         self._log(callback, S("deploy_log.registry_insecure_ok", registry=registry))
 
-                # 4a. 登录私有仓库
                 if is_private and has_creds:
                     self._log(callback, S("deploy_log.registry_login", registry=registry))
                     login_out = self._ssh_run(
@@ -230,7 +212,6 @@ class ComposeDeployer(Deployer):
                 elif is_private and not has_creds:
                     self._log(callback, S("deploy_log.registry_no_creds"))
 
-                # 4b. 拉取目标 service 镜像(只拉目标 service,不动其他如 mysql)
                 if _needs_pull(image_name):
                     self._log(callback, S("deploy_log.pulling_image"))
                     pull_text, _ = self._ssh_exec_stream(
@@ -242,9 +223,6 @@ class ComposeDeployer(Deployer):
                     pull_text = ""
                 pull_ok = _image_exists(image_name)
 
-                # 4c-0. 唯一不允许换源的失败:明文 HTTP 仓库未放行(https 客户端收到 http 响应).
-                #       换源到 Docker Hub 会把同名公共镜像当成自己的镜像部署上线(供应链风险),
-                #       且会把「目标机缺配置」这个真因掩盖成二次失败,故直接失败并给出修复指引.
                 if not pull_ok and is_private and is_plain_http_registry_error(pull_text):
                     self._log(callback, S("deploy_log.registry_insecure_blocked", registry=registry))
                     return DeployResult(
@@ -257,10 +235,8 @@ class ComposeDeployer(Deployer):
                         ),
                     )
 
-                # 4c. 私有仓库失败 → 回退 Docker Hub
                 if not pull_ok and is_private:
                     self._log(callback, S("deploy_log.fallback_dockerhub", image=dh_image))
-                    # 重写 .env(仅镜像名换为 Docker Hub,tag 保持不变)
                     self._ssh_run(ssh, _rewrite_env(dh_image), image)
                     if _needs_pull(dh_image):
                         self._log(callback, S("deploy_log.pulling_image"))
@@ -283,8 +259,6 @@ class ComposeDeployer(Deployer):
                     self._log(callback, S("deploy_log.pull_failed"))
                     return DeployResult(image=image, status="failed", output=f"Image pull failed:\n\n{pull_text}")
 
-                # 4d. 用 docker inspect 补全完整 Digest 和镜像名(不受终端宽度截断)
-                #     同时清理 docker-compose 截断的 digest:/status: 行
                 pull_lines = [line for line in pull_text.split("\n") if line.strip()]
                 pull_clean = []
                 img_digest = ""
@@ -304,7 +278,6 @@ class ComposeDeployer(Deployer):
                         img_status = tag_full.strip()
                 except Exception:
                     pass
-                # 过滤 docker-compose 截断的 digest/status 行,替换为完整 inspect 输出
                 if img_digest:
                     self._log(callback, S("deploy_log.image_digest", digest=img_digest))
                     pull_clean.append(f"Digest: {img_digest}")
@@ -314,11 +287,10 @@ class ComposeDeployer(Deployer):
                 for line in pull_lines:
                     low = line.lower()
                     if "digest:" in low or "status:" in low:
-                        continue  # docker-compose 截断版,丢弃
+                        continue
                     pull_clean.append(line)
                 pull_summary = "\n".join(pull_clean)
 
-                # 5. 部署前版本检查
                 self._log(callback, S("deploy_log.checking_version"))
                 before = self._ssh_run(
                     ssh,
@@ -329,12 +301,10 @@ class ComposeDeployer(Deployer):
                 self._log(callback, S("deploy_log.current_version"))
                 self._log(callback, before.output or S("deploy_log.no_output"))
 
-                # 6. 执行部署(up -d 幂等,可安全重试,消化瞬时 SSH/网络抖动)
                 self._log(callback, S("deploy_log.starting_deploy"))
                 up_cmd = (
                     f"cd {path_q} && docker-compose {env_flag} up -d --force-recreate {shlex.quote(project_short)} 2>&1"
                 )
-                # up -d 的退出码必须接住:重试全失败时不能再按"容器还在"判成功
                 deploy_text, up_ec = retry_idempotent(
                     lambda: self._ssh_exec_stream(ssh, up_cmd, callback),
                     attempts=settings.deploy_retry_attempts,
@@ -345,7 +315,6 @@ class ComposeDeployer(Deployer):
                     ),
                 )
 
-                # 7. 部署后验证
                 self._log(callback, S("deploy_log.waiting_container"))
                 self._ssh_run(ssh, "sleep 3", image)
 

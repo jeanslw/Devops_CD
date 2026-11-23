@@ -44,10 +44,8 @@ class ContractUnavailableError(AppException):
         )
 
 
-_Q_MARK_RE = re.compile(r"(?<!')\?(?!')")  # 匹配不在引号内的 ?
+_Q_MARK_RE = re.compile(r"(?<!')\?(?!')")
 
-# CD 自有表清单(唯一真相源):闸门判定、错误文案、张数均由此派生.
-# 增删表需同步:CD_REQUIRED_TABLES / database/init_mysql.sql / _MYSQL_TABLE_DDL / _ensure_cd_tables.
 CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_servers",
     "cd_deploy_logs",
@@ -65,7 +63,6 @@ CD_REQUIRED_TABLES: tuple[str, ...] = (
     "cd_sessions",
 )
 
-# 列出现存基础表:MySQL 走 information_schema,SQLite 走 sqlite_master;视图不参与闸门.
 _CD_TABLE_LIST_SQL = {
     "mysql": (
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
@@ -75,8 +72,8 @@ _CD_TABLE_LIST_SQL = {
 
 # ── 集成服务契约(Glue 侧开关;CD 只经 HTTP 契约端点消费)────────────
 CD_SERVICE_NAME = "cd"
-PROVISION_AUTO = "auto"  # 授权 CD 自动建表 / 补列
-PROVISION_MANUAL = "manual"  # CD 不建表,只认运维预建的 CD 表
+PROVISION_AUTO = "auto"
+PROVISION_MANUAL = "manual"
 
 
 class CdIntegrationState(NamedTuple):
@@ -95,10 +92,10 @@ class CdIntegrationState(NamedTuple):
 
 # ── 契约读:仅 HTTP 通道 + 窗口缓存(窗口 = CI_CONTRACT_TTL;问不到统一按「契约不可达」fail-closed)──
 _contract_lock = threading.Lock()
-_contract_cache: dict[str, tuple[CdIntegrationState, float]] = {}  # {service_name: (状态, 取到时的单调时钟)}
-_contract_http_down_until = 0.0  # 契约端点「已知不可用」的截止时间戳(单调时钟),窗口内直接快速失败
+_contract_cache: dict[str, tuple[CdIntegrationState, float]] = {}
+_contract_http_down_until = 0.0
 _contract_last_warn = 0.0
-_CONTRACT_WARN_INTERVAL = 60.0  # 不可用 WARN 的限流窗口(秒)
+_CONTRACT_WARN_INTERVAL = 60.0
 
 
 def _contract_now() -> float:
@@ -175,7 +172,7 @@ def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
         _mark_contract_http_down()
         _warn_contract_unreachable(f"HTTP {e.status_code or 'n/a'}: {e}")
         raise ContractUnavailableError(f"契约端点请求失败：{e}") from e
-    except Exception as e:  # noqa: BLE001 - 网络 / 解析等任何异常都只说明"问不到",不能改变启用判定
+    except Exception as e:  # noqa: BLE001
         _mark_contract_http_down()
         _warn_contract_unreachable(f"{type(e).__name__}: {e}")
         raise ContractUnavailableError(f"契约端点请求失败：{type(e).__name__}: {e}") from e
@@ -183,7 +180,6 @@ def _fetch_contract_http(service: str = CD_SERVICE_NAME) -> CdIntegrationState:
         _warn_contract_unreachable(f"响应形状不符：{str(raw)[:120]}")
         raise ContractUnavailableError("契约端点响应形状不符（缺 enabled 字段）")
     enabled, provision = _normalize_contract(raw.get("enabled"), raw.get("provision"))
-    # token_active 仅供展示,不作判据;HTTP 200 即契约行存在(row_exists=True).
     return CdIntegrationState(
         enabled,
         provision,
@@ -411,7 +407,7 @@ _MYSQL_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("cd_deploy_logs", "params_json", "TEXT"),
     ("cd_deploy_logs", "rollback_type", "VARCHAR(32) DEFAULT 'manual'"),
     ("cd_deploy_logs", "artifact_id", "INT DEFAULT 0"),
-    ("cd_deploy_logs", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
+    ("cd_deploy_logs", "artifact_digest", "VARCHAR(256) DEFAULT ''"),
     ("cd_approvals", "deploy_id", "INT DEFAULT 0"),
     ("cd_approvals", "approved_at", "VARCHAR(32) DEFAULT ''"),
     ("cd_approvals", "scheduled_at", "VARCHAR(32) DEFAULT ''"),
@@ -419,6 +415,12 @@ _MYSQL_COLUMN_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("cd_custom_monitors", "output_format", "VARCHAR(32) DEFAULT 'auto'"),
     ("cd_registry_artifacts", "artifact_id", "INT DEFAULT 0"),
     ("cd_registry_artifacts", "artifact_digest", "VARCHAR(128) DEFAULT ''"),
+)
+
+# auto 模式下的 MySQL 列宽迁移:已有列比目标窄时 MODIFY 加宽(幂等);min_len 为守卫长度.
+# 列宽 128 装不下 sha512 摘要(135 字符),artifact_digest 加宽到 256.
+_MYSQL_COLUMN_TYPE_MIGRATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("cd_deploy_logs", "artifact_digest", "VARCHAR(256) DEFAULT ''", 256),
 )
 
 
@@ -463,9 +465,9 @@ def _first_col_value(row) -> str:
 
 def _is_missing_table_error(exc: BaseException) -> bool:
     """判断异常是否为「表不存在」(SQLite: no such table;MySQL: 1146)."""
-    if "no such table" in str(exc).lower():  # SQLite
+    if "no such table" in str(exc).lower():
         return True
-    return getattr(exc, "args", (None,))[0] == 1146  # MySQL ER_NO_SUCH_TABLE
+    return getattr(exc, "args", (None,))[0] == 1146
 
 
 class _MysqlWrapper:
@@ -494,7 +496,6 @@ class _MysqlWrapper:
 
     def execute(self, sql, params=None):
         cur = self._conn.cursor()
-        # 只替换 SQL 占位符中的 ?(引号内的 ? 不替换)
         cur.execute(_Q_MARK_RE.sub("%s", sql), params or ())
         return cur
 
@@ -546,8 +547,8 @@ class Database:
     """
 
     DRIVERS = ("sqlite", "mysql")
-    _tables_ensured = False  # 类变量:建表只执行一次
-    _pool = None  # MySQL 连接池实例(延迟初始化)
+    _tables_ensured = False
+    _pool = None
     _pool_lock = threading.Lock()
 
     @property
@@ -569,7 +570,6 @@ class Database:
             import pymysql
             from dbutils.pooled_db import PooledDB
 
-            # 并发首次调用可能各建一个池,后者覆盖会让前者的连接泄漏,故串行化
             with Database._pool_lock:
                 if Database._pool is None:
                     Database._pool = PooledDB(
@@ -577,7 +577,7 @@ class Database:
                         maxconnections=settings.db_pool_max,
                         mincached=settings.db_pool_min,
                         blocking=True,
-                        ping=1,  # 取出连接前先 ping 检测有效性
+                        ping=1,
                         host=settings.db_host,
                         port=settings.db_port,
                         user=settings.db_user,
@@ -640,7 +640,6 @@ class Database:
                 rows = conn.execute(_CD_TABLE_LIST_SQL[self._driver]).fetchall()
         except Exception as e:
             if _is_missing_table_error(e):
-                # 连元数据表都查不到:无法证明 CD 已部署,按未部署处理
                 return list(CD_REQUIRED_TABLES)
             raise
         existing = {_first_col_value(r) for r in rows}
@@ -662,22 +661,18 @@ class Database:
             try:
                 raw = pool.connection()
             except Exception as e:
-                # 取不到连接(网络/账号/连接数打满)→ 503 库不可用
                 raise DatabaseUnavailableError(f"MySQL 取连接失败：{e}", "mysql", str(e)) from e
             wrapper = _MysqlWrapper(raw)
         else:
             try:
                 raw = self._connect_sqlite()
             except sqlite3.Error as e:
-                # 库文件打不开(目录不存在/不可写/被占用)→ 503 库不可用
                 raise DatabaseUnavailableError(
                     f"SQLite 打开数据库文件失败（{self._path}）：{e}", "sqlite", str(e)
                 ) from e
             wrapper = _SqliteWrapper(raw)
 
         if not Database._tables_ensured:
-            # 建表授权来自契约:未启用 / manual 零 DDL,auto 建全清单 + 缺列 + 索引
-            # 未启用时不置 _tables_ensured,下一请求重新判定
             try:
                 state = self._resolve_contract_state()
                 if state.enabled:
@@ -688,11 +683,10 @@ class Database:
                             self._ensure_cd_tables(wrapper)
                     Database._tables_ensured = True
             except sqlite3.Error as e:
-                # 只吞 sqlite3.Error;自检抛的 RuntimeError(清单与 DDL 漂移)必须冒泡
-                wrapper.close()  # 失败也必须释放连接
+                wrapper.close()
                 raise DatabaseUnavailableError(f"自动建表失败（{self._driver}）：{e}", self._driver, str(e)) from e
             except Exception:
-                wrapper.close()  # 异常路径不得泄漏连接
+                wrapper.close()
                 raise
 
         try:
@@ -737,7 +731,7 @@ class Database:
         for table in CD_REQUIRED_TABLES:
             ddl = _MYSQL_TABLE_DDL.get(table)
             if ddl is None:
-                continue  # 漏表由下方自检统一报出
+                continue
             conn.execute(ddl)
         conn.commit()
         self._ensure_mysql_indexes(conn)
@@ -764,6 +758,16 @@ class Database:
         for tbl, col, col_def in _MYSQL_COLUMN_MIGRATIONS:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
+        for tbl, col, col_def, min_len in _MYSQL_COLUMN_TYPE_MIGRATIONS:
+            with suppress(Exception):
+                row = conn.execute(
+                    "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                    (tbl, col),
+                ).fetchone()
+                width = int(_first_col_value(row) or 0)
+                if width and width < min_len:
+                    conn.execute(f"ALTER TABLE {tbl} MODIFY COLUMN {col} {col_def}")
         conn.commit()
 
     # ── SQLite 自动建表(仅 auto 模式)──
@@ -828,16 +832,14 @@ class Database:
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_id INTEGER DEFAULT 0")
         with suppress(Exception):
-            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_digest VARCHAR(128) DEFAULT ''")
+            conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN artifact_digest VARCHAR(256) DEFAULT ''")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN approval_id INTEGER DEFAULT 0")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN runner VARCHAR(128) DEFAULT ''")
         with suppress(Exception):
             conn.execute("ALTER TABLE cd_deploy_logs ADD COLUMN heartbeat_at VARCHAR(32) DEFAULT ''")
-        # 并发锁唯一索引:running 记录 lock_key=project,同项目至多一条 running(NULL 可重复)
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cdl_lock_key ON cd_deploy_logs(lock_key)")
-        # 删除 deploy_id 列及旧索引
         with suppress(Exception):
             conn.execute("DROP INDEX IF EXISTS idx_cdl_deploy_id")
         with suppress(Exception):
@@ -1014,7 +1016,7 @@ class Database:
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
 
         self._ensure_indexes(conn)
-        # 回填 approval_id(幂等):仅处理 approval_id=0 的行.
+
         with suppress(Exception):
             conn.execute(
                 "UPDATE cd_deploy_logs SET approval_id=("

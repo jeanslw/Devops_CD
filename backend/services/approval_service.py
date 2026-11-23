@@ -230,7 +230,6 @@ def list_approvals(
     where = []
     args: list = []
     if active:
-        # 活跃单据:pending/approved/deploying(部署页恢复"我的申请进度"用)
         ph = ",".join("?" * len(ACTIVE_STATUSES))
         where.append(f"status IN ({ph})")
         args.extend(ACTIVE_STATUSES)
@@ -243,20 +242,14 @@ def list_approvals(
     if requester:
         where.append("requester=?")
         args.append(requester)
-    # 部署形态过滤:隔离 Docker 页与 K8s 页的活跃单(互不串显).
-    # ssh/compose 精确匹配;k8s 匹配所有 k8s/<cd_type> 子形态.
     kind = (deploy_kind or "").strip().lower()
     if kind in ("ssh", "compose"):
         where.append("deploy_type=?")
         args.append(kind)
     elif kind == "k8s":
-        # 注意:MySQL(pymysql) 会对 SQL 文本中的裸 % 做参数格式化,
-        # 模式串必须走绑定参数,不能写字面量 'k8s/%'.
         where.append("(deploy_type='k8s' OR deploy_type LIKE ?)")
         args.append("k8s/%")
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-    # active 场景(部署页恢复进度)只取最需要用户行动的一条:
-    # deploying(执行中)> approved(待执行)> pending(待审批),同优先级再按新到旧.
     if active:
         order_sql = (
             "ORDER BY CASE status "
@@ -350,7 +343,6 @@ def approve(db, approval_id, user: dict) -> dict:
             status_code=403,
             error_key="errors.approve_perm_denied",
         )
-    # 定时发布时间已由申请人在提交部署时决定;批准只放行,不改动 scheduled_at.
     ok = _transition(db, approval_id, [PENDING], APPROVED, approver=user.get("username", ""), approved_at=_now())
     if not ok:
         return {"success": False, "message": "审批单已处理"}
@@ -403,8 +395,6 @@ def cancel(db, approval_id, user: dict) -> dict:
             status_code=403,
             error_key="errors.approval_cancel_perm",
         )
-    # pending 与已批准未执行(approved)均可撤销;一旦 deploying 即不可撤销.
-    # 不写 approver 字段:保留原审批人身份;撤销人经通知消息留痕.
     ok = _transition(db, approval_id, [PENDING, APPROVED], CANCELLED)
     if not ok:
         return {"success": False, "message": "仅待审批或已批准未执行的单据可撤销"}
@@ -447,8 +437,7 @@ def gate_deploy(
         scheduled_at=sched,
         status=PENDING if rule else APPROVED,
     )
-    # 同步生成 pending 部署记录:提交申请即在部署日志可见(不占项目锁),
-    # 批准/到点执行时复用同一行转 running→ok/failed;驳回/撤销则标记对应终态.
+
     create_pending_deploy_record(
         db,
         deploy_type=deploy_type,
@@ -493,7 +482,6 @@ def _enforce_execute_perm(params: dict, user: dict) -> None:
     普通部署按 deploy_type 映射子权限(enforce_deploy_perm 同时允许 cd.deploy-manage blanket 与 super_admin).
     """
     if bool(params.get("_rollback")):
-        # 超管(含通配 "*",见 _is_super)与 cd.deploy-manage 同级放行,与 enforce_deploy_perm 判定对齐
         if _is_super(user) or "cd.deploy-manage" in (user.get("permissions") or []):
             return
         raise AppException(
@@ -501,8 +489,7 @@ def _enforce_execute_perm(params: dict, user: dict) -> None:
             status_code=403,
             error_key="errors.approval_execute_perm",
         )
-    # 统一转 AppException:同步接口经异常处理器返回 error_key,SSE 接口据其发 ERROR 事件
-    # (裸 HTTPException 无法被 execute-stream 的 except AppException 捕获,会变成 500)
+
     try:
         enforce_deploy_perm(user, params.get("deploy_type", ""))
     except HTTPException as e:
@@ -533,14 +520,12 @@ def claim_for_execution(db, approval_id, user: dict) -> tuple[dict, dict]:
             "审批单当前状态不可执行（仅已批准待执行的单据可执行）",
             error_key="errors.approval_not_executable",
         )
-    # 实时重建身份并按快照复核当前权限
     exec_user = load_user_context(db, approval["requester"] or "")
     try:
         params = json.loads(approval.get("params_json") or "{}")
     except (TypeError, ValueError) as e:
         raise ValidationError("审批单执行参数已损坏", error_key="errors.approval_params_invalid") from e
     _enforce_execute_perm(params, exec_user)
-    # 原子领取:并发/重复请求仅一个成功
     if not _transition(db, approval_id, [APPROVED], DEPLOYING):
         raise ConflictError(
             "审批单正在被执行或状态已变化",
@@ -561,7 +546,6 @@ def run_approval(db, approval_id: int, user: dict, callback=None) -> dict:
     if not row or row.get("status") != DEPLOYING:
         return {"status": "failed", "deploy_id": 0, "output": "approval status changed before execution"}
     params = json.loads(row.get("params_json") or "{}")
-    # 回滚审批:还原原生回滚标志(params 快照中的 _rollback 字段)
     rollback = bool(params.pop("_rollback", False))
     approval_id_in_params = int(params.pop("_approval_id", 0) or 0)
     if approval_id_in_params and approval_id_in_params != approval_id:
@@ -572,13 +556,10 @@ def run_approval(db, approval_id: int, user: dict, callback=None) -> dict:
     if status == "ok":
         _transition(db, approval_id, [DEPLOYING], DEPLOYED, deploy_id=deploy_id)
     elif status == "busy":
-        # 项目锁冲突:退回 approved,不消耗单据,申请人稍后可重试
         _transition(db, approval_id, [DEPLOYING], APPROVED)
-        # 若 pending 行已被领取,退回 pending 并释放锁(常规路径 busy 发生在领取前)
         try:
             reset_pending_deploy_record(db, approval_id)
         except Exception:
-            # reset 失败不阻断单据回退,但要留痕:running 记录持锁不释放会锁死该项目
             logger.warning("approval %s: reset pending deploy record failed on busy", approval_id, exc_info=True)
     elif status == "cancelled":
         _transition(db, approval_id, [DEPLOYING], CANCELLED)
@@ -599,7 +580,6 @@ def recover_on_startup(db):
 
     recovered_logs = recover_stale_running(db)
     with db.conn() as conn:
-        # 崩溃窗口:部署记录已终态的 DEPLOYING 审批单,按记录状态收敛(不退回 approved)
         cur = conn.execute(
             "UPDATE cd_approvals SET status=?, updated_at=?, deploy_id=("
             "SELECT id FROM cd_deploy_logs WHERE approval_id=cd_approvals.id AND status='ok' ORDER BY id DESC LIMIT 1) "
@@ -614,17 +594,12 @@ def recover_on_startup(db):
             (FAILED, _now(), DEPLOYING),
         )
         converged_failed = getattr(cur, "rowcount", 0) or 0
-        # 剩余 DEPLOYING(部署记录为 interrupted)→ approved 等待申请人重跑.
-        # 排除仍有 running 部署记录的单据:那是本实例/其他副本正在执行的,回退会撕裂执行中的单据
-        # 并让申请人重复领取(claim)执行.
         cur = conn.execute(
             "UPDATE cd_approvals SET status=?, updated_at=? WHERE status=? "
             "AND NOT EXISTS (SELECT 1 FROM cd_deploy_logs WHERE approval_id=cd_approvals.id AND status='running')",
             (APPROVED, _now(), DEPLOYING),
         )
         recovered_approvals = getattr(cur, "rowcount", 0) or 0
-        # 这些审批单关联的部署记录已被上面标记为 interrupted:退回 pending,
-        # 申请人重新执行时 claim_pending_deploy_record 才能再次领取
         conn.execute(
             "UPDATE cd_deploy_logs SET status='pending', lock_key=NULL WHERE approval_id>0 AND status='interrupted'"
         )
@@ -745,10 +720,8 @@ def run_due_scheduled(db) -> int:
                 result.get("status"),
             )
         except ConflictError:
-            # 项目锁占用等瞬态冲突:保留 scheduled_at,下一轮重试
             logger.info("scheduled approval %s busy, will retry next tick", aid)
         except (AppException, NotFoundError) as e:
-            # 永久性失败(权限被收回/账号被删):清空定时,退回手动执行
             logger.warning("scheduled approval %s cannot execute (%s), clearing schedule", aid, e)
             with db.conn() as conn:
                 conn.execute(
@@ -756,8 +729,6 @@ def run_due_scheduled(db) -> int:
                     (_now(), aid, APPROVED),
                 )
         except Exception:
-            # 领取成功但执行抛意外异常:把仍 deploying 的单据退回 approved 并释放项目锁,
-            # 与手动执行路径的处理一致.
             logger.exception("scheduled approval %s execution failed unexpectedly", aid)
             with suppress(Exception):
                 _transition(db, aid, [DEPLOYING], APPROVED)
@@ -772,14 +743,10 @@ def _sched_run_loop():
 
     while not _sched_stop.is_set():
         try:
-            # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
-            # (分布式锁串行化扫描;单据由原子领取状态机保证不重复执行)
             if acquire(Database(), "scheduled_executor", ttl_seconds=120):
                 try:
                     db = Database()
                     run_due_scheduled(db)
-                    # 周期清扫:恢复其他实例崩溃遗留(心跳已过期)的 running 部署锁,
-                    # 与启动恢复同一套逻辑,无需依赖重启才会触发
                     recover_on_startup(db)
                 finally:
                     release(Database(), "scheduled_executor")

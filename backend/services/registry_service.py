@@ -134,23 +134,17 @@ class RegistryService:
 
     def sync_repo(self, conn, project: str, repo: str) -> int:
         """同步单个仓库的 artifacts 到数据库,返回新增/更新的数量"""
-        # 先从镜像仓库拉取,成功后才建仓库记录:
-        # 拉取失败(无权限/不可达/解析异常)不在列表里留下"0 Tags"的占位行
         try:
             raw = self._provider.list_artifacts(repo)
             logger.info(f"镜像仓库返回 {len(raw)} 条 artifacts: {repo}")
         except HarborUnavailableError:
-            # 连接层不可达上抛,由 sync_all / sync_for_project 转 errors.harbor_unavailable
             raise
         except RegistryPermissionDeniedError:
-            # 账号无查询权限:同样上抛,由 sync_all / sync_for_project 转 errors.registry_permission_denied
             raise
         except Exception as e:
-            # 非连接类错误(404 / 解析异常等)保持容错,不打断其他仓库的同步
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
-        # 拉取成功,确保 repo 记录存在
         rows = conn.execute(
             "SELECT id FROM cd_registry_repositories WHERE project_name=? AND repo_name=?", (project, repo)
         ).fetchall()
@@ -220,9 +214,6 @@ class RegistryService:
                 )
             count += 1
 
-        # 清理镜像仓库已不存在的 tag(sync 只做 upsert,需补"删 gone"才对齐真值源)
-        # list_artifacts 返回空列表既可能是"仓库确实空"也可能是"404/分页异常",
-        # 客户端无法区分,仅在拿到非空 tag 列表时才做差集删除,宁可保守不误删.
         current_tags = {art["tag"] for art in raw if art.get("tag")}
         if current_tags:
             placeholders = ",".join("?" for _ in current_tags)
@@ -239,16 +230,12 @@ class RegistryService:
             try:
                 ci_repos = self._get_ci_repos()
                 mapped = {(r["project"], r["repo"]) for r in ci_repos}
-
-                # 清理已不在 ci_job_git_map 中的数据
                 all_repos = conn.execute("SELECT id, project_name, repo_name FROM cd_registry_repositories").fetchall()
                 for r in all_repos:
                     if (r["project_name"], r["repo_name"]) not in mapped:
                         conn.execute("DELETE FROM cd_registry_artifacts WHERE repo_id=?", (r["id"],))
                         conn.execute("DELETE FROM cd_registry_repositories WHERE id=?", (r["id"],))
 
-                # 清理没有任何 Tag 的仓库记录:多为历史同步失败残留的占位行,
-                # 拉取成功(即使 0 Tag)的本轮同步会立即重建,无误删风险
                 conn.execute(
                     """DELETE FROM cd_registry_repositories WHERE NOT EXISTS
                        (SELECT 1 FROM cd_registry_artifacts WHERE repo_id=cd_registry_repositories.id)"""
@@ -262,9 +249,9 @@ class RegistryService:
                         total += n
                         logger.info(f"同步 {cr['repo']}: {n} 条")
                     except HarborUnavailableError:
-                        raise  # 直接抛出,不要在 errors 里吞掉
+                        raise
                     except RegistryPermissionDeniedError as e:
-                        raise e  # 无查询权限必须让界面明确提示,不能伪装成"同步了 0 条"
+                        raise e
                     except Exception as e:
                         errors.append(cr["repo"])
                         logger.error(f"同步 {cr['repo']} 失败", exc_info=e)
@@ -309,7 +296,6 @@ class RegistryService:
             ]
             if not matched:
                 return {"ok": False, "error": "未找到该项目仓库映射"}
-            # 清理这些仓库里没有任何 Tag 的残留记录(历史同步失败占位行),拉取成功后本轮重建
             placeholders = ",".join("?" for _ in matched)
             conn.execute(
                 f"""DELETE FROM cd_registry_repositories
@@ -446,7 +432,6 @@ class RegistryService:
     def get_scan_report(self, repo_id: int, tag: str) -> dict | None:
         """先读数据库缓存,再实时请求镜像仓库获取详情(优先 Harbor 最新数据)"""
         if not registry_capabilities().get("scan"):
-            # 标准 registry 无漏洞扫描接口(能力开关为 False)
             return {
                 "error": "当前镜像仓库类型（registry）不支持漏洞扫描",
                 "error_key": "errors.scan_unsupported",
@@ -471,7 +456,6 @@ class RegistryService:
                 (row["vuln_low"] or 0),
             )
             digest = row["digest"] or ""
-            # repo_name="mycode/devops-glue" → harbor_project="mycode", harbor_repo="devops-glue"
             repo_name = row["repo_name"] or ""
             if "/" in repo_name:
                 harbor_project, harbor_repo = repo_name.split("/", 1)
@@ -492,13 +476,11 @@ class RegistryService:
                 "fixable": row["vuln_fixable"] or 0,
             }
 
-            # 实时请求 Harbor 获取最新详情(数据库缓存可能为 0)
             harbor_unavailable = False
             try:
                 live = self._provider.get_scan_report(row["repo_name"], tag)
                 if live:
                     live_summary = self._norm_summary(live.get("summary") or {})
-                    # 优先用 Harbor 的 summary;如果 Harbor summary 全 0,fallback 数据库
                     has_live_data = live.get("vulnerabilities") or live_summary["total"] > 0
                     if has_live_data:
                         live["summary"] = live_summary if live_summary["total"] > 0 else db_summary
@@ -526,7 +508,6 @@ class RegistryService:
     def trigger_scan(self, repo_id: int, tag: str) -> dict:
         """触发镜像仓库重新扫描该 artifact(仅 Harbor 提供该接口)"""
         if not registry_capabilities().get("scan"):
-            # 标准 registry 无扫描触发接口(能力开关为 False)
             return {
                 "ok": False,
                 "error": "当前镜像仓库类型（registry）不支持漏洞扫描",
@@ -558,7 +539,7 @@ class RegistryService:
 
 _sync_thread = None
 _sync_stop = threading.Event()
-_sync_db_factory = None  # 保存 db_factory 用于重启
+_sync_db_factory = None
 
 
 def _default_db_factory():
@@ -575,7 +556,6 @@ def _sync_worker(db_factory, interval_minutes: int):
             try:
                 from backend.dlock import acquire
 
-                # 多副本/多 worker 隔离:锁被其他存活实例持有时静默跳过本轮
                 if not acquire(db_factory(), "registry_sync", ttl_seconds=max(interval_minutes * 180, 120)):
                     continue
                 svc = RegistryService(db_factory())
@@ -583,14 +563,12 @@ def _sync_worker(db_factory, interval_minutes: int):
                 if result.get("ok"):
                     logger.info(f"定时同步完成: {result['total']} artifacts, {result['repos']} repos")
                 else:
-                    # Harbor / CI 不可达时 sync_all 返回 ok=False:打"完成"会与真实状态不符
                     logger.warning(f"定时同步中止: {result.get('error') or '未知原因'}")
             except HarborUnavailableError as e:
                 logger.warning(f"定时同步跳过（Harbor 不可达）: {e}")
             except Exception as e:
                 logger.error(f"定时同步异常: {e}")
     finally:
-        # 线程退出时主动释放锁;否则要等 TTL(最长 interval*180 秒)过期,期间其他实例无法接管同步
         try:
             from backend.dlock import release
 

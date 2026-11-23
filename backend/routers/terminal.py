@@ -33,17 +33,17 @@ router = APIRouter()
 
 # ── 危险命令黑名单(正则匹配,检测完整命令行)──
 _DANGEROUS_PATTERNS = [
-    r"\brm\s+.*-rf\s+/",  # rm -rf /
-    r"\brm\s+.*-rf\s+~",  # rm -rf ~
-    r"\bdd\s+if=",  # dd if=/dev/zero of=/dev/sda
-    r"\bmkfs\.",  # mkfs.ext4 /dev/sda
-    r":\(\)\s*\{.*:\|:&\s*\};:",  # fork bomb
-    r">\s*/dev/sd",  # redirect to disk device
-    r"\bchmod\s+.*777\s+/",  # chmod 777 /
-    r">\s*/etc/passwd",  # overwrite system files
-    r"\brm\s+.*--no-preserve-root\s+/",  # rm --no-preserve-root /
-    r"\bchown\s+.*-R\s+\w+\s+/",  # chown -R on /
-    r"\bchmod\s+.*-R\s+\d+\s+/etc",  # chmod on /etc
+    r"\brm\s+.*-rf\s+/",
+    r"\brm\s+.*-rf\s+~",
+    r"\bdd\s+if=",
+    r"\bmkfs\.",
+    r":\(\)\s*\{.*:\|:&\s*\};:",
+    r">\s*/dev/sd",
+    r"\bchmod\s+.*777\s+/",
+    r">\s*/etc/passwd",
+    r"\brm\s+.*--no-preserve-root\s+/",
+    r"\bchown\s+.*-R\s+\w+\s+/",
+    r"\bchmod\s+.*-R\s+\d+\s+/etc",
 ]
 
 _DANGEROUS_WARNING = "\r\n⚠️  危险命令已被拦截，未发送到服务器\r\n"
@@ -73,7 +73,6 @@ async def _ws_verify(token: str | None = None) -> str:
     if not token:
         raise HTTPException(401, "请登录")
     db = get_db()
-    # 部署闸门:CD 表没建全时拒绝 WebShell;AppException(503) 转 HTTPException,由调用方按状态码关闭连接.
     try:
         cd_deploy_gate(db)
     except AppException as exc:
@@ -85,7 +84,6 @@ async def _ws_verify(token: str | None = None) -> str:
         if time.time() > sess["expires_at"]:
             _delete_session(conn, token)
             raise HTTPException(401, "token 已过期，请重新登录")
-    # 会话校验 + 惰性 Glue 复核(停用 / systems 不含 cd 即删会话);401/503 均 fail-closed.
     try:
         ident = _oidc_identity(db, token, sess["username"])
     except AppException as exc:
@@ -95,22 +93,17 @@ async def _ws_verify(token: str | None = None) -> str:
 
 @router.websocket("/ws/terminal/{server_id}")
 async def terminal(websocket: WebSocket, server_id: int):
-    # 仅取 HttpOnly cookie;不再接受 ?token= 查询串(避免令牌进访问日志/代理日志).
     token = websocket.cookies.get("cd_token")
     try:
         username = await _ws_verify(token)
     except HTTPException as e:
-        # 503 = CD 表没建全:给出可操作原因,而不是笼统的"鉴权失败"
         await websocket.close(code=4001, reason="CD 未部署" if e.status_code == 503 else "鉴权失败")
         return
 
-    # 权限检查:需要 cd.webshell(判据与 require_perm / enforce_deploy_perm 同口径)
     db = get_db()
-    # 权限来自 Glue(复用身份缓存,窗口内零调用)
     try:
         ident = glue_identity.get_identity(username)
     except AppException:
-        # 身份/权限不可用(角色悬空,Glue 长时间不可达):拒绝握手,不按"无权限但放行"处理
         await websocket.close(code=4003, reason="权限校验不可用")
         return
     if not _webshell_permitted(ident.get("role") or "", ident.get("permissions") or []):
@@ -143,7 +136,6 @@ async def terminal(websocket: WebSocket, server_id: int):
         ssh_key=ssh_key,
     )
 
-    # SSH 连接(在线程池中执行,避免阻塞事件循环)
     try:
         ssh = await asyncio.to_thread(ssh_connect, target, settings.ssh_timeout)
     except Exception as e:
@@ -151,11 +143,9 @@ async def terminal(websocket: WebSocket, server_id: int):
         await websocket.close()
         return
 
-    # SSH 已连上,主动通知前端
     try:
         chan = await asyncio.to_thread(ssh.invoke_shell, term="xterm-256color", width=100, height=28)
     except Exception as e:
-        # channel 创建失败时必须收口连接,不能留到会话结束
         await websocket.send_text(f"\r\n❌ Shell 创建失败: {e}\r\n")
         ssh.close()
         await websocket.close()
@@ -177,14 +167,13 @@ async def terminal(websocket: WebSocket, server_id: int):
 
     async def ws_to_ssh():
         """WebSocket 输入 → SSH,支持终端尺寸自适应 + 危险命令拦截"""
-        buf = ""  # 行缓冲
+        buf = ""
         while not chan.closed:
             try:
                 data = await asyncio.wait_for(websocket.receive(), timeout=0.05)
                 if data["type"] == "websocket.receive":
                     if "text" in data:
                         text = data["text"]
-                        # 终端尺寸自适应(前端 xterm.js 发送 JSON resize 事件)
                         if text.startswith("{"):
                             try:
                                 msg = json.loads(text)
@@ -209,13 +198,10 @@ async def terminal(websocket: WebSocket, server_id: int):
                                 continue
                             buf = ""
                         elif "\x03" in text or "\x04" in text:
-                            # Ctrl+C / Ctrl+D,清空缓冲区
                             buf = ""
                         elif text.startswith("\x1b"):
-                            # ANSI 转义序列(方向键等),保持缓冲区
                             pass
                         elif text == "\x7f" or text == "\x08":
-                            # 退格
                             if buf:
                                 buf = buf[:-1]
                         elif len(text) == 1 and ord(text) >= 32:
@@ -223,7 +209,7 @@ async def terminal(websocket: WebSocket, server_id: int):
                         else:
                             buf = ""
 
-                        chan.send(text.encode())  # type: ignore[arg-type]
+                        chan.send(text.encode())
                     elif "bytes" in data:
                         chan.send(data["bytes"])
                 elif data["type"] == "websocket.disconnect":
@@ -247,7 +233,7 @@ async def terminal(websocket: WebSocket, server_id: int):
 async def upload_file(
     server_id: int,
     file: UploadFile = File(...),
-    path: str = Form("/tmp/"),  # nosec
+    path: str = Form("/tmp/"),
     _user: dict = Depends(require_perm("cd.webshell")),
 ):
     """上传文件到目标服务器"""
@@ -257,22 +243,18 @@ async def upload_file(
     if not srv:
         raise NotFoundError("服务器不存在", error_key="errors.server_not_found")
 
-    # 安全校验:文件名防路径穿越,先统一分隔符再取 basename.
     _fn = (file.filename or "").replace("\\", "/")
-    _fn = re.sub(r"^[a-zA-Z]:", "", _fn)  # 去除 Windows 盘符
+    _fn = re.sub(r"^[a-zA-Z]:", "", _fn)
     safe_filename = _fn.rsplit("/", 1)[-1]
     if not safe_filename:
         raise ValidationError("无效文件名", error_key="errors.invalid_filename")
 
-    # 安全校验:路径必须为绝对路径
     if not path.startswith("/"):
         raise ValidationError("路径必须为绝对路径，如 /tmp", error_key="errors.path_absolute")
 
-    # 安全校验:路径遍历防护,用 posixpath 按 POSIX 规则归一化(两平台行为一致).
     combined = (path.rstrip("/") + "/" + safe_filename).replace("\\", "/")
-    combined = re.sub(r"^[a-zA-Z]:", "", combined)  # 去 Windows 盘符
+    combined = re.sub(r"^[a-zA-Z]:", "", combined)
     target = posixpath.normpath(combined)
-    # 拦截写入系统敏感目录
     blocked_prefixes = ["/etc", "/boot", "/sys", "/proc", "/dev"]
     for prefix in blocked_prefixes:
         if target == prefix or target.startswith(prefix + "/"):
@@ -316,7 +298,6 @@ async def upload_file(
     except Exception as e:
         raise ValidationError(f"上传失败: {e}", error_key="errors.upload_failed") from e
     finally:
-        # sftp 与 ssh 都要收口,异常路径下也不能泄漏
         if sftp is not None:
             with contextlib.suppress(Exception):
                 sftp.close()

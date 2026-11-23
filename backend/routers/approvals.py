@@ -28,9 +28,9 @@ class RejectRequest(BaseModel):
 
 class ApprovalRuleRequest(BaseModel):
     enabled: bool = False
-    require_envs: str = ""  # 逗号分隔环境标签,空 = 所有环境需审批
-    approver_role: str = ""  # 审批角色(须存在于 Glue RBAC);空 = 仅按 approvers 审批
-    approvers: str = ""  # 逗号分隔显式审批人用户名(优先于 approver_role)
+    require_envs: str = ""
+    approver_role: str = ""
+    approvers: str = ""
     notify_bot_id: int = 0
     require_rollback_approval: bool = True
 
@@ -115,7 +115,6 @@ def get_approval(
     approval = svc.get_by_id(db, approval_id)
     if not approval:
         raise NotFoundError("审批单不存在", error_key="errors.approval_not_found")
-    # 普通用户只能看自己的
     if not _is_manager(user) and (approval.get("requester") or "") != user.get("username", ""):
         raise NotFoundError("审批单不存在", error_key="errors.approval_not_found")
     return _enrich(db, approval, user)
@@ -127,7 +126,6 @@ def approve(
     db: Database = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    # 批准只放行(无 body);定时发布时间由申请人在提交部署时指定
     return svc.approve(db, approval_id, user)
 
 
@@ -166,7 +164,6 @@ def execute_approval(
     try:
         result = svc.run_approval(db, approval_id, exec_user)
     except Exception:
-        # 领取后单据已是 deploying 且持有项目并发锁:异常时置 failed 并退回 pending 释放锁
         logger.error("Approval execute failed id=%s", approval_id, exc_info=True)
         with suppress(Exception):
             svc._transition(db, approval_id, [svc.DEPLOYING], svc.FAILED)
@@ -212,17 +209,14 @@ async def execute_approval_stream(
                 log_queue.put(message)
 
             result = svc.run_approval(db, approval_id, exec_user, callback=log_callback)
-            # busy 等未进入执行器的场景 callback 不会被调用,补发 output 让日志区有提示
             if result.get("status") == "busy" and result.get("output"):
                 log_queue.put(result["output"])
             exec_result = {"success": True, "data": result}
         except Exception as e:
             logger.error("Approval execute stream failed id=%s", approval_id, exc_info=e)
             exec_result = {"success": False, "error": str(e)}
-            # 异常时把仍 deploying 的单据置 failed
             with suppress(Exception):
                 svc._transition(db, approval_id, [svc.DEPLOYING], svc.FAILED)
-            # 同时释放 running 记录的项目锁:否则要等心跳过期才回收,期间该项目无法再部署
             with suppress(Exception):
                 reset_pending_deploy_record(db, approval_id)
         finally:
@@ -239,7 +233,6 @@ async def execute_approval_stream(
                 if msg is None:
                     break
                 msg_id += 1
-                # 多行消息按 SSE 协议逐行加 data: 前缀
                 safe_msg = msg.replace("\n", "\ndata: ")
                 yield f"id: {msg_id}\nretry: 3000\ndata: {safe_msg}\n\n"
             except queue.Empty:
@@ -248,7 +241,6 @@ async def execute_approval_stream(
 
         if exec_result.get("success"):
             result = exec_result["data"]
-            # execute_from_params 返回 {"status": "ok"|"failed"|"busy"|"cancelled", ...},END 只携带成功标志
             yield f"retry: 3000\ndata: END:{str(result.get('status') == 'ok').lower()}\n\n"
         else:
             yield f"retry: 3000\ndata: ERROR:{exec_result.get('error', 'Execute failed')}\n\n"
@@ -317,7 +309,6 @@ def _validate_rule_via_glue(approver_role: str, approvers: list[str]) -> None:
     if approvers:
         users = _glue_read(lambda: get_ci_client().list_users(), "users")
         if users is not None:
-            # username 可能为 None(Glue 侧脏数据 / 空行):按空串处理
             found = {(u.get("username") or "").lower() for u in users if isinstance(u, dict)}
             missing = [a for a in approvers if a.lower() not in found]
             if missing:
@@ -431,7 +422,6 @@ async def rollback_deploy_stream(
 
         return StreamingResponse(_err_empty(), media_type="text/event-stream")
 
-    # 前置校验(查找 source / 构建 params / 审批闸门)
     try:
         prep = prepare_rollback(
             db,
@@ -477,7 +467,6 @@ async def rollback_deploy_stream(
             result = execute_from_params(
                 db, prep["params"], user, callback=log_callback, rollback=prep["rollback_flag"]
             )
-            # busy 等未进入执行器的场景 callback 不会被调用,补发 output 让日志区有提示
             if result.get("status") == "busy" and result.get("output"):
                 log_queue.put(result["output"])
             exec_result = {"success": True, "data": result}
@@ -498,7 +487,6 @@ async def rollback_deploy_stream(
                 if msg is None:
                     break
                 msg_id += 1
-                # 多行消息按 SSE 协议逐行加 data: 前缀
                 safe_msg = msg.replace("\n", "\ndata: ")
                 yield f"id: {msg_id}\nretry: 3000\ndata: {safe_msg}\n\n"
             except queue.Empty:
@@ -507,7 +495,6 @@ async def rollback_deploy_stream(
 
         if exec_result.get("success"):
             result = exec_result["data"]
-            # execute_from_params 返回 {"status": "ok"|"failed"|"busy"|"cancelled", ...},END 只携带成功标志
             yield f"retry: 3000\ndata: END:{str(result.get('status') == 'ok').lower()}\n\n"
         else:
             yield f"retry: 3000\ndata: ERROR:{exec_result.get('error', 'Rollback failed')}\n\n"

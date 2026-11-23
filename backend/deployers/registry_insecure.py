@@ -31,20 +31,16 @@ logger = logging.getLogger(__name__)
 
 DAEMON_DIR = "/etc/docker"
 DAEMON_JSON = f"{DAEMON_DIR}/daemon.json"
-# dockerd 23+ 可用多个 --config-file 指定 drop-in 配置,这里一并检测(不存在则忽略)
 DAEMON_DROPIN_GLOB = f"{DAEMON_DIR}/daemon.json.d/*.json"
 DAEMON_BACKUP = f"{DAEMON_JSON}.cd-bak"
 
 _DAEMON_MARKER = "===CDDAEMON:"
 
-# 一次性 dump 目标机全部 dockerd 配置(纯只读;文件/目录不存在也算成功,
-# 便于区分「确实没配置」与「读不到」).命令不包 sh -c,与部署器既有约定一致.
 _DUMP_CMD = (
     f"for f in {DAEMON_JSON} {DAEMON_DROPIN_GLOB}; do "
     f'[ -f "$f" ] && {{ echo "{_DAEMON_MARKER}$f"; cat "$f" 2>/dev/null; }}; done; exit 0'
 )
 
-# 「HTTPS 客户端收到 HTTP 响应」这一确定性故障签名(明文 HTTP 仓库未放行)
 _PLAIN_HTTP_SIGNATURE = "server gave http response to https client"
 
 
@@ -89,7 +85,6 @@ def _entry_matches(entry: str, registry: str) -> bool:
         return True
     if "/" not in e:
         return False
-    # registry 可能是 [v6]:port / host:port / host,取最后一个冒号前的主机部分
     host = r.rsplit(":", 1)[0].strip("[]") if ":" in r else r
     try:
         return ipaddress.ip_address(host) in ipaddress.ip_network(e, strict=False)
@@ -191,7 +186,6 @@ def ensure_insecure_registry(ssh, registry: str, allow_auto: bool = False) -> In
     if not allow_auto:
         return InsecureCheckResult(ok=False, auto_fixed=False, detail=guidance(registry))
 
-    # 自动修复只改主 daemon.json:drop-in 是多文件,合并语义会互相覆盖,不碰
     merged = merge_insecure_entry(files.get(DAEMON_JSON, ""), registry)
     if merged is None:
         return InsecureCheckResult(
@@ -214,8 +208,6 @@ def ensure_insecure_registry(ssh, registry: str, allow_auto: bool = False) -> In
         )
     logger.info("daemon.json updated for insecure registry %s (backup: %s)", registry, DAEMON_BACKUP)
 
-    # SIGHUP 重载即可让 dockerd 重读 insecure-registries 的版本较多,但并非所有版本 / 单元都支持,
-    # 故 reload 失败即回退 restart(代价:该机容器重启)
     out, err, ec = _exec_on(ssh, "systemctl reload docker 2>&1 || systemctl restart docker 2>&1")
     if ec != 0:
         return InsecureCheckResult(

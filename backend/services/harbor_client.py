@@ -78,7 +78,6 @@ class HarborClient(RegistryProvider):
             return []
         result = []
         for tag in tags:
-            # Glue tags 端点:Harbor v2 返回详情对象,v1 / 旧版 Glue 返回纯名称(详情字段留空)
             if isinstance(tag, dict):
                 name = tag.get("name") or ""
                 if not name:

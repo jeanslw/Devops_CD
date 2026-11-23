@@ -15,7 +15,6 @@ from backend.deployers.k8s_utils import check_cancelled
 
 logger = logging.getLogger(__name__)
 
-# ArgoCD 走 HTTPS;是否校验 TLS 证书由 settings.argocd_verify_tls 控制
 _VERIFY = settings.argocd_verify_tls
 
 
@@ -30,7 +29,6 @@ def _parse_rfc3339(value: str):
     if not text:
         return None
     text = text.replace("Z", "+00:00")
-    # fromisoformat 对小数位数敏感,统一补齐/截断到 6 位
     text = re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), text)
     try:
         return datetime.fromisoformat(text)
@@ -93,7 +91,7 @@ class ArgoCDDeployer(K8sSubDeployer):
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        token = pwd  # ArgoCD token 通过 password 字段传入
+        token = pwd
         base = getattr(req, "api_url", "") or f"https://{host}"
         output = []
         success = False
@@ -106,7 +104,6 @@ class ArgoCDDeployer(K8sSubDeployer):
         try:
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-            # ── 发现 Argo CD Application 名(与 deploy 同源,不盲猜等于项目名) ──
             app_name = project.split("/")[-1]
             r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
             if r.status_code != 200:
@@ -135,7 +132,6 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             app = r.json()
 
-            # ── 读 history 取上一版 revision id ──
             history = app.get("status", {}).get("history", []) or []
             sorted_history = sorted(history, key=lambda h: h.get("id", 0))
             if len(sorted_history) < 2:
@@ -146,7 +142,6 @@ class ArgoCDDeployer(K8sSubDeployer):
             prev_id = prev.get("id")
             prev_rev = prev.get("revision", "")
             rollback_summary = S("deploy_log.argocd_rollback_to", id=prev_id, revision=prev_rev)
-            # 目标版本说明归入 rollback_summary(供写入 deploy_note),不写入 output;仅经 callback 实时推送
             if callable(callback):
                 callback(rollback_summary)
 
@@ -162,7 +157,6 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_rollback_failed", code=r.status_code, msg=r.text[:200]))
                 return {"success": False, "output": "\n".join(output)}
 
-            # 复用 health + sync 轮询等待回滚完成
             health = ""
             sync = ""
             for i in range(30):
@@ -199,7 +193,6 @@ class ArgoCDDeployer(K8sSubDeployer):
                 log(S("deploy_log.argocd_timeout"))
 
             result = {"success": success, "output": "\n".join(output)}
-            # 回滚目标版本摘要(ArgoCD history id + git revision),供执行器写入部署记录的说明列
             if success:
                 result["rollback_summary"] = rollback_summary
             return result
@@ -217,7 +210,7 @@ class ArgoCDDeployer(K8sSubDeployer):
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         import time
 
-        token = pwd  # ArgoCD token 通过 password 字段传入
+        token = pwd
         base = getattr(req, "api_url", "") or f"https://{host}"
         image_repo, image_tag = split_image_ref(image)
         output = []
@@ -233,11 +226,9 @@ class ArgoCDDeployer(K8sSubDeployer):
 
             log(S("deploy_log.argocd_connecting"))
 
-            # ── 发现 Argo CD Application 名,不盲猜等于项目名 ──
             app_name = project.split("/")[-1]
             r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
             if r.status_code != 200:
-                # 精确名不存在,搜索所有 App 按镜像名匹配
                 log(S("deploy_log.argocd_searching"))
                 r_list = _get(f"{base}/api/v1/applications", headers=headers)
                 if r_list.status_code == 200:
@@ -260,7 +251,6 @@ class ArgoCDDeployer(K8sSubDeployer):
                     msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
                     log(msg)
                     return {"success": False, "output": msg}
-                # 用发现的 app_name 重新获取
                 r = _get(f"{base}/api/v1/applications/{app_name}", headers=headers)
                 if r.status_code != 200:
                     msg = S("deploy_log.argocd_get_fail", code=r.status_code, msg=r.text[:200])
@@ -278,7 +268,6 @@ class ArgoCDDeployer(K8sSubDeployer):
             params = app.get("spec", {}).get("source", {}).get("helm", {}).get("parameters", [])
             kustomize = app.get("spec", {}).get("source", {}).get("kustomize", {})
             if kustomize:
-                # 用 Application 名作为 Kustomize image name(常见约定)
                 new_images = [
                     {
                         "name": app_name,
@@ -288,7 +277,6 @@ class ArgoCDDeployer(K8sSubDeployer):
                 ]
                 patch = {"spec": {"source": {"kustomize": {"images": new_images}}}}
             else:
-                # Helm: set image tag parameter
                 found = False
                 for p in params:
                     if p.get("name") == "image.tag":
@@ -309,7 +297,6 @@ class ArgoCDDeployer(K8sSubDeployer):
             log(S("deploy_log.argocd_update_ok"))
 
             log(S("deploy_log.argocd_sync"))
-            # 记录触发时间:参数型同步不推进 Git revision,用本次操作完成时间作为补充证据
             sync_requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             sync_requested_dt = _parse_rfc3339(sync_requested_at)
             r = requests.post(
@@ -349,19 +336,13 @@ class ArgoCDDeployer(K8sSubDeployer):
                 images = a.get("status", {}).get("summary", {}).get("images", []) or []
                 log(S("deploy_log.argocd_wait", n=i + 1, total=30, health=health or "Unknown", sync=sync or "Unknown"))
 
-                # 同步操作本身失败时立即结束,不必等到 30 轮超时
                 if phase in ("Failed", "Error"):
                     log(S("deploy_log.argocd_sync_phase_failed", phase=phase))
                     break
 
                 if health == "Healthy" and sync == "Synced":
-                    # 参数型同步不会推进 Git revision,因此用「revision 推进 或 目标镜像已落地」判定变更生效
                     revision_advanced = bool(before_revision and revision and revision != before_revision)
-                    # summary.images 可能省略 registry 前缀,按仓库末段 + tag/digest 归一比较
                     image_applied = any(_image_applied(img, image) for img in images)
-                    # Argo 的 revision 是 Git commit:仅改 Helm 参数时不会推进,
-                    # 因此承认「本次触发的 Sync 已成功完成」作为等价证据;
-                    # 时间必须按时间对象比较,避免小数秒导致同秒完成被误判为更早
                     finished_dt = _parse_rfc3339(finished_at)
                     operation_done = bool(
                         phase == "Succeeded"

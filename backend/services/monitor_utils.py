@@ -10,7 +10,6 @@ from backend.deployers.base import DeployTarget, _ssh_cmd
 
 _cache: dict[str, tuple[float, object]] = {}
 
-# 监控接口由多个请求线程并发读写同一份缓存,过期检查与写入需要串行
 _cache_lock = threading.Lock()
 
 
@@ -74,7 +73,7 @@ def _parse_kubectl_top(text: str, has_header: bool = False) -> list[dict]:
     items = []
     for line in lines:
         parts = line.split()
-        if len(parts) >= 5:  # nodes: NAME CPU CORES CPU% MEMORY MEMORY%
+        if len(parts) >= 5:
             items.append(
                 {
                     "name": parts[0],

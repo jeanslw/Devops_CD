@@ -129,7 +129,6 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                             )
 
         elif resource_type.startswith("process_"):
-            # 采集 top5 进程
             top_out = _ssh_cmd(
                 ssh,
                 'ps aux --sort=-%cpu --no-headers 2>/dev/null | head -10 | awk \'{print $2"|"$3"|"$4"|"$11}\'',
@@ -166,9 +165,6 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                         )
 
         elif resource_type.startswith("custom_"):
-            # ── 自定义监控项 ──
-            # 新格式: custom_<monitor_id>_<metric_id>  (指定指标)
-            # 旧格式: custom_<monitor_id>              (兼容:取第一个指标/单值)
             parts = resource_type.split("_")
             try:
                 monitor_id = int(parts[1])
@@ -202,7 +198,6 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                 if val is None:
                     continue
 
-                # 如果指定了 metric_id,只取匹配的指标
                 if metric_id is not None:
                     matched = [m for m in metrics_list if m["id"] == metric_id]
                     if not matched or item["field_key"] != matched[0].get("field_key", ""):
@@ -230,7 +225,6 @@ def collect_alert_metrics(db, rule: dict, server: dict) -> list[dict]:
                     )
 
     except Exception as e:
-        # 采集失败必须上抛:否则"取不到数据"会被上层当成"未超标",清零持续时间后静默漏报
         logger.error(f"Alert: metric collection failed for {server['host']}: {e}")
         raise
     finally:

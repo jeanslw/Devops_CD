@@ -21,8 +21,8 @@ from backend.exceptions import AppException
 
 logger = logging.getLogger("oidc")
 
-_DISCOVERY_TTL = 3600  # discovery 字段是静态的(端点地址),不必频繁拉取
-_JWKS_TTL = 3600  # JWKS 同理;未知 kid 会强制刷新一次(签名密钥轮换)
+_DISCOVERY_TTL = 3600
+_JWKS_TTL = 3600
 _HTTP_TIMEOUT = 10
 
 
@@ -67,7 +67,6 @@ class _TtlCache:
 _discovery_cache = _TtlCache("discovery")
 _jwks_cache = _TtlCache("jwks")
 
-# discovery / JWKS 是幂等 GET,可以带重试.
 _session = requests.Session()
 _retry = requests.adapters.Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
 _session.mount("http://", requests.adapters.HTTPAdapter(max_retries=_retry))
@@ -233,18 +232,15 @@ def exchange_code(code: str) -> dict:
         except ValueError as exc:
             raise OidcError("token 端点响应不是合法 JSON") from exc
         if not isinstance(payload, dict) or not payload.get("id_token"):
-            # scope 不含 openid 时 Glue 不报错,只是不下发 id_token(§8.7 第 3 条)
             raise OidcError("token 端点未返回 id_token（请确认 OIDC_SCOPES 含 openid）")
         return payload
 
-    # 只按 HTTP 状态码判错,不解析 message(§8.7 第 2 条:message 是已翻译文本,不是稳定 key)
     err_code = ""
     try:
         err_code = str((resp.json() or {}).get("error") or "")
     except ValueError:
         err_code = ""
     if err_code == "invalid_grant":
-        # 授权码已用/已超时(Glue 60s)或 redirect_uri 不匹配 即 由路由静默重走 start
         raise OidcError("授权码无效或已过期（invalid_grant）", status_code=400, invalid_grant=True)
     if resp.status_code in (400, 401):
         raise OidcError(f"token 端点拒绝兑换（HTTP {resp.status_code}）：请核对 CD_OIDC_SECRET 与 CD_OIDC_REDIRECT_URI")
@@ -300,11 +296,9 @@ def _verify_claims(claims: dict, nonce: str) -> str:
     if iat - skew > now:
         raise OidcError("id_token 的 iat 在未来（双方时钟偏差超过容忍值）")
 
-    # nonce 必须校验(§8.2):防重放,与授权请求里生成的值逐字符比对
     if not nonce or str(claims.get("nonce") or "") != nonce:
         raise OidcError("id_token nonce 不匹配（可能为重放请求）")
 
-    # username 取 preferred_username,回退 sub;统一 strip + lower 归一
     username = str(claims.get("preferred_username") or claims.get("sub") or "").strip().lower()
     if not username:
         raise OidcError("id_token 中没有可用的用户名（preferred_username / sub 均为空）")
