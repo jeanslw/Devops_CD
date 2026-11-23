@@ -19,6 +19,7 @@
   - A hard-coded image in YAML (without `{IMAGE}:{TAG}`) no longer reports success while the image is actually unchanged.
   - kubectl stop built an invalid Deployment name from `group/app`, and stopping via YAML could delete Services/ConfigMaps along with the workload.
   - kubectl rollback ignored `target_app`, so a workload name different from the project short name could roll back the wrong object; it now follows the same naming policy as deploy / stop.
+  - kubectl set image did not fall back to the compatibility field `k8s_deploy`, so older clients that only set it could deploy to the project short name; it now matches stop / rollback.
 
 ## v1.6.2 (2026-11-04)
 

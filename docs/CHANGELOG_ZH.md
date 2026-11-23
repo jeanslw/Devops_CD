@@ -19,6 +19,7 @@
   - YAML 中写死镜像（未引用 `{IMAGE}:{TAG}`）时，kubectl 部署实际未更换镜像却返回成功的问题。
   - kubectl 停止使用 `group/app` 拼出非法 Deployment 名，以及按 YAML 停止时连带删除 Service/ConfigMap 的问题。
   - kubectl 回滚未读取 `target_app`，工作负载名与项目短名不一致时可能回滚到错误对象；现与 deploy / stop 使用同一命名策略。
+  - kubectl set image 未回退兼容字段 `k8s_deploy`，旧客户端仅填该字段时可能部署到项目短名；现与 stop / rollback 一致。
 
 ## v1.6.2 (2026-11-04)
 

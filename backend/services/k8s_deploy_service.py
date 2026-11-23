@@ -51,6 +51,7 @@ class K8sDeployRequest(BaseModel):
     image_mode: str = ""  # kubectl: setimage(默认) | apply(高级);留空按 path 推导
     container: str = ""  # setimage 模式的目标容器名(必填,由集群校验)
     target_app: str = ""  # 目标工作负载名:kubectl/Stop 的 Deployment、Flux 的 HelmRelease/Kustomization
+    k8s_deploy: str = ""  # 兼容字段:旧客户端用 k8s_deploy 指定 Deployment 名,target_app 为空时回退
     flux_kind: str = ""  # Flux 资源类型:helmrelease(默认) | kustomization
     helm_repo_key: str = ""  # Helm chart 的镜像仓库 values key,默认 image.repository
     helm_tag_key: str = ""  # Helm chart 的镜像 tag values key,默认 image.tag

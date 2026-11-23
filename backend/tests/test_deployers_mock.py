@@ -773,6 +773,34 @@ class TestKubectlSetImage(unittest.TestCase):
         self.assertTrue(any("kubectl set image deployment/app" in c for c in fake.commands), fake.commands)
         self.assertIn("hub.example.com/repo/app:v1.0 -> hub.example.com/repo/app:v2.0", result["output"])
 
+    def test_set_image_falls_back_to_k8s_deploy(self):
+        # 旧客户端只填 k8s_deploy:set image 应与 stop/rollback 一样回退到该名称
+        state = {"image": "hub.example.com/repo/api:v1.0"}
+
+        def handler(cmd):
+            if "get deployment/api" in cmd and "-o json" in cmd:
+                doc = {"spec": {"template": {"spec": {"containers": [{"name": "app", "image": state["image"]}]}}}}
+                return (json.dumps(doc), "", 0)
+            if cmd.startswith("kubectl set image deployment/api "):
+                state["image"] = "hub.example.com/repo/app:v2.0"
+                return ("deployment.apps/api image updated", "", 0)
+            if "rollout status" in cmd:
+                return ('deployment "api" successfully rolled out', "", 0)
+            return ("", "", 0)
+
+        req = types.SimpleNamespace(
+            tag="v2.0",
+            k8s_ns="prod",
+            path="",
+            image_mode="setimage",
+            container="app",
+            target_app="",
+            k8s_deploy="api",
+        )
+        result, fake = self._run(handler, req)
+        self.assertTrue(result["success"], result["output"])
+        self.assertTrue(any("kubectl set image deployment/api" in c for c in fake.commands), fake.commands)
+
     def test_container_missing_lists_available(self):
         def handler(cmd):
             doc = {"spec": {"template": {"spec": {"containers": [{"name": "web", "image": "x:v1"}]}}}}

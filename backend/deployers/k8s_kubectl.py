@@ -177,7 +177,11 @@ class KubectlDeployer(K8sSubDeployer):
         target = DeployTarget(host=host, port=port, user=user, password=pwd, ssh_key=ssh_key)
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
         ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
-        deploy_name = (getattr(req, "target_app", "") or "").strip() or project.split("/")[-1]
+        deploy_name = (
+            (getattr(req, "target_app", "") or "").strip()
+            or (getattr(req, "k8s_deploy", "") or "").strip()
+            or project.split("/")[-1]
+        )
         container = (getattr(req, "container", "") or "").strip()
 
         if not container:

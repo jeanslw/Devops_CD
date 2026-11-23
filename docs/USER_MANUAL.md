@@ -44,7 +44,7 @@ CD Panel (this project)
 | SSH (single host) | Ansible Playbook | `ansible-playbook -e image={image} -e tag={tag}` |
 | Docker Compose | Remote YAML | Rewrite `IMAGE`/`TAG` in the remote `.env` → `cd {path} && docker compose up -d` |
 | Docker Compose | Inline YAML | SFTP upload compose YAML → auto-create dir → startup |
-| K8s kubectl | SSH apply | SSH to master → `kubectl apply -f` |
+| K8s kubectl | SSH | `kubectl set image` by default; YAML `apply` is advanced |
 | K8s Helm | SSH kubectl | `helm upgrade --install` + version verification |
 | K8s Argo CD | REST API | PATCH image → sync → poll until Healthy |
 | K8s Flux CD | SSH kubectl | PATCH resource → wait for ready |

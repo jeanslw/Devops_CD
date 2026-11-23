@@ -64,7 +64,7 @@
 | SSH 单机 | Ansible Playbook | `ansible-playbook -e image={image} -e tag={tag}` |
 | Docker Compose | 远程 YAML | `cd {path} && docker compose up -d` |
 | Docker Compose | 在线编写 | SFTP 上传 compose YAML → 自动建目录 → 启动 |
-| K8s kubectl | SSH apply | SSH 到 master 执行 `kubectl apply -f` |
+| K8s kubectl | SSH | 默认 `kubectl set image`；YAML `apply` 为高级模式 |
 | K8s Helm | SSH kubectl | `helm upgrade --install` + 版本验证 |
 | K8s Argo CD | REST API | PATCH image → sync → 轮询 Healthy |
 | K8s Flux CD | SSH kubectl | PATCH 资源 → wait ready |
