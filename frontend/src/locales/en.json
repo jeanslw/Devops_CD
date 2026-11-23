@@ -805,6 +805,7 @@
     "flux_no_reaction": "⚠️ No Flux reconciliation detected within 90s, continuing to wait for rollout...",
     "flux_rollout": "Waiting for rollout to complete [{deploy}] (max 120s)...",
     "flux_verify": "Verifying Pod status...",
+    "flux_image_mismatch": "❌ Image assertion failed: Deployment images [{actual}], expected [{expected}]",
     "flux_success": "✅ Deployment successful! {status}",
     "flux_pod_error": "❌ Pod startup error!",
     "flux_timeout": "⚠️ Timed out! {status}",

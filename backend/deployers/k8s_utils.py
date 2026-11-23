@@ -179,6 +179,15 @@ def _get_deployment_name(yaml_content: str) -> str:
 
 
 def _render_k8s_yaml(yaml_content: str, image: str, tag: str) -> str:
+    if "@" in image:
+        # digest 引用已固定内容,不再拼 tag,避免渲染出 repo@sha256:xxx:v2.0 这类非法引用
+        repo = image.split("@", 1)[0]
+        return (
+            yaml_content.replace("{IMAGE}:{TAG}", image)
+            .replace("{IMAGE}", image)
+            .replace("{IMAGE_NAME}", repo)
+            .replace("{TAG}", tag)
+        )
     image_parts = image.rsplit(":", 1)
     full_image_name = image_parts[0]
     reg = registry_base_url()

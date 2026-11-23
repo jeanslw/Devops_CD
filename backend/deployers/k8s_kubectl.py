@@ -338,6 +338,7 @@ class KubectlDeployer(K8sSubDeployer):
             except yaml.YAMLError as exc:
                 return {"success": False, "output": f"Invalid Kubernetes YAML: {exc}"}
             manifest_ns = ""
+            deploy_ns = ""
             for doc in docs:
                 if not isinstance(doc, dict):
                     continue
@@ -347,6 +348,9 @@ class KubectlDeployer(K8sSubDeployer):
                 doc_ns = str(metadata.get("namespace") or "").strip()
                 if doc_ns and not manifest_ns:
                     manifest_ns = doc_ns
+                # rollout/pods 查询针对 Deployment,执行命名空间以 Deployment 声明为准
+                if kind == "Deployment" and doc_ns and not deploy_ns:
+                    deploy_ns = doc_ns
                 if (
                     namespace
                     and doc_ns
@@ -376,7 +380,7 @@ class KubectlDeployer(K8sSubDeployer):
 
             # 执行/验证统一使用的 namespace:请求填写优先;留空则以 YAML 声明为准.
             # apply 不带 -n 时按 manifest 落位,rollout/pods 查询须带同一 -n.
-            effective_ns = namespace or manifest_ns
+            effective_ns = namespace or deploy_ns or manifest_ns
             ns_flag = f" -n {shlex.quote(effective_ns)}" if effective_ns else ""
 
             yaml_deploy_name = _get_deployment_name(yaml_content)

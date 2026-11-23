@@ -165,6 +165,11 @@ def _deploy_k8s_core(
             raise ValidationError("set image 模式需要指定容器名", error_key="errors.deploy_validation")
         if mode == "apply" and not req.path:
             raise ValidationError("YAML apply 模式需要填写 YAML 路径或 URL", error_key="errors.deploy_validation")
+        if mode == "apply" and getattr(req, "use_digest", False):
+            raise ValidationError(
+                "digest 固定仅支持 set image 模式；YAML apply 的镜像占位符无法携带 digest",
+                error_key="errors.deploy_validation",
+            )
 
     # ── Flux 参数校验:资源名必填,不再按镜像名扫描猜测目标 ──
     if req.cd_type == "fluxcd" and not rollback:

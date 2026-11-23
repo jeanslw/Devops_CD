@@ -21,6 +21,11 @@
   - kubectl stop built an invalid Deployment name from `group/app`, and stopping via YAML could delete Services/ConfigMaps along with the workload.
   - kubectl rollback ignored `target_app`, so a workload name different from the project short name could roll back the wrong object; it now follows the same naming policy as deploy / stop.
   - kubectl set image did not fall back to the compatibility field `k8s_deploy`, so older clients that only set it could deploy to the project short name; it now matches stop / rollback.
+  - `use_digest` combined with YAML apply rendered an invalid `repo@sha256:tag` reference; apply mode now rejects digest pinning and the renderer no longer appends a tag to a digest.
+  - A suspended or unreconciled Flux resource could report success from the old Deployment's `rollout status`; Flux now asserts the Deployment image, matching kubectl.
+  - With multi-document kubectl manifests, rollout / Pod queries now use the namespace declared by the Deployment instead of the first resource's namespace.
+  - Argo CD compares operation timestamps as datetimes (fractional seconds supported) and matches `summary.images` by repository basename, reducing false failures from same-second completions or short names.
+  - Flux Kustomization `spec.images` string entries no longer raise; short names and full paths match by repository basename to avoid duplicate overrides.
 
 ## v1.6.2 (2026-11-04)
 

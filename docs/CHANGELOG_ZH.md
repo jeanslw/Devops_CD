@@ -21,6 +21,11 @@
   - kubectl 停止使用 `group/app` 拼出非法 Deployment 名，以及按 YAML 停止时连带删除 Service/ConfigMap 的问题。
   - kubectl 回滚未读取 `target_app`，工作负载名与项目短名不一致时可能回滚到错误对象；现与 deploy / stop 使用同一命名策略。
   - kubectl set image 未回退兼容字段 `k8s_deploy`，旧客户端仅填该字段时可能部署到项目短名；现与 stop / rollback 一致。
+  - `use_digest` 与 YAML apply 组合会渲染出 `repo@sha256:tag` 非法引用；现在 apply 模式直接拒绝 digest 固定，渲染器也不再对 digest 拼接 tag。
+  - Flux 被 suspend 或未协调时，旧 Deployment 的 `rollout status` 成功会被误判为部署成功；新增 Deployment 镜像断言，与 kubectl 判定对齐。
+  - kubectl apply 多文档清单时，rollout / Pod 查询改为使用 Deployment 声明的命名空间，避免因首个资源的 namespace 不同而查错。
+  - Argo CD 成功判定改为按时间对象比较（兼容小数秒），并按镜像仓库末段匹配 `summary.images`，减少同秒完成或短名导致的误报失败。
+  - Flux Kustomization 的 `spec.images` 含字符串条目时不再抛异常；短名与完整路径按仓库末段匹配，避免追加重复 override。
 
 ## v1.6.2 (2026-11-04)
 

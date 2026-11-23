@@ -26,8 +26,12 @@ import shlex
 from backend.deploy_run import normalize_deploy_status, normalize_rollback_type
 from backend.deployers.base import DeployTarget, InvalidTag, retry_idempotent, split_image_ref, validate_tag
 from backend.deployers.compose import ComposeDeployer
-from backend.deployers.k8s_argocd import ArgoCDDeployer
-from backend.deployers.k8s_fluxcd import _build_flux_image_patch, _discover_flux_resource
+from backend.deployers.k8s_argocd import ArgoCDDeployer, _image_applied, _parse_rfc3339
+from backend.deployers.k8s_fluxcd import (
+    _build_flux_image_patch,
+    _deploy_image_matches,
+    _discover_flux_resource,
+)
 from backend.deployers.k8s_kubectl import KubectlDeployer
 from backend.deployers.k8s_utils import _get_deployment_name, _render_k8s_yaml
 from backend.deployers.ssh import SSHDeployer
@@ -97,6 +101,18 @@ class TestPureHelpers(unittest.TestCase):
         with patch("backend.deployers.k8s_utils.registry_base_url", return_value="hub.example.com:5000"):
             out = _render_k8s_yaml("i: {IMAGE}", "hub.example.com:5000/repo/app:v1.0", "v2.0")
         self.assertIn("hub.example.com:5000/repo/app:v2.0", out)
+
+    def test_render_k8s_yaml_digest_is_not_tagged(self):
+        # digest 引用已固定内容,不能再拼 tag,否则渲染出 repo@sha256:xxx:v2.0 非法引用
+        with patch("backend.deployers.k8s_utils.registry_base_url", return_value="hub.example.com"):
+            out = _render_k8s_yaml(
+                "full: {IMAGE}:{TAG}\nname: {IMAGE_NAME}",
+                "hub.example.com/repo/app@sha256:abc123",
+                "v2.0",
+            )
+        self.assertIn("full: hub.example.com/repo/app@sha256:abc123", out)
+        self.assertIn("name: hub.example.com/repo/app", out)
+        self.assertNotIn("@sha256:abc123:v2.0", out)
 
     def test_get_deployment_name(self):
         yaml = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: myapp\n"
@@ -344,6 +360,35 @@ class TestArgoCD(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("revision", result["output"])
 
+    def test_summary_short_image_name_matches_full_target(self):
+        # Argo summary.images 常省略 registry 前缀,应仍能证明目标镜像已落地
+        app = {
+            "spec": {"source": {"kustomize": {"images": []}}},
+            "status": {
+                "health": {"status": "Healthy"},
+                "sync": {"status": "Synced", "revision": "same-commit"},
+                "summary": {"images": ["app:v2.0"]},
+            },
+        }
+        with (
+            patch("requests.get", MagicMock(return_value=_Resp(200, app))),
+            patch("requests.put", MagicMock(return_value=_Resp(200))),
+            patch("requests.post", MagicMock(return_value=_Resp(200))),
+            patch("time.sleep", return_value=None),
+        ):
+            result = ArgoCDDeployer().deploy(
+                self._req(), "hub.example.com/repo/app:v2.0", "group/app", "argocd-host", pwd="token"
+            )
+        self.assertTrue(result["success"], result["output"])
+
+    def test_sync_finished_same_second_with_fraction_is_accepted(self):
+        requested = _parse_rfc3339("2026-11-23T10:00:00Z")
+        finished = _parse_rfc3339("2026-11-23T10:00:00.500Z")
+        assert requested is not None and finished is not None
+        self.assertGreaterEqual(finished, requested)
+        self.assertTrue(_image_applied("app:v2.0", "hub.example.com/repo/app:v2.0"))
+        self.assertFalse(_image_applied("app:v1.0", "hub.example.com/repo/app:v2.0"))
+
 
 # ─────────────────────────────────────────────────────────────
 # Flux CD 部署器(k8s_fluxcd.py)
@@ -355,12 +400,37 @@ class TestFluxCD(unittest.TestCase):
                 return ("helmrelease.apps.toolkit.fluxcd.io/myapp", "", 0)
             return ("", "", 0)
 
-        name, kind = _discover_flux_resource(FakeSSH(handler), "myapp", "hub.example.com/app")
+        name, kind = _discover_flux_resource(FakeSSH(handler), "myapp", "helmrelease")
         self.assertEqual((name, kind), ("myapp", "helmrelease"))
 
     def test_discover_flux_resource_fallback_empty(self):
-        _, kind = _discover_flux_resource(FakeSSH(lambda cmd: ("", "", 0)), "myapp", "hub.example.com/app")
+        _, kind = _discover_flux_resource(FakeSSH(lambda cmd: ("", "", 0)), "myapp", "helmrelease")
         self.assertEqual(kind, "")
+
+    def test_build_flux_image_patch_accepts_string_entries(self):
+        # 字符串条目不再触发 dict() 异常;匹配到的条目更新 tag
+        patch_data = _build_flux_image_patch(
+            "hub.example.com/repo/app",
+            "v2.0",
+            ["hub.example.com/repo/app=v1.0", "other/image=v9"],
+        )
+        images = patch_data["spec"]["images"]
+        self.assertEqual(images[0], {"name": "hub.example.com/repo/app", "newTag": "v2.0"})
+        self.assertEqual(images[1], {"name": "other/image", "newTag": "v9"})
+
+    def test_build_flux_image_patch_matches_short_name(self):
+        # Kustomization 内是短名时更新已有条目,不再追加重复 override
+        patch_data = _build_flux_image_patch(
+            "hub.example.com/repo/app",
+            "v2.0",
+            [{"name": "app", "newTag": "v1.0"}],
+        )
+        self.assertEqual(patch_data["spec"]["images"], [{"name": "app", "newTag": "v2.0"}])
+
+    def test_deploy_image_matches_ignores_registry_prefix(self):
+        self.assertTrue(_deploy_image_matches("hub.example.com/repo/app:v2.0", "repo/app", "v2.0"))
+        self.assertTrue(_deploy_image_matches("app:v2.0", "hub.example.com/repo/app", "v2.0"))
+        self.assertFalse(_deploy_image_matches("app:v1.0", "repo/app", "v2.0"))
 
     def test_build_flux_image_patch_keeps_existing_overrides(self):
         patch_data = _build_flux_image_patch(

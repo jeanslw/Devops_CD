@@ -14,6 +14,11 @@ from backend.deployers.k8s_utils import _exec_exit, _kubectl_pods, _log, _ssh_cm
 logger = logging.getLogger(__name__)
 
 
+def _repo_basename(name: str) -> str:
+    """取镜像仓库末段,用于短名与完整路径的匹配."""
+    return (name or "").split("@", 1)[0].rsplit("/", 1)[-1]
+
+
 def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
     """Merge patch for Flux's `spec.images`, preserving unrelated overrides.
 
@@ -23,9 +28,21 @@ def _build_flux_image_patch(image_name: str, tag: str, existing_images=None):
     current = list(existing_images or [])
     patched = []
     updated = False
+    target_base = _repo_basename(image_name)
     for item in current:
-        entry = dict(item or {})
-        if entry.get("name") == image_name:
+        if isinstance(item, str):
+            # 兼容 "name=newTag" / "name" 形式的字符串条目,不再让 dict() 抛错中断部署
+            name, sep, value = item.partition("=")
+            entry = {"name": name.strip()}
+            if sep and value.strip():
+                entry["newTag"] = value.strip()
+        elif isinstance(item, dict):
+            entry = dict(item)
+        else:
+            continue
+        entry_name = str(entry.get("name") or "")
+        # 完整仓库路径与 Kustomization 内的短名不相等时,按末段匹配到已有条目,避免追加重复 override
+        if not updated and (entry_name == image_name or _repo_basename(entry_name) == target_base):
             entry["newTag"] = tag
             updated = True
         patched.append(entry)
@@ -54,6 +71,24 @@ def _discover_flux_resource(ssh, name, kind=""):
 def _flux_pod_label(name: str) -> str:
     """Flux/Helm 生成的 Pod 通用实例标签,优先于按 release 名做前缀猜测."""
     return f"app.kubernetes.io/instance={name}"
+
+
+def _deployment_images(ssh, deploy_name: str) -> list[str]:
+    """读取 Deployment 当前容器镜像列表,用于部署后断言."""
+    jsonpath = "{.spec.template.spec.containers[*].image}"
+    raw = _ssh_cmd(
+        ssh,
+        f"kubectl get deploy {shlex.quote(deploy_name)} -o jsonpath={shlex.quote(jsonpath)} 2>/dev/null",
+    )
+    return [item.strip() for item in raw.split() if item.strip()]
+
+
+def _deploy_image_matches(ref: str, repo: str, tag: str) -> bool:
+    """判断实际镜像是否为目标仓库末段 + tag,允许 registry 前缀差异."""
+    if "@" in ref:
+        return False
+    name, ref_tag = split_image_ref(ref)
+    return name.rsplit("/", 1)[-1] == repo.rsplit("/", 1)[-1] and ref_tag == tag
 
 
 class FluxCDDeployer(K8sSubDeployer):
@@ -315,7 +350,23 @@ class FluxCDDeployer(K8sSubDeployer):
             else:
                 _log(callback, S("deploy_log.deploy_no_deploy"))
 
-            # 6. 部署后状态(rollout status 已做主裁判,这里仅展示 Pod 列表)
+            # 5.1 镜像断言:Flux 被 suspend 或未协调时,rollout status 可能对旧 Pod 返回 0
+            actual_images = []
+            image_ok = False
+            if deploy_name:
+                actual_images = _deployment_images(ssh, deploy_name)
+                image_ok = any(_deploy_image_matches(img, img_name, tag) for img in actual_images)
+                if not image_ok:
+                    _log(
+                        callback,
+                        S(
+                            "deploy_log.flux_image_mismatch",
+                            actual=", ".join(actual_images) or "(无)",
+                            expected=f"{img_name}:{tag}",
+                        ),
+                    )
+
+            # 6. 部署后状态(rollout status + 镜像断言已做主裁判,这里仅展示 Pod 列表)
             _log(callback, S("deploy_log.flux_verify"))
             after = _flux_pods()
             ssh.close()
@@ -330,7 +381,7 @@ class FluxCDDeployer(K8sSubDeployer):
             running_count = sum(1 for line in after.split("\n") if "Running" in line)
             rollout_ok = deploy_name and rollout_ec == 0
 
-            if deploy_name and rollout_ok:
+            if deploy_name and rollout_ok and image_ok:
                 status_text = f"已部署: {running_count} 个 Running Pod"
                 _log(callback, S("deploy_log.flux_success", status=status_text))
                 result = (
@@ -341,9 +392,18 @@ class FluxCDDeployer(K8sSubDeployer):
                 return {"success": True, "output": result[: settings.log_truncate_chars]}
             elif deploy_name:
                 _log(callback, S("deploy_log.flux_fail_error"))
+                assert_line = (
+                    ""
+                    if image_ok
+                    else (
+                        f"\n\n镜像断言: 实际 [{', '.join(actual_images) or '(无)'}]，"
+                        f"期望 [{img_name}:{tag}]；Flux 可能未协调本次变更"
+                    )
+                )
                 result = (
                     f"{before_text}\n\n开始部署:\n镜像已更新，Flux 协调已触发"
                     + f"\n\n{rollout_result}\n\n部署后运行版本:\n{after}"
+                    + assert_line
                     + "\n\n验证部署: ❌ 部署失败！"
                 )
                 return {"success": False, "output": result[: settings.log_truncate_chars]}

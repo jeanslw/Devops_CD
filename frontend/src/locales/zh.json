@@ -805,6 +805,7 @@
     "flux_no_reaction": "⚠️ 90 秒内未检测到 Flux 协调，继续等待滚动更新...",
     "flux_rollout": "等待滚动更新完成 [{deploy}]（最长 120 秒）...",
     "flux_verify": "最终验证 Pod 状态...",
+    "flux_image_mismatch": "❌ 镜像断言失败：Deployment 实际镜像 [{actual}]，期望 [{expected}]",
     "flux_success": "✅ 部署成功！{status}",
     "flux_pod_error": "❌ Pod 启动异常！",
     "flux_timeout": "⚠️ 超时未就绪！{status}",

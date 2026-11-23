@@ -1,6 +1,8 @@
 """K8S Argo CD 部署模式 - API patch image + sync + health polling"""
 
 import logging
+import re
+from datetime import datetime
 
 import requests
 import urllib3
@@ -20,6 +22,41 @@ _VERIFY = settings.argocd_verify_tls
 def _get(url: str, **kw):
     headers = kw.pop("headers", {})
     return requests.get(url, headers=headers, timeout=10, verify=_VERIFY, **kw)
+
+
+def _parse_rfc3339(value: str):
+    """解析 Argo 返回的 RFC3339 时间;兼容带/不带小数秒,无法解析时返回 None."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    text = text.replace("Z", "+00:00")
+    # fromisoformat 对小数位数敏感,统一补齐/截断到 6 位
+    text = re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), text)
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _normalize_image_ref(ref: str) -> tuple[str, str]:
+    """归一为(仓库末段, tag/digest),用于 Argo summary 短名与目标全名的比较."""
+    text = (ref or "").strip()
+    if not text:
+        return "", ""
+    if "@" in text:
+        repo, digest = text.split("@", 1)
+        return repo.rsplit("/", 1)[-1], f"@{digest}"
+    name, tag = split_image_ref(text)
+    return name.rsplit("/", 1)[-1], tag
+
+
+def _image_applied(candidate: str, target: str) -> bool:
+    """判断 summary.images 中的条目是否就是目标镜像(允许省略 registry 前缀)."""
+    cand_name, cand_ver = _normalize_image_ref(candidate)
+    tgt_name, tgt_ver = _normalize_image_ref(target)
+    if not cand_name or not tgt_name:
+        return False
+    return cand_name == tgt_name and cand_ver == tgt_ver
 
 
 class ArgoCDDeployer(K8sSubDeployer):
@@ -274,6 +311,7 @@ class ArgoCDDeployer(K8sSubDeployer):
             log(S("deploy_log.argocd_sync"))
             # 记录触发时间:参数型同步不推进 Git revision,用本次操作完成时间作为补充证据
             sync_requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            sync_requested_dt = _parse_rfc3339(sync_requested_at)
             r = requests.post(
                 f"{base}/api/v1/applications/{app_name}/sync", json={}, headers=headers, timeout=10, verify=_VERIFY
             )
@@ -319,10 +357,18 @@ class ArgoCDDeployer(K8sSubDeployer):
                 if health == "Healthy" and sync == "Synced":
                     # 参数型同步不会推进 Git revision,因此用「revision 推进 或 目标镜像已落地」判定变更生效
                     revision_advanced = bool(before_revision and revision and revision != before_revision)
-                    image_applied = any(img == image or str(img).startswith(image + "@") for img in images)
+                    # summary.images 可能省略 registry 前缀,按仓库末段 + tag/digest 归一比较
+                    image_applied = any(_image_applied(img, image) for img in images)
                     # Argo 的 revision 是 Git commit:仅改 Helm 参数时不会推进,
-                    # 因此承认「本次触发的 Sync 已成功完成」作为等价证据
-                    operation_done = phase == "Succeeded" and finished_at >= sync_requested_at
+                    # 因此承认「本次触发的 Sync 已成功完成」作为等价证据;
+                    # 时间必须按时间对象比较,避免小数秒导致同秒完成被误判为更早
+                    finished_dt = _parse_rfc3339(finished_at)
+                    operation_done = bool(
+                        phase == "Succeeded"
+                        and finished_dt is not None
+                        and sync_requested_dt is not None
+                        and finished_dt >= sync_requested_dt
+                    )
                     if revision_advanced or image_applied or not before_revision or operation_done:
                         log(S("deploy_log.argocd_healthy", sync=sync))
                         success = True
