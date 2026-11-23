@@ -264,6 +264,11 @@ cd_service/
 | POST | `/api/deploy-k8s-stream` | 🔑 | K8s 部署（SSE 实时日志流） |
 | POST | `/api/stop-k8s` | 🔑 | 停止 K8s 部署（`cd.deploy.k8s`） |
 | GET | `/api/deploy-logs` | ✅ | 部署记录查询（分页） |
+
+> kubectl 的 `image_mode` 留空时按请求是否带 `path` 推导：有 `path` 走 `apply`，无 `path` 走 `setimage`。Web 控制台默认发送 `setimage` 并清空 `path`；旧脚本若仍带 `path`，需显式传 `image_mode=setimage` 才会切换到新路径。
+>
+> 旧的 `deploy_type=k8s` 入口仅为兼容保留，正式入口是 `k8s/{kubectl|helm|argocd|fluxcd}`，新功能只在后者维护。
+
 | **审批** | | | |
 | GET | `/api/approvals` | ✅ | 审批单列表（管理者见全部、普通用户见本人；过滤：status/project/deploy_kind/active/mine） |
 | GET | `/api/approvals/badge` | ✅ | 待审批红点计数（待我审批 + 我的待执行） |

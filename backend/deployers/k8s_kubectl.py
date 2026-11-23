@@ -99,10 +99,11 @@ class KubectlDeployer(K8sSubDeployer):
         filter_name = project.split("/")[-1]
         namespace = (getattr(req, "k8s_ns", "") or "").strip()
         ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
+        # 与 deploy / stop 同一命名策略:显式工作负载名 > YAML 声明名 > 项目短名
+        explicit_name = (getattr(req, "target_app", "") or "").strip() or (getattr(req, "k8s_deploy", "") or "").strip()
 
-        # 确定 deployment 名:优先读 YAML 声明的名字(与 deploy 同源),回退到项目短名
         yaml_content = ""
-        if req.path and req.path.startswith("http"):
+        if not explicit_name and req.path and req.path.startswith("http"):
             try:
                 import requests
 
@@ -116,7 +117,7 @@ class KubectlDeployer(K8sSubDeployer):
         try:
             ssh = ssh_connect(target, settings.ssh_timeout)
 
-            if req.path and not req.path.startswith("http"):
+            if not explicit_name and req.path and not req.path.startswith("http"):
                 try:
                     out, _, ec = _exec_exit(ssh, f"cat {shlex.quote(req.path)}")
                     if ec == 0:
@@ -124,7 +125,7 @@ class KubectlDeployer(K8sSubDeployer):
                 except Exception:
                     yaml_content = ""
 
-            deploy_name = _get_deployment_name(yaml_content) or filter_name
+            deploy_name = explicit_name or _get_deployment_name(yaml_content) or filter_name
 
             _log(callback, S("deploy_log.rollback_start", name=deploy_name))
             check_cancelled()

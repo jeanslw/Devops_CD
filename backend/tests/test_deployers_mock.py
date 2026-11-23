@@ -828,5 +828,34 @@ class TestKubectlStop(unittest.TestCase):
         self.assertIn("⚠️", result["output"])
 
 
+class TestKubectlRollback(unittest.TestCase):
+    """v1.6.3: 回滚与 deploy/stop 同一命名策略(target_app 优先)."""
+
+    def _run(self, handler, req):
+        fake = FakeSSH(handler)
+        with patch("backend.deployers.k8s_kubectl.ssh_connect", return_value=fake):
+            result = KubectlDeployer().rollback(req, "app", "k8s-host")
+        return result, fake
+
+    def test_rollback_prefers_target_app(self):
+        req = types.SimpleNamespace(target_app="api", k8s_deploy="", path="", k8s_ns="prod")
+        result, fake = self._run(lambda cmd: ("", "", 0), req)
+        self.assertTrue(result["success"])
+        self.assertTrue(any("rollout undo deployment/api" in c for c in fake.commands), fake.commands)
+        self.assertFalse(any("deployment/app" in c for c in fake.commands))
+
+    def test_rollback_falls_back_to_yaml_deployment_name(self):
+        yaml = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n"
+
+        def handler(cmd):
+            if cmd.startswith("cat "):
+                return (yaml, "", 0)
+            return ("", "", 0)
+
+        req = types.SimpleNamespace(target_app="", k8s_deploy="", path="/opt/app.yaml", k8s_ns="")
+        _, fake = self._run(handler, req)
+        self.assertTrue(any("rollout undo deployment/api" in c for c in fake.commands), fake.commands)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

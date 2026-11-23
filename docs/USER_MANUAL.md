@@ -264,6 +264,11 @@ cd_service/
 | POST | `/api/deploy-k8s-stream` | 🔑 | K8s deploy with SSE live log stream |
 | POST | `/api/stop-k8s` | 🔑 | Stop K8s deployment (`cd.deploy.k8s`) |
 | GET | `/api/deploy-logs` | ✅ | Deployment log query (paged) |
+
+> For kubectl, an empty `image_mode` is derived from `path`: with `path` it uses `apply`, without `path` it uses `setimage`. The web console sends `setimage` and clears `path`; older scripts that still send `path` must pass `image_mode=setimage` explicitly to opt into the new path.
+>
+> The legacy `deploy_type=k8s` entry is kept for compatibility only. The supported entry is `k8s/{kubectl|helm|argocd|fluxcd}`, and new features are maintained there.
+
 | **Approvals** | | | |
 | GET | `/api/approvals` | ✅ | Approval tickets (managers see all, users see their own; filters: status/project/deploy_kind/active/mine) |
 | GET | `/api/approvals/badge` | ✅ | Pending badge count (to approve + to execute) |
