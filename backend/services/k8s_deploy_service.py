@@ -41,9 +41,12 @@ class K8sDeployRequest(BaseModel):
     tag: str
     cd_type: str = "kubectl"  # kubectl | argocd | fluxcd | helm
     cluster_id: int = 0
-    path: str = ""  # YAML path for kubectl mode
+    path: str = ""  # YAML path for kubectl apply mode / chart path for helm
     api_url: str = ""  # Argo CD / Flux API base
     k8s_ns: str = ""  # 留空不传 -n,namespace 以 YAML 声明为准;填写后执行/验证统一使用该 namespace
+    image_mode: str = ""  # kubectl: setimage(默认) | apply(高级);留空按 path 推导
+    container: str = ""  # setimage 模式的目标容器名(必填,由集群校验)
+    target_app: str = ""  # 目标工作负载名,留空取项目短名
     deploy_note: str = ""  # 部署说明(记录到 cd_deploy_logs.deploy_note)
     scheduled_at: str = ""  # 可选定时发布:'YYYY-MM-DD HH:MM[:SS]',空=不启用定时(按常规审批/直通流程)
     bot_id: int = 0
@@ -122,6 +125,17 @@ def _deploy_k8s_core(
         validate_tag(req.tag)
     except InvalidTag as e:
         raise ValidationError(str(e), error_key="errors.deploy_validation") from e
+
+    # ── kubectl 参数校验:set image 必须有容器名,apply 必须有 YAML 路径 ──
+    # 回滚走 rollout undo,不依赖这两项,跳过校验以兼容历史参数快照.
+    if req.cd_type == "kubectl" and not rollback:
+        mode = (req.image_mode or "").strip().lower()
+        if mode not in ("apply", "setimage"):
+            mode = "apply" if req.path else "setimage"
+        if mode == "setimage" and not (req.container or "").strip():
+            raise ValidationError("set image 模式需要指定容器名", error_key="errors.deploy_validation")
+        if mode == "apply" and not req.path:
+            raise ValidationError("YAML apply 模式需要填写 YAML 路径或 URL", error_key="errors.deploy_validation")
 
     # ── 并发锁:同一项目同时只允许一个进行中部署 ──
     running = find_running_deploy(db, project_key)

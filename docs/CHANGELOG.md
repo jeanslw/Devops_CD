@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.6.3 (2026-11-23)
+
+- **Added**
+  - K8S kubectl deployment gains a "change mode": `set image` by default, which only updates the image of an existing Deployment; `YAML apply` remains as an advanced mode.
+  - `set image` requires a container name, validated against the Deployment in the cluster before execution; a wrong name fails with the available containers listed.
+- **Changed**
+  - K8S kubectl deployment now asserts the image after rollout: the Deployment's actual image is read and compared with the target, and a mismatch fails the deployment.
+  - The K8S deployment form follows the deployment type: kubectl shows mode/container/workload, Helm shows the chart path, Argo CD shows API URL and namespace.
+- **Fixed**
+  - A hard-coded image in YAML (without `{IMAGE}:{TAG}`) no longer reports success while the image is actually unchanged.
+
 ## v1.6.2 (2026-11-04)
 
 - **Added**

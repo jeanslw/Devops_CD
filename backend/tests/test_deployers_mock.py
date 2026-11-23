@@ -11,6 +11,7 @@
     .venv/Scripts/python.exe backend/tests/test_deployers_mock.py
 """
 
+import json
 import os
 import sys
 import types
@@ -27,6 +28,7 @@ from backend.deployers.base import DeployTarget, InvalidTag, retry_idempotent, s
 from backend.deployers.compose import ComposeDeployer
 from backend.deployers.k8s_argocd import ArgoCDDeployer
 from backend.deployers.k8s_fluxcd import _build_flux_image_patch, _discover_flux_resource
+from backend.deployers.k8s_kubectl import KubectlDeployer
 from backend.deployers.k8s_utils import _get_deployment_name, _render_k8s_yaml
 from backend.deployers.ssh import SSHDeployer
 
@@ -703,6 +705,70 @@ class TestDeployRun(unittest.TestCase):
         self.assertEqual(normalize_rollback_type("replay"), "replay")
         self.assertEqual(normalize_rollback_type("rollback"), "native")
         self.assertEqual(normalize_rollback_type(""), "manual")
+
+
+# ─────────────────────────────────────────────────────────────
+# Kubectl 部署器(k8s_kubectl.py) - set image 主路径 + 镜像断言
+# ─────────────────────────────────────────────────────────────
+class TestKubectlSetImage(unittest.TestCase):
+    """v1.6.3: kubectl 默认 set image;容器名由集群校验;部署后断言实际镜像."""
+
+    def _req(self, container="app", target_app="app", path="", mode="setimage"):
+        return types.SimpleNamespace(
+            tag="v2.0",
+            k8s_ns="prod",
+            path=path,
+            image_mode=mode,
+            container=container,
+            target_app=target_app,
+        )
+
+    def _run(self, handler, req=None):
+        fake = FakeSSH(handler)
+        with patch("backend.deployers.k8s_kubectl.ssh_connect", return_value=fake):
+            result = KubectlDeployer().deploy(
+                req or self._req(), "hub.example.com/repo/app:v2.0", "group/app", "k8s-host"
+            )
+        return result, fake
+
+    def test_set_image_success_and_image_assertion(self):
+        state = {"image": "hub.example.com/repo/app:v1.0"}
+
+        def handler(cmd):
+            if "get deployment/app" in cmd and "-o json" in cmd:
+                doc = {"spec": {"template": {"spec": {"containers": [{"name": "app", "image": state["image"]}]}}}}
+                return (json.dumps(doc), "", 0)
+            if cmd.startswith("kubectl set image deployment/app "):
+                state["image"] = "hub.example.com/repo/app:v2.0"
+                return ("deployment.apps/app image updated", "", 0)
+            if "rollout status" in cmd:
+                return ('deployment "app" successfully rolled out', "", 0)
+            return ("", "", 0)
+
+        result, fake = self._run(handler)
+        self.assertTrue(result["success"], result["output"])
+        self.assertTrue(any("kubectl set image deployment/app" in c for c in fake.commands), fake.commands)
+        self.assertIn("hub.example.com/repo/app:v1.0 -> hub.example.com/repo/app:v2.0", result["output"])
+
+    def test_container_missing_lists_available(self):
+        def handler(cmd):
+            doc = {"spec": {"template": {"spec": {"containers": [{"name": "web", "image": "x:v1"}]}}}}
+            return (json.dumps(doc), "", 0)
+
+        result, fake = self._run(handler, self._req(container="app"))
+        self.assertFalse(result["success"])
+        self.assertIn("web", result["output"])
+        self.assertFalse(any("kubectl set image" in c for c in fake.commands))
+
+    def test_deployment_not_found_fails(self):
+        result, _ = self._run(lambda cmd: ("", 'deployments.apps "app" not found', 1))
+        self.assertFalse(result["success"])
+        self.assertIn("not found", result["output"])
+
+    def test_container_required_before_ssh(self):
+        result, fake = self._run(lambda cmd: ("", "", 0), self._req(container=""))
+        self.assertFalse(result["success"])
+        self.assertEqual(fake.commands, [])
 
 
 if __name__ == "__main__":

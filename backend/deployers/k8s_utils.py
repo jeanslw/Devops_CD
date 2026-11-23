@@ -1,5 +1,6 @@
 """K8S 部署共享工具函数 - Pod 轮询 + YAML 渲染"""
 
+import json
 import re
 import shlex
 
@@ -31,6 +32,41 @@ def _exec_exit(ssh, cmd: str, timeout: int = 130) -> tuple:
         # channel 异常关闭时 fallback:有 stderr 则视为失败
         ec = 1
     return out, err, ec
+
+
+def _get_deployment_doc(ssh, name: str, namespace: str = "", timeout: int = 30) -> tuple[dict | None, str]:
+    """读取 Deployment 完整 JSON,用于容器名校验与部署后镜像断言.
+
+    返回 (doc, err):成功时 err 为空;不存在/不可读/非法 JSON 时 doc 为 None.
+    """
+    ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
+    out, err, ec = _exec_exit(
+        ssh, f"kubectl get deployment/{shlex.quote(name)}{ns_flag} -o json", timeout=timeout
+    )
+    if ec != 0 or not out.strip():
+        return None, (err or out or f"exit code {ec}")
+    try:
+        doc = json.loads(out)
+    except ValueError as exc:
+        return None, f"invalid kubernetes JSON: {exc}"
+    return (doc if isinstance(doc, dict) else None), ""
+
+
+def _deployment_containers(doc: dict) -> list[dict]:
+    """从 Deployment JSON 中取容器列表(容错缺失字段)."""
+    spec = doc.get("spec") or {}
+    template = spec.get("template") or {}
+    pod_spec = template.get("spec") or {}
+    containers = pod_spec.get("containers") or []
+    return [c for c in containers if isinstance(c, dict)]
+
+
+def _deployment_image(doc: dict, container: str) -> str:
+    """取指定容器的镜像,未找到返回空串."""
+    for item in _deployment_containers(doc):
+        if item.get("name") == container:
+            return str(item.get("image") or "")
+    return ""
 
 
 def _kubectl_pods(ssh, deploy_name="", namespace=""):
