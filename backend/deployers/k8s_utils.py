@@ -40,9 +40,7 @@ def _get_deployment_doc(ssh, name: str, namespace: str = "", timeout: int = 30) 
     返回 (doc, err):成功时 err 为空;不存在/不可读/非法 JSON 时 doc 为 None.
     """
     ns_flag = f" -n {shlex.quote(namespace)}" if namespace else ""
-    out, err, ec = _exec_exit(
-        ssh, f"kubectl get deployment/{shlex.quote(name)}{ns_flag} -o json", timeout=timeout
-    )
+    out, err, ec = _exec_exit(ssh, f"kubectl get deployment/{shlex.quote(name)}{ns_flag} -o json", timeout=timeout)
     if ec != 0 or not out.strip():
         return None, (err or out or f"exit code {ec}")
     try:
