@@ -1,20 +1,17 @@
 # Devops-Glue CD
 
-A FastAPI-based continuous deployment service that works alongside [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) to deploy Harbor images to Docker or Kubernetes clusters. Crafted from 10+ years of real-world operations experience.
+A FastAPI-based continuous deployment service that works alongside [Devops-Glue API](https://github.com/jeanslw/Devops-Glue.git) to deploy Docker images to Docker or Kubernetes clusters. 
 
-<p align="center">
-  <a href="https://github.com/jeanslw/devops-glue"><img src="https://img.shields.io/badge/relyon-Devops_Glue-green?logo=python" alt="relyon"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/releases/latest"><img src="https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release" alt="Release"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/commits/main"><img src="https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit" alt="Last Commit"></a>
-  <a href="https://github.com/jeanslw/Devops_CD/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jeanslw/Devops_CD?style=flat-square" alt="License"></a>
-  <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-777BB4?logo=python&logoColor=white" alt="Language"></a>
-  <a href="https://fastapi.org.cn/"><img src="https://img.shields.io/badge/fastAPI-0.115.6+-777BB4?logo=fastAPI&logoColor=white" alt="framework"></a>
-  <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5.0+-777BB4?logo=Vue&logoColor=white" alt="framework"></a>
-  <a href="https://hub.docker.com/r/jeanslw/devops-cd/tags"><img src="https://img.shields.io/docker/v/jeanslw/devops-cd/latest?label=version&logo=docker" alt="docker"></a>
-</p>
+[![Releases](https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release)](https://github.com/jeanslw/devops_cd/releases/latest)
+[![CI Pipeline](https://github.com/jeanslw/Devops_CD/actions/workflows/ci.yml/badge.svg)](https://github.com/jeanslw/Devops_CD/actions/workflows/ci.yml)
+[![Security Check](https://github.com/jeanslw/Devops_CD/actions/workflows/security.yml/badge.svg)](https://github.com/jeanslw/Devops_CD/actions/workflows/security.yml)
+[![Last Commit](https://img.shields.io/github/last-commit/jeanslw/Devops-Glue?style=flat-square&label=Last%20Commit)](https://github.com/jeanslw/Devops_CD/commits/main/)
+[![Docker Tag](https://img.shields.io/docker/v/jeanslw/devops-cd/latest?label=version&logo=docker)](https://hub.docker.com/r/jeanslw/devops-cd/tags)
+[![Docker Pulls](https://img.shields.io/docker/pulls/jeanslw/devops-cd)](https://hub.docker.com/r/jeanslw/devops-cd)
+[![Paired](https://img.shields.io/badge/relyon-Devops_Glue-green?logo=php)](https://github.com/jeanslw/devops-glue)
 
-> One unified panel for multi-Git-platform CI pipelines, Harbor artifact management, and multi-mode CD deployment — no more switching between Gitee, Jenkins, and Harbor just to align a single image tag.
-> **Not an enterprise-scale control plane — a battle-tested Swiss Army knife for lean teams.**
+✅ DevOps-Glue API: Multiple Git platforms, multiple CI channels, Docker repositories → all handled! 
+✅ From CI building to CD deployment, full process coverage
 
 **[Chinese](README_ZH-CN.md)**
 
@@ -27,10 +24,9 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 - **Language**：Python 3.10+
 - **Framework**：FastAPI + uvicorn (async)
 - **Frontend**：Vue 3 + Vite + Vue Router 4 + xterm.js 5.3
-- **Database**：CD owns its `cd_*` tables — they can live in a database shared with Devops-Glue API or in a dedicated CD database (neither side reads the other's tables; cross-service data travels over HTTP). SQLite / MySQL 8.0+ / MariaDB 10.4+
+- **Database**：SQLite / MySQL 8.0+ / MariaDB 10.4+
 - **Port**：8081
-- **Version**：v1.6.0 (Changelog updated 2026-10-14)
-- **Authentication**: Devops-Glue single sign-on (OIDC), the only login method. Identity and permissions come from the Glue API. Opaque session tokens (HttpOnly cookie / Bearer header, revocable server-side on logout). Cannot be used independently.
+- **Authentication**: Devops-Glue single sign-on (OIDC), the only login method. Identity and permissions come from the Glue API. 
 <details>
 ## <summary> Quick Start (click to expand)</summary>
 
@@ -85,4 +81,4 @@ docker compose up -d --build
 
 ## Contact
 PR：[GitHub Issues](https://github.com/jeanslw/Devops_CD/issues)
-For feature requests or bug reports, open an issue on the GitHub repository, or email: jeanslw@qq.com
+For feature requests or bug reports, open an issue on the GitHub repository, or email: jeanslw@gmail.com
