@@ -59,13 +59,13 @@
         <button v-if="auth.canNotificationManage()" class="btn btn-primary" @click="showCreate = !showCreate">{{ $t('webhooks.createWebhook') }}</button>
       </div>
 
-      <div v-if="createdWebhook" style="margin-bottom:16px;padding:12px;background:#fff7e6;border:1px solid #ffd591;border-radius:6px">
+      <div v-if="createdWebhook" style="margin-bottom:16px;padding:12px;background:var(--bg-card);border:1px solid var(--amber);border-radius:6px">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-          <strong>{{ createdWebhook.name }}</strong>
+          <strong style="color:var(--text)">{{ createdWebhook.name }}</strong>
           <button class="btn btn-xs" @click="createdWebhook = null">{{ $t('common.close') }}</button>
         </div>
-        <p style="margin:8px 0;color:#ad6800">{{ $t('webhooks.tokenShownOnce') }}</p>
-        <code style="display:block;font-size:11px;word-break:break-all">{{ getWebhookUrl(createdWebhook.token) }}</code>
+        <p style="margin:8px 0;color:var(--amber)">{{ $t('webhooks.tokenShownOnce') }}</p>
+        <code style="display:block;font-size:11px;word-break:break-all;color:var(--text);background:var(--bg-pre);border:1px solid var(--border);border-radius:4px;padding:8px;user-select:all">{{ getWebhookUrl(createdWebhook.token) }}</code>
         <button class="btn btn-xs" style="margin-top:8px" @click="copyUrl(createdWebhook.token)">{{ $t('webhooks.copyUrl') }}</button>
       </div>
 
