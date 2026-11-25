@@ -153,7 +153,7 @@ def list_events(
     page: int = 1,
     page_size: int = 20,
     db: Database = Depends(get_db),
-    _username: str = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.notification-manage")),
 ):
     """查看某 Webhook 收到的事件列表(分页)"""
     page = max(1, page)
@@ -196,7 +196,7 @@ def forward_event(
     eid: int,
     req: WebhookForwardRequest,
     db: Database = Depends(get_db),
-    _user: dict = Depends(verify_token),
+    _user: dict = Depends(require_perm("cd.notification-manage")),
 ):
     """手动转发某条事件到指定 Bot"""
     with db.conn() as conn:
