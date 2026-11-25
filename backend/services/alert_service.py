@@ -8,13 +8,19 @@ from datetime import datetime, timezone
 from backend.config import settings
 from backend.database import Database
 from backend.services.alert_collector import collect_alert_metrics
-from backend.services.notification import send_webhook
+from backend.services.notification import render_template, send_webhook
 
 logger = logging.getLogger("cd.alert")
+
+_STATE_TTL_SECONDS = 86400
 
 _cooldowns: dict[str, float] = {}
 
 _durations: dict[str, float] = {}
+
+_pending_langs: dict[str, set[str]] = {}
+
+_retry_not_before: dict[str, float] = {}
 
 _runner: threading.Thread | None = None
 _stop = threading.Event()
@@ -89,7 +95,7 @@ def _check_cooldown(rule_id: int, server_id: int, cooldown_minutes: int, entity:
     """检查是否在冷却期,返回 True = 跳过(纯查询,不修改状态)"""
     key = _track_key(rule_id, server_id, entity)
     last = _cooldowns.get(key, 0)
-    return (time.time() - last) < cooldown_minutes * 60
+    return (time.time() - last) < (cooldown_minutes or 0) * 60
 
 
 def _set_cooldown(rule_id: int, server_id: int, entity: str = ""):
@@ -97,7 +103,7 @@ def _set_cooldown(rule_id: int, server_id: int, entity: str = ""):
     key = _track_key(rule_id, server_id, entity)
     _cooldowns[key] = time.time()
     for k in list(_cooldowns):
-        if time.time() - _cooldowns[k] > 86400:
+        if time.time() - _cooldowns[k] > _STATE_TTL_SECONDS:
             del _cooldowns[k]
 
 
@@ -110,7 +116,7 @@ def _mark_exceeded(rule_id: int, server_id: int, entity: str = ""):
     if key not in _durations:
         _durations[key] = time.time()
     for k in list(_durations):
-        if time.time() - _durations[k] > 86400:
+        if time.time() - _durations[k] > _STATE_TTL_SECONDS:
             del _durations[k]
 
 
@@ -125,6 +131,22 @@ def _clear_duration(rule_id: int, server_id: int, entity: str = ""):
     _durations.pop(_track_key(rule_id, server_id, entity), None)
 
 
+def _check_retry_backoff(key: str) -> bool:
+    return time.time() < _retry_not_before.get(key, 0)
+
+
+def _set_retry_backoff(key: str, seconds: float):
+    _retry_not_before[key] = time.time() + seconds
+    for k in list(_retry_not_before):
+        if time.time() - _retry_not_before[k] > _STATE_TTL_SECONDS:
+            del _retry_not_before[k]
+
+
+def _clear_send_state(key: str):
+    _pending_langs.pop(key, None)
+    _retry_not_before.pop(key, None)
+
+
 def check_all_rules():
     """检查所有启用的告警规则"""
     db = Database()
@@ -132,7 +154,10 @@ def check_all_rules():
         rules = conn.execute("SELECT * FROM cd_alert_rules WHERE enabled=1").fetchall()
 
     for rule in rules:
-        _check_one(db, dict(rule))
+        try:
+            _check_one(db, dict(rule))
+        except Exception as e:
+            logger.warning("Alert: rule %s check failed: %s", rule["id"], e)
 
 
 def _check_one(db, rule: dict):
@@ -188,16 +213,33 @@ def _check_one(db, rule: dict):
                 if _check_cooldown(rule_id, sid, cooldown, entity):
                     continue
 
-                _set_cooldown(rule_id, sid, entity)
-                _clear_duration(rule_id, sid, entity)
+                key = _track_key(rule_id, sid, entity)
+                if _check_retry_backoff(key):
+                    continue
 
+                pending = _pending_langs.setdefault(key, {"zh", "en"})
                 for lang in ("zh", "en"):
-                    _send_alert(rule, server, r, bot, template, lang, target_type)
+                    if lang in pending and _send_alert(rule, server, r, bot, template, lang, target_type):
+                        pending.discard(lang)
+
+                if pending:
+                    _set_retry_backoff(key, max((cooldown or 0) * 60, settings.alert_check_interval))
+                else:
+                    _set_cooldown(rule_id, sid, entity)
+                    _clear_duration(rule_id, sid, entity)
+                    _clear_send_state(key)
         else:
             _clear_duration(rule_id, sid)
+            prefix = f"{rule_id}_{sid}_"
             for k in list(_durations):
-                if k.startswith(f"{rule_id}_{sid}_"):
+                if k.startswith(prefix):
                     _durations.pop(k, None)
+            for k in list(_pending_langs):
+                if k.startswith(prefix):
+                    _pending_langs.pop(k, None)
+            for k in list(_retry_not_before):
+                if k.startswith(prefix):
+                    _retry_not_before.pop(k, None)
 
 
 def _get_bot(db, bot_id: int):
@@ -205,8 +247,8 @@ def _get_bot(db, bot_id: int):
         return conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
 
 
-def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang: str, target_type: str):
-    """构造并发送告警通知"""
+def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang: str, target_type: str) -> bool:
+    """构造并发送告警通知,返回发送结果"""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     resource_type = result["resource"]
 
@@ -215,30 +257,27 @@ def _send_alert(rule: dict, server: dict, result: dict, bot, template: str, lang
     else:
         resource_name = _RESOURCE_NAMES.get(lang, _RESOURCE_NAMES["en"]).get(resource_type, resource_type)
 
-    unit = result.get("unit", "")
-
-    tpl = template or _DEFAULT_TEMPLATES.get(target_type, _DEFAULT_TEMPLATES["system"]).get(lang, "")
-
-    raw_val = result.get("raw", "")
-    entity_label = result.get("entity_label", "")
-    metric_name = result.get("metric_name", "")
-    msg = tpl.format(
-        time=now,
-        server=server.get("name", "?"),
-        host=server.get("host", "?"),
-        resource_name=resource_name,
-        value=result["value"],
-        threshold=rule.get("threshold", 80),
-        name=result.get("name", ""),
-        type_name=_TYPE_NAMES.get(lang, _TYPE_NAMES["en"]).get(result.get("sub_type", ""), result.get("sub_type", "")),
-        resource=resource_name,
-        unit=unit,
-        raw=raw_val,
-        entity=entity_label,
-        metric=metric_name,
-    )
+    values = {
+        "time": now,
+        "server": server.get("name", "?"),
+        "host": server.get("host", "?"),
+        "resource_name": resource_name,
+        "value": result["value"],
+        "threshold": rule.get("threshold", 80),
+        "name": result.get("name", ""),
+        "type_name": _TYPE_NAMES.get(lang, _TYPE_NAMES["en"]).get(
+            result.get("sub_type", ""), result.get("sub_type", "")
+        ),
+        "resource": resource_name,
+        "unit": result.get("unit", ""),
+        "raw": result.get("raw", ""),
+        "entity": result.get("entity_label", ""),
+        "metric": result.get("metric_name", ""),
+    }
+    default_tpl = _DEFAULT_TEMPLATES.get(target_type, _DEFAULT_TEMPLATES["system"]).get(lang, "")
+    msg = render_template(template, values, default_tpl.format(**values))
     logger.info(f"Alert: {server['name']} {resource_type} {result['value']}% (threshold={rule['threshold']}%)")
-    send_webhook(bot["webhook_url"], msg, bot.get("type", ""))
+    return send_webhook(bot["webhook_url"], msg, bot.get("type", ""))
 
 
 def _run_loop():

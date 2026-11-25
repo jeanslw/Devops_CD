@@ -28,6 +28,15 @@
   - With multi-document kubectl manifests, rollout / Pod queries now use the namespace declared by the Deployment instead of the first resource's namespace.
   - Argo CD compares operation timestamps as datetimes (fractional seconds supported) and matches `summary.images` by repository basename, reducing false failures from same-second completions or short names.
   - Flux Kustomization `spec.images` string entries no longer raise; short names and full paths match by repository basename to avoid duplicate overrides.
+  - The webhook list no longer returns the plaintext token and exposes `has_token` instead; the bot list returns only `id/name/type`, with sensitive fields reserved for the management endpoints.
+  - Deploy target IDs that are non-numeric, missing, or type-mismatched fail with a parameter error instead of being silently filtered; the approval record and its pending deploy record are written in one transaction.
+  - Image tag records are unique per `(repo_id, tag)`; a digest change updates the existing row instead of leaving stale history.
+  - Registry sync fails as a whole when pages exceed the limit or a later page is malformed, so the cleanup stage never runs on an incomplete snapshot.
+  - Webhook intake streams the body with a 1 MiB limit, splits lookup / insert / send into short transactions, moves bot delivery out of the database context, re-checks that the webhook is still enabled before writing, and no longer 500s on oversized Content-Length headers.
+  - Manual forwarding now passes the bot type, so `custom` bots are no longer rejected by the domain allowlist.
+  - Bot and alert templates are validated on save and fall back to the default message when rendering fails.
+  - Alert delivery records per-language results and sets the cooldown and clears the exceeded state only after both messages succeed; failures keep the exceeded state, back off to the next check interval, and resend only the failed language.
+  - A failing alert rule is logged and skipped instead of aborting the whole check cycle.
 
 ## v1.6.2 (2026-11-04)
 

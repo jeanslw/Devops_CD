@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS cd_registry_artifacts (
     vuln_low      INT           DEFAULT 0,
     vuln_fixable  INT           DEFAULT 0,
     last_sync     DATETIME      DEFAULT NULL,
-    UNIQUE KEY uk_repo_tag_digest (repo_id, tag, digest),
+    UNIQUE KEY uk_repo_tag (repo_id, tag),
     FOREIGN KEY (repo_id) REFERENCES cd_registry_repositories(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -197,6 +197,25 @@ END $$
 DELIMITER ;
 
 CALL __add_unique_index('cd_deploy_logs', 'idx_cdl_lock_key', 'lock_key');
+
+-- 镜像 tag 当前记录唯一约束：历史库先按 last_sync、id 确定性去重，再创建唯一索引。
+-- 新建库的表内已有 uk_repo_tag；重复执行时 __add_unique_index 会跳过。
+DROP PROCEDURE IF EXISTS __deduplicate_registry_artifacts;
+DELIMITER $$
+CREATE PROCEDURE __deduplicate_registry_artifacts()
+BEGIN
+    DELETE stale FROM cd_registry_artifacts stale
+    JOIN cd_registry_artifacts newer
+      ON newer.repo_id = stale.repo_id AND newer.tag = stale.tag
+     AND (COALESCE(newer.last_sync, '1970-01-01 00:00:00') >
+          COALESCE(stale.last_sync, '1970-01-01 00:00:00')
+          OR (COALESCE(newer.last_sync, '1970-01-01 00:00:00') =
+              COALESCE(stale.last_sync, '1970-01-01 00:00:00') AND newer.id > stale.id));
+END $$
+DELIMITER ;
+CALL __deduplicate_registry_artifacts();
+DROP PROCEDURE IF EXISTS __deduplicate_registry_artifacts;
+CALL __add_unique_index('cd_registry_artifacts', 'uk_repo_tag', 'repo_id, tag');
 DROP PROCEDURE IF EXISTS __add_unique_index;
 
 -- 历史回填（幂等）：旧审批单执行时已回填 cd_approvals.deploy_id，据此反填部署记录的 approval_id。

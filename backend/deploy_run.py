@@ -16,6 +16,7 @@
 
 import json
 import sqlite3
+from contextlib import nullcontext
 import threading
 import time
 
@@ -347,6 +348,7 @@ def create_pending_deploy_record(
     params_json: str = "",
     rollback_type: str = "manual",
     approval_id: int,
+    conn=None,
 ) -> int:
     """审批申请阶段写入一条 pending 记录(提交申请即可见,尚未执行).
 
@@ -354,8 +356,8 @@ def create_pending_deploy_record(
     同一项目允许多张待审批单);执行时由 claim_pending_deploy_record 原子转为 running.
     approval_id 必填,与 cd_approvals 一对一关联.
     """
-    with db.conn() as conn:
-        cur = conn.execute(
+    with nullcontext(conn) if conn is not None else db.conn() as active_conn:
+        cur = active_conn.execute(
             "INSERT INTO cd_deploy_logs "
             "(project, tag, image, deploy_type, target, status, output, triggered_by, deploy_note, "
             "lock_key, params_json, rollback_type, approval_id) "

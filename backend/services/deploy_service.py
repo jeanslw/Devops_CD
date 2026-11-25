@@ -37,8 +37,49 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_server_ids(server_ids: str) -> list[int]:
-    """安全地解析 server_ids,忽略空值和非法内容."""
-    return [int(s) for s in (server_ids or "").split(",") if s.strip().isdigit()]
+    """严格解析逗号分隔的正整数 ID;任何非法片段都拒绝,不静默缩小目标范围."""
+    raw = (server_ids or "").strip()
+    if not raw:
+        return []
+    ids = []
+    for part in raw.split(","):
+        value = part.strip()
+        if not value.isdigit() or int(value) <= 0:
+            raise ValidationError(f"server_ids 无效: {server_ids}", error_key="errors.deploy_validation")
+        server_id = int(value)
+        if server_id not in ids:
+            ids.append(server_id)
+    return ids
+
+
+def resolve_target_servers(db: Database, server_ids: str = "", deploy_type: str = "") -> list[dict]:
+    """解析并校验部署目标;显式 ID 必须全部存在且类型匹配,顺序与请求一致."""
+    ids = _parse_server_ids(server_ids)
+    allowed_types = ("k8s",) if deploy_type.startswith("k8s/") else (("ssh", "docker") if deploy_type else None)
+    with db.conn() as conn:
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()  # nosec
+            by_id = {row["id"]: row for row in rows}
+            invalid = [
+                server_id
+                for server_id in ids
+                if server_id not in by_id
+                or (allowed_types is not None and by_id[server_id]["type"] not in allowed_types)
+            ]
+            if invalid:
+                raise ValidationError(
+                    f"server_ids 包含不存在或类型不匹配的目标: {','.join(map(str, invalid))}",
+                    error_key="errors.deploy_validation",
+                )
+            return [by_id[server_id] for server_id in ids]
+        if allowed_types is None:
+            return conn.execute("SELECT * FROM cd_servers").fetchall()
+        placeholders = ",".join("?" * len(allowed_types))
+        return conn.execute(
+            f"SELECT * FROM cd_servers WHERE type IN ({placeholders}) ORDER BY name, id",  # nosec
+            allowed_types,
+        ).fetchall()
 
 
 def _parse_command_options(commands: str) -> dict:
@@ -65,39 +106,31 @@ class DeployService:
         self._db = db
         self._ci = CiService(db)
 
-    def _get_targets(self, server_ids: str) -> list[tuple[int, DeployTarget]]:
-        """解析 server_ids → [(id, DeployTarget), ...]"""
-        with self._db.conn() as conn:
-            if server_ids:
-                ids = _parse_server_ids(server_ids)
-                if not ids:
-                    return []
-                placeholders = ",".join("?" * len(ids))
-                rows = conn.execute(f"SELECT * FROM cd_servers WHERE id IN ({placeholders})", ids).fetchall()  # nosec
-            else:
-                rows = conn.execute("SELECT * FROM cd_servers WHERE type IN ('ssh','docker') ORDER BY name").fetchall()
+    def _get_targets(self, server_ids: str, deploy_type: str = "ssh") -> list[tuple[int, DeployTarget]]:
+        """解析 server_ids → [(id, DeployTarget), ...],不忽略失效或错误类型的目标."""
+        rows = resolve_target_servers(self._db, server_ids, deploy_type)
 
-            def _build_target(r):
-                try:
-                    password = decrypt_strict(r["password"] or "")
-                    ssh_key = decrypt_strict(r["ssh_key"] or "")
-                except DecryptError as e:
-                    raise AppException(
-                        f"服务器「{r['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
-                        status_code=500,
-                    ) from e
-                return (
-                    r["id"],
-                    DeployTarget(
-                        host=r["host"],
-                        port=r["port"],
-                        user=r["user"],
-                        password=password,
-                        ssh_key=ssh_key,
-                    ),
-                )
+        def _build_target(r):
+            try:
+                password = decrypt_strict(r["password"] or "")
+                ssh_key = decrypt_strict(r["ssh_key"] or "")
+            except DecryptError as e:
+                raise AppException(
+                    f"服务器「{r['name']}」凭据解密失败，请检查口令/私钥是否完好，及 SECRET_KEY 是否与加密时一致：{e}",
+                    status_code=500,
+                ) from e
+            return (
+                r["id"],
+                DeployTarget(
+                    host=r["host"],
+                    port=r["port"],
+                    user=r["user"],
+                    password=password,
+                    ssh_key=ssh_key,
+                ),
+            )
 
-            return [_build_target(r) for r in rows]
+        return [_build_target(r) for r in rows]
 
     def _build_target_str(self, results: list, is_batch: bool, total: int) -> str:
         """批量时合并 target 描述,单台时返回单条描述."""
@@ -205,7 +238,7 @@ class DeployService:
         if not deployer_registry.is_registered(deploy_type):
             raise ValueError(f"Unsupported deploy type: {deploy_type}")
 
-        targets = self._get_targets(server_ids)
+        targets = self._get_targets(server_ids, deploy_type)
         if not targets:
             raise ValueError("No available target servers")
 

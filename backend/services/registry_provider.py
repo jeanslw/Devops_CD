@@ -175,18 +175,32 @@ class RegistryV2Provider(RegistryProvider):
 
     def _fetch_all_tags(self, path: str) -> list:
         first = self._get(path, params={"page": 1, "page_size": self.TAGS_PAGE_SIZE})
-        if isinstance(first, dict) and isinstance(first.get("items"), list):
-            all_tags = list(first["items"])
-            try:
-                total_pages = max(1, int(first.get("total_pages") or 1))
-            except (TypeError, ValueError):
-                total_pages = 1
-            for p in range(2, min(total_pages, self.TAGS_MAX_PAGES) + 1):
-                page = self._get(path, params={"page": p, "page_size": self.TAGS_PAGE_SIZE})
-                if isinstance(page, dict) and isinstance(page.get("items"), list):
-                    all_tags.extend(page["items"])
-            return all_tags
-        return first if isinstance(first, list) else []
+        if isinstance(first, list):
+            return first
+        if not isinstance(first, dict) or not isinstance(first.get("items"), list):
+            raise HarborUnavailableError(f"镜像 tags 响应格式错误：{path}")
+
+        all_tags = list(first["items"])
+        raw_total_pages = first.get("total_pages", 1)
+        if raw_total_pages is None:
+            raw_total_pages = 1
+        try:
+            total_pages = int(raw_total_pages)
+        except (TypeError, ValueError) as exc:
+            raise HarborUnavailableError(f"镜像 tags 分页元数据错误：{path}") from exc
+        if total_pages < 1:
+            raise HarborUnavailableError(f"镜像 tags 分页元数据错误：total_pages={total_pages}")
+        if total_pages > self.TAGS_MAX_PAGES:
+            raise HarborUnavailableError(
+                f"镜像 tags 超过同步上限：total_pages={total_pages}, max_pages={self.TAGS_MAX_PAGES}"
+            )
+
+        for p in range(2, total_pages + 1):
+            page = self._get(path, params={"page": p, "page_size": self.TAGS_PAGE_SIZE})
+            if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                raise HarborUnavailableError(f"镜像 tags 第 {p} 页响应格式错误：{path}")
+            all_tags.extend(page["items"])
+        return all_tags
 
     def list_artifacts(self, repo_full: str) -> list[dict]:
         project, repo = split_repo(repo_full)

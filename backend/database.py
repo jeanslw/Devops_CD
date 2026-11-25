@@ -279,7 +279,7 @@ _MYSQL_TABLE_DDL: dict[str, str] = {
         vuln_low        INT           DEFAULT 0,
         vuln_fixable    INT           DEFAULT 0,
         last_sync       DATETIME      DEFAULT NULL,
-        UNIQUE KEY uk_repo_tag_digest (repo_id, tag, digest),
+        UNIQUE KEY uk_repo_tag (repo_id, tag),
         FOREIGN KEY (repo_id) REFERENCES cd_registry_repositories(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     "cd_config": """CREATE TABLE IF NOT EXISTS cd_config (
@@ -391,6 +391,7 @@ _MYSQL_INDEXES: tuple[tuple[str, str, str, bool], ...] = (
     ("idx_cdl_approval_id", "cd_deploy_logs", "approval_id", False),
     ("idx_cdl_lock_key", "cd_deploy_logs", "lock_key", True),
     ("idx_cdr_repo_id", "cd_registry_artifacts", "repo_id", False),
+    ("uk_repo_tag", "cd_registry_artifacts", "repo_id, tag", True),
     ("idx_cdr_enabled", "cd_alert_rules", "enabled", False),
     ("idx_cdr_created", "cd_alert_rules", "created_at", False),
     ("idx_cdm_enabled", "cd_custom_monitors", "enabled", False),
@@ -746,11 +747,45 @@ class Database:
                 + "。新增/删除 CD 表时须同步 backend/database.py::_MYSQL_TABLE_DDL 与 database/init_mysql.sql"
             )
 
+    def _deduplicate_registry_artifacts(self, conn):
+        """每个 (repo_id, tag) 只保留 last_sync 最新、其次 id 最大的一行。"""
+        if self._driver == "mysql":
+            conn.execute(
+                """DELETE stale FROM cd_registry_artifacts stale
+                JOIN cd_registry_artifacts newer
+                  ON newer.repo_id=stale.repo_id AND newer.tag=stale.tag
+                 AND (COALESCE(newer.last_sync,'1970-01-01 00:00:00') >
+                      COALESCE(stale.last_sync,'1970-01-01 00:00:00')
+                      OR (COALESCE(newer.last_sync,'1970-01-01 00:00:00') =
+                          COALESCE(stale.last_sync,'1970-01-01 00:00:00') AND newer.id>stale.id))"""
+            )
+        else:
+            conn.execute(
+                """DELETE FROM cd_registry_artifacts
+                WHERE EXISTS (
+                    SELECT 1 FROM cd_registry_artifacts newer
+                    WHERE newer.repo_id=cd_registry_artifacts.repo_id
+                      AND newer.tag=cd_registry_artifacts.tag
+                      AND (COALESCE(newer.last_sync,'') > COALESCE(cd_registry_artifacts.last_sync,'')
+                           OR (COALESCE(newer.last_sync,'') = COALESCE(cd_registry_artifacts.last_sync,'')
+                               AND newer.id>cd_registry_artifacts.id))
+                )"""
+            )
+
     def _ensure_mysql_indexes(self, conn):
-        """MySQL 索引(幂等):重复建由 suppress 吞掉."""
+        """MySQL 索引(幂等);唯一约束前先确定性去重,真实建索引错误不得吞掉."""
+        self._deduplicate_registry_artifacts(conn)
         for name, table, cols, unique in _MYSQL_INDEXES:
-            with suppress(Exception):
-                conn.execute(f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table}({cols})")
+            statement = f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON {table}({cols})"
+            if name == "uk_repo_tag":
+                try:
+                    conn.execute(statement)
+                except Exception as exc:
+                    if not exc.args or exc.args[0] != 1061:
+                        raise
+            else:
+                with suppress(Exception):
+                    conn.execute(statement)
         conn.commit()
 
     def _ensure_mysql_migrations(self, conn):
@@ -881,7 +916,6 @@ class Database:
             vuln_low INTEGER DEFAULT 0,
             vuln_fixable INTEGER DEFAULT 0,
             last_sync TEXT DEFAULT '',
-            UNIQUE(repo_id, tag, digest),
             FOREIGN KEY(repo_id) REFERENCES cd_registry_repositories(id) ON DELETE CASCADE
         )""")
 
@@ -1015,6 +1049,8 @@ class Database:
             with suppress(Exception):
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_def}")
 
+        self._deduplicate_registry_artifacts(conn)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_repo_tag ON cd_registry_artifacts(repo_id, tag)")
         self._ensure_indexes(conn)
 
         with suppress(Exception):

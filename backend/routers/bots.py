@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends
 
 from backend.auth import get_db, require_perm, verify_token
 from backend.database import Database
-from backend.exceptions import ConflictError, DatabaseError
+from backend.exceptions import ConflictError, DatabaseError, ValidationError
 from backend.models import BotRequest
 from backend.responses import ok
+from backend.services.notification import BOT_TEMPLATE_FIELDS, is_valid_template
 
 router = APIRouter(prefix="/api/bots", tags=["bots"])
 
@@ -18,7 +19,8 @@ def list_bots(
     username: str = Depends(verify_token),
 ):
     with db.conn() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM cd_bots ORDER BY name").fetchall()]
+        rows = conn.execute("SELECT id, name, type FROM cd_bots ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
 
 
 @router.post("")
@@ -27,6 +29,8 @@ def add_bot(
     db: Database = Depends(get_db),
     _user: dict = Depends(require_perm("cd.notification-manage")),
 ):
+    if not is_valid_template(req.template, BOT_TEMPLATE_FIELDS):
+        raise ValidationError("Bot 模板格式无效", error_key="errors.template_invalid")
     with db.conn() as conn:
         try:
             conn.execute(

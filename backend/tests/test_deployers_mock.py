@@ -138,10 +138,14 @@ class TestPureHelpers(unittest.TestCase):
         self.assertEqual(opts["inventory"], "prod/hosts")
 
     def test_parse_server_ids(self):
+        from backend.exceptions import ValidationError
         from backend.services.deploy_service import _parse_server_ids
 
-        self.assertEqual(_parse_server_ids("1,2,abc,3"), [1, 2, 3])
+        self.assertEqual(_parse_server_ids(" 1, 2,2,3 "), [1, 2, 3])
         self.assertEqual(_parse_server_ids(""), [])
+        for raw in ("1,abc,3", "1,,3", "0", "-1"):
+            with self.subTest(raw=raw), self.assertRaises(ValidationError):
+                _parse_server_ids(raw)
 
 
 # ─────────────────────────────────────────────────────────────

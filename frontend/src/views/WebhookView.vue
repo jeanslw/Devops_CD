@@ -59,6 +59,16 @@
         <button v-if="auth.canNotificationManage()" class="btn btn-primary" @click="showCreate = !showCreate">{{ $t('webhooks.createWebhook') }}</button>
       </div>
 
+      <div v-if="createdWebhook" style="margin-bottom:16px;padding:12px;background:#fff7e6;border:1px solid #ffd591;border-radius:6px">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <strong>{{ createdWebhook.name }}</strong>
+          <button class="btn btn-xs" @click="createdWebhook = null">{{ $t('common.close') }}</button>
+        </div>
+        <p style="margin:8px 0;color:#ad6800">{{ $t('webhooks.tokenShownOnce') }}</p>
+        <code style="display:block;font-size:11px;word-break:break-all">{{ getWebhookUrl(createdWebhook.token) }}</code>
+        <button class="btn btn-xs" style="margin-top:8px" @click="copyUrl(createdWebhook.token)">{{ $t('webhooks.copyUrl') }}</button>
+      </div>
+
       <!-- 创建表单 -->
       <div v-if="showCreate" style="margin-bottom:16px;padding:12px;background:#f9f9f9;border-radius:6px">
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
@@ -83,20 +93,15 @@
           <thead>
             <tr>
               <th>{{ $t('webhooks.name') }}</th>
-              <th>{{ $t('webhooks.url') }}</th>
               <th>{{ $t('webhooks.autoForward') }}</th>
               <th>{{ $t('common.status') }}</th>
               <th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 5 : 4" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+            <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 4 : 3" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
             <tr v-for="w in webhooks" :key="w.id">
               <td>{{ w.name }}</td>
-              <td style="max-width:350px">
-                <code style="font-size:11px;word-break:break-all">{{ getWebhookUrl(w.token) }}</code>
-                <button class="btn btn-xs" style="margin-left:4px" @click="copyUrl(w.token)">{{ $t('webhooks.copyUrl') }}</button>
-              </td>
               <td>{{ getBotName(w.bot_id) }}</td>
               <td>
                 <span :style="w.enabled ? 'color:#52c41a' : 'color:#999'">{{ w.enabled ? $t('webhooks.enabled') : $t('webhooks.disabled') }}</span>
@@ -140,6 +145,7 @@ const webhooks = ref([])
 const bots = ref([])
 const loading = ref(true)
 const showCreate = ref(false)
+const createdWebhook = ref(null)
 const createForm = reactive({ name: '', bot_id: 0 })
 
 const selectedWebhook = ref(null)
@@ -175,6 +181,7 @@ async function doCreate() {
   if (auth.handle401(r)) return
   if (r.ok) {
     const body = await r.json()
+    createdWebhook.value = { name: n, token: body.data.token }
     toast(t('webhooks.created'))
     showCreate.value = false
     createForm.name = ''

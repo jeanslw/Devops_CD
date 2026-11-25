@@ -8,14 +8,13 @@
 
       <table class="table" v-if="bots.length">
         <thead>
-          <tr><th>{{ $t('bots.name') }}</th><th>{{ $t('bots.type') }}</th><th>URL</th><th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th></tr>
+          <tr><th>{{ $t('bots.name') }}</th><th>{{ $t('bots.type') }}</th><th v-if="auth.canNotificationManage()">{{ $t('common.action') }}</th></tr>
         </thead>
         <tbody>
-          <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 4 : 3" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
+          <tr v-if="loading"><td :colspan="auth.canNotificationManage() ? 3 : 2" style="text-align:center;color:#888">{{ $t('common.loading') }}</td></tr>
           <tr v-for="b in bots" :key="b.id">
             <td>{{ b.name }}</td>
             <td>{{ b.type }}</td>
-            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ b.webhook_url }}</td>
             <td v-if="auth.canNotificationManage()"><button class="btn btn-xs btn-danger" @click="del(b.id)">{{ $t('common.delete') }}</button></td>
           </tr>
         </tbody>
