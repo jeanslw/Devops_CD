@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from fastapi import HTTPException  # noqa: E402
+
 from backend.config import settings
 
 settings.db_driver = "sqlite"
@@ -412,6 +414,36 @@ class TestAlertDelivery(NotificationTestCase):
         ):
             alert_service.check_all_rules()
         self.assertEqual(check.call_count, 2)
+
+
+class TestEventRoutePermissions(NotificationTestCase):
+    """事件查询与手动转发路由的权限依赖锁定."""
+
+    def _route_checker(self, path: str, method: str):
+        route = next(
+            r
+            for r in webhooks_router.router.routes
+            if getattr(r, "path", "") == f"/api/webhooks{path}" and method in getattr(r, "methods", set())
+        )
+        checkers = [
+            d.call for d in getattr(route, "dependant").dependencies if getattr(d.call, "__name__", "") == "checker"
+        ]
+        self.assertEqual(len(checkers), 1)
+        return checkers[0]
+
+    def test_list_events_requires_notification_manage(self):
+        checker = self._route_checker("/{wid}/events", "GET")
+        with self.assertRaises(HTTPException) as ctx:
+            checker(user={"role": "dev", "permissions": ["cd.webhook"]})
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIsNotNone(checker(user={"role": "dev", "permissions": ["cd.notification-manage"]}))
+
+    def test_forward_event_requires_notification_manage(self):
+        checker = self._route_checker("/events/{eid}/forward", "POST")
+        with self.assertRaises(HTTPException) as ctx:
+            checker(user={"role": "dev", "permissions": ["cd.webhook"]})
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIsNotNone(checker(user={"role": "dev", "permissions": ["*"]}))
 
 
 if __name__ == "__main__":

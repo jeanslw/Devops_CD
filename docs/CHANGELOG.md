@@ -37,6 +37,7 @@
   - Bot and alert templates are validated on save and fall back to the default message when rendering fails.
   - Alert delivery records per-language results and sets the cooldown and clears the exceeded state only after both messages succeed; failures keep the exceeded state, back off to the next check interval, and resend only the failed language.
   - A failing alert rule is logged and skipped instead of aborting the whole check cycle.
+  - Webhook event listing and manual forwarding now require the notification-manage permission; ordinary logged-in users can no longer read event payloads or trigger external sends.
 
 ## v1.6.2 (2026-11-04)
 
