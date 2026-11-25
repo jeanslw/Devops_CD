@@ -636,6 +636,14 @@ class TestGateCreatesOnlyRequest(ApprovalFlowTestCase):
             rows = conn.execute("SELECT * FROM cd_deploy_logs WHERE approval_id=? ORDER BY id", (aid,)).fetchall()
         return [dict(r) for r in rows]
 
+    def _add_server(self, name, server_type="ssh"):
+        with self.db.conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO cd_servers (name, host, type) VALUES (?,?,?)",
+                (name, name, server_type),
+            )
+            return cur.lastrowid
+
     def test_gate_creates_pending_approval_and_pending_log_without_execution(self):
         self._add_rule()
         with (
@@ -670,6 +678,65 @@ class TestGateCreatesOnlyRequest(ApprovalFlowTestCase):
         self.assertEqual(log["deploy_note"], "note-x")
         self.assertEqual(self._logs_count(), 1)
         mk_exec.assert_not_called()
+
+    def test_gate_freezes_empty_selection_to_explicit_target_snapshot(self):
+        self._add_rule()
+        first = self._add_server("a-server")
+        second = self._add_server("b-server")
+        with patch.object(svc, "_notify_request"):
+            result = svc.gate_deploy(
+                self.db,
+                project="proj-a",
+                tag="v9",
+                deploy_type="ssh",
+                server_ids="",
+                params={"deploy_type": "ssh", "server_ids": ""},
+                requester="alice",
+            )
+        assert result is not None
+        expected = f"{first},{second}"
+        approval_params = json.loads(self.get_approval(result["approval_id"])["params_json"])
+        pending_params = json.loads(self._logs_by_approval(result["approval_id"])[0]["params_json"])
+        self.assertEqual(approval_params["server_ids"], expected)
+        self.assertEqual(pending_params, approval_params)
+
+    def test_gate_rejects_partially_invalid_targets_without_creating_records(self):
+        self._add_rule()
+        sid = self._add_server("a-server")
+        with self.assertRaises(ValidationError):
+            svc.gate_deploy(
+                self.db,
+                project="proj-a",
+                tag="v9",
+                deploy_type="ssh",
+                server_ids=f"{sid},bad,999999",
+                params={"deploy_type": "ssh", "server_ids": f"{sid},bad,999999"},
+                requester="alice",
+            )
+        self.assertEqual(self._logs_count(), 0)
+        with self.db.conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) AS c FROM cd_approvals").fetchone()["c"], 0)
+
+    def test_pending_insert_failure_rolls_back_approval(self):
+        self._add_rule()
+        with (
+            patch.object(svc, "_notify_request") as notify,
+            patch.object(svc, "create_pending_deploy_record", side_effect=RuntimeError("insert failed")),
+            self.assertRaisesRegex(RuntimeError, "insert failed"),
+        ):
+            svc.gate_deploy(
+                self.db,
+                project="proj-a",
+                tag="v9",
+                deploy_type="ssh",
+                server_ids="",
+                params={"deploy_type": "ssh"},
+                requester="alice",
+            )
+        self.assertEqual(self._logs_count(), 0)
+        with self.db.conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) AS c FROM cd_approvals").fetchone()["c"], 0)
+        notify.assert_not_called()
 
     def test_gate_none_without_rule_is_direct_pass(self):
         with (
@@ -1048,9 +1115,12 @@ class TestMatchRule(ApprovalFlowTestCase):
 # resolve_target_envs fail-closed(server_ids 非法 → 报错而非静默跳过审批)
 # ─────────────────────────────────────────────────────────────
 class TestResolveTargetEnvs(ApprovalFlowTestCase):
-    def _add_server(self, name, tags):
+    def _add_server(self, name, tags, server_type="ssh"):
         with self.db.conn() as conn:
-            cur = conn.execute("INSERT INTO cd_servers (name, host, tags) VALUES (?,?,?)", (name, "h", tags))
+            cur = conn.execute(
+                "INSERT INTO cd_servers (name, host, tags, type) VALUES (?,?,?,?)",
+                (name, "h", tags, server_type),
+            )
             return cur.lastrowid
 
     def test_valid_ids_resolve_tags(self):
@@ -1060,9 +1130,22 @@ class TestResolveTargetEnvs(ApprovalFlowTestCase):
         self.assertEqual(svc.resolve_target_envs(self.db, ""), {"prod", "edge", "staging"})
 
     def test_invalid_ids_fail_closed(self):
-        # 非法 server_ids 必须报错,不静默返回空集合(空交集会让审批被跳过)
+        for raw in ("abc,xyz", "1,abc", "1,,2"):
+            with self.subTest(raw=raw), self.assertRaises(ValidationError):
+                svc.resolve_target_envs(self.db, raw)
+
+    def test_missing_and_wrong_type_ids_fail_closed(self):
+        sid = self._add_server("s1", "prod")
+        k8s_id = self._add_server("cluster", "prod", "k8s")
+        for raw in (f"{sid},999999", f"{sid},{k8s_id}"):
+            with self.subTest(raw=raw), self.assertRaises(ValidationError):
+                svc.resolve_target_envs(self.db, raw, "ssh")
+        self.assertEqual(svc.resolve_target_envs(self.db, str(k8s_id), "k8s/kubectl"), {"prod"})
+
+    def test_deploy_service_rejects_partially_invalid_targets(self):
+        sid = self._add_server("s1", "prod")
         with self.assertRaises(ValidationError):
-            svc.resolve_target_envs(self.db, "abc,xyz")
+            DeployService(self.db)._get_targets(f"{sid},999999", "ssh")
 
 
 # ─────────────────────────────────────────────────────────────

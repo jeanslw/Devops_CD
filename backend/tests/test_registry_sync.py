@@ -29,6 +29,7 @@
 """
 
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -200,6 +201,164 @@ class RegistrySyncTestCase(unittest.TestCase):
         with self.db.conn() as conn:
             row = conn.execute("SELECT tag FROM cd_registry_artifacts").fetchone()
         self.assertEqual(row["tag"], "v1.0.0")
+
+    def test_digest_change_updates_same_tag_row(self):
+        """digest 变化是当前 tag 的内容更新，不得新增第二条历史行。"""
+        repo_id = self._seed_one_repo_with_artifact()
+        with self.db.conn() as conn:
+            original = conn.execute("SELECT id FROM cd_registry_artifacts").fetchone()
+
+        changed = dict(
+            ARTIFACT,
+            digest="sha256:def",
+            size_bytes=2048,
+            artifact_id=42,
+            artifact_digest="sha256:manifest-def",
+        )
+        client = MagicMock()
+        client.list_artifacts.return_value = [changed]
+        with (
+            patch.object(RegistryService, "_get_ci_repos", return_value=CI_REPOS),
+            patch.object(RegistryService, "_provider", new_callable=PropertyMock, return_value=client),
+        ):
+            result = self.svc.sync_all()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["total"], 1)
+        with self.db.conn() as conn:
+            rows = conn.execute("SELECT * FROM cd_registry_artifacts").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], original["id"])
+        self.assertEqual(rows[0]["digest"], "sha256:def")
+        self.assertEqual(rows[0]["size_bytes"], 2048)
+        self.assertEqual(rows[0]["artifact_id"], 42)
+        self.assertEqual(rows[0]["artifact_digest"], "sha256:manifest-def")
+        self.assertEqual(self.svc.get_artifacts(repo_id)["total"], 1)
+        with patch.object(RegistryService, "_get_ci_repos", return_value=CI_REPOS):
+            self.assertEqual(self.svc.get_repositories()["repositories"][0]["tag_count"], 1)
+
+    def test_successful_empty_snapshot_removes_all_old_tags(self):
+        """完整成功的空列表代表仓库确实没有 tag，应清理旧 artifacts 但保留仓库。"""
+        repo_id = self._seed_one_repo_with_artifact()
+        client = MagicMock()
+        client.list_artifacts.return_value = []
+        with (
+            patch.object(RegistryService, "_get_ci_repos", return_value=CI_REPOS),
+            patch.object(RegistryService, "_provider", new_callable=PropertyMock, return_value=client),
+        ):
+            result = self.svc.sync_all()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["total"], 0)
+        with self.db.conn() as conn:
+            artifact_count = conn.execute("SELECT COUNT(*) AS c FROM cd_registry_artifacts").fetchone()["c"]
+            repo_count = conn.execute("SELECT COUNT(*) AS c FROM cd_registry_repositories").fetchone()["c"]
+        self.assertEqual(artifact_count, 0)
+        self.assertEqual(repo_count, 1)
+        self.assertEqual(self.svc.get_artifacts(repo_id)["total"], 0)
+        with patch.object(RegistryService, "_get_ci_repos", return_value=CI_REPOS):
+            self.assertEqual(self.svc.get_repositories()["repositories"][0]["tag_count"], 0)
+
+    def test_incomplete_snapshot_preserves_old_tags(self):
+        """提供方判定快照不完整时，同步失败且当前记录保持不变。"""
+        self._seed_one_repo_with_artifact()
+        client = MagicMock()
+        client.list_artifacts.side_effect = HarborUnavailableError("镜像 tags 超过同步上限")
+        with (
+            patch.object(RegistryService, "_get_ci_repos", return_value=CI_REPOS),
+            patch.object(RegistryService, "_provider", new_callable=PropertyMock, return_value=client),
+        ):
+            result = self.svc.sync_all()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_key"], "errors.harbor_unavailable")
+        with self.db.conn() as conn:
+            row = conn.execute("SELECT tag, digest FROM cd_registry_artifacts").fetchone()
+        self.assertEqual((row["tag"], row["digest"]), ("v1.0.0", "sha256:abc"))
+
+    def test_sqlite_legacy_duplicate_migration_is_deterministic_and_idempotent(self):
+        """旧 (repo_id,tag,digest) 数据迁移后仅留最新行，唯一索引生效且可重复初始化。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "legacy_registry.db")
+            enable_cd(path)
+            raw = sqlite3.connect(path)
+            try:
+                raw.executescript(
+                    """CREATE TABLE cd_registry_repositories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_name VARCHAR(255) NOT NULL,
+                        repo_name VARCHAR(512) NOT NULL,
+                        UNIQUE(project_name, repo_name)
+                    );
+                    CREATE TABLE cd_registry_artifacts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        repo_id INTEGER,
+                        tag VARCHAR(255),
+                        digest VARCHAR(128),
+                        last_sync TEXT DEFAULT '',
+                        UNIQUE(repo_id, tag, digest)
+                    );
+                    INSERT INTO cd_registry_repositories(id,project_name,repo_name) VALUES (1,'job-a','job-a/app');
+                    INSERT INTO cd_registry_artifacts(repo_id,tag,digest,last_sync)
+                        VALUES (1,'v1','sha256:old','2026-01-01 00:00:00');
+                    INSERT INTO cd_registry_artifacts(repo_id,tag,digest,last_sync)
+                        VALUES (1,'v1','sha256:new','2026-02-01 00:00:00');
+                    """
+                )
+                raw.commit()
+            finally:
+                raw.close()
+
+            try:
+                for _ in range(2):
+                    Database._tables_ensured = False
+                    with Database(path).conn():
+                        pass
+                raw = sqlite3.connect(path)
+                try:
+                    rows = raw.execute("SELECT id, digest FROM cd_registry_artifacts").fetchall()
+                    self.assertEqual(rows, [(2, "sha256:new")])
+                    indexes = {row[1]: row for row in raw.execute("PRAGMA index_list('cd_registry_artifacts')")}
+                    self.assertIn("uk_repo_tag", indexes)
+                    self.assertEqual(indexes["uk_repo_tag"][2], 1)
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        raw.execute(
+                            "INSERT INTO cd_registry_artifacts(repo_id,tag,digest) VALUES (1,'v1','sha256:other')"
+                        )
+                    raw.rollback()
+                finally:
+                    raw.close()
+            finally:
+                Database._tables_ensured = True
+
+    def test_mysql_unique_index_migration_does_not_hide_real_errors(self):
+        """本地 mock 仅验证迁移控制流：先去重；1061 可幂等忽略，其他错误必须上抛。"""
+
+        class FakeConn:
+            def __init__(self, error=None):
+                self.error = error
+                self.statements = []
+                self.committed = False
+
+            def execute(self, sql, params=None):
+                self.statements.append(sql)
+                if sql.startswith("CREATE UNIQUE INDEX uk_repo_tag") and self.error:
+                    raise self.error
+
+            def commit(self):
+                self.committed = True
+
+        db = object.__new__(Database)
+        db._driver = "mysql"
+        failed = FakeConn(RuntimeError("duplicate rows remain"))
+        with self.assertRaisesRegex(RuntimeError, "duplicate rows remain"):
+            db._ensure_mysql_indexes(failed)
+        self.assertTrue(failed.statements[0].lstrip().startswith("DELETE stale FROM"))
+        self.assertFalse(failed.committed)
+
+        duplicate_index = FakeConn(Exception(1061, "Duplicate key name"))
+        db._ensure_mysql_indexes(duplicate_index)
+        self.assertTrue(duplicate_index.committed)
 
     def test_sync_repo_failure_leaves_no_placeholder_row(self):
         """拉取失败不得先建仓库记录:同步失败后界面不能出现"0 Tags"的占位行"""

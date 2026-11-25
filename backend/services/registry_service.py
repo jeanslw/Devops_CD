@@ -145,6 +145,19 @@ class RegistryService:
             logger.error(f"同步 {repo} 失败: {e}")
             return 0
 
+        current: dict[str, dict] = {}
+        for art in raw:
+            if not isinstance(art, dict):
+                raise HarborUnavailableError(f"同步 {repo} 失败：artifact 响应格式错误")
+            tag = art.get("tag")
+            if not tag:
+                continue
+            current[tag] = {
+                **art,
+                "push_time": self._to_mysql_dt(art.get("push_time", "")),
+                "pull_time": self._to_mysql_dt(art.get("pull_time", "")),
+            }
+
         rows = conn.execute(
             "SELECT id FROM cd_registry_repositories WHERE project_name=? AND repo_name=?", (project, repo)
         ).fetchall()
@@ -157,72 +170,63 @@ class RegistryService:
             repo_id = cur.lastrowid
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        count = 0
-        for art in raw:
-            if not art.get("tag"):
-                continue
-            push_time = self._to_mysql_dt(art.get("push_time", ""))
-            pull_time = self._to_mysql_dt(art.get("pull_time", ""))
-            # upsert
-            rows = conn.execute(
-                "SELECT id FROM cd_registry_artifacts WHERE repo_id=? AND tag=? AND digest=?",
-                (repo_id, art["tag"], art["digest"]),
-            ).fetchall()
-            if rows:
+        for art in current.values():
+            values = (
+                repo_id,
+                art["tag"],
+                art.get("digest") or "",
+                art.get("artifact_id") or 0,
+                art.get("artifact_digest") or "",
+                art["size_bytes"],
+                art["push_time"],
+                art["pull_time"],
+                art["scan_status"],
+                art["scan_severity"],
+                art["vuln_critical"],
+                art["vuln_high"],
+                art["vuln_medium"],
+                art["vuln_low"],
+                art["vuln_fixable"],
+                now,
+            )
+            if self._db.driver == "mysql":
                 conn.execute(
-                    """UPDATE cd_registry_artifacts SET size_bytes=?,push_time=?,pull_time=?,
-                    scan_status=?,scan_severity=?,vuln_critical=?,vuln_high=?,vuln_medium=?,
-                    vuln_low=?,vuln_fixable=?,last_sync=?
-                    WHERE id=?""",
-                    (
-                        art["size_bytes"],
-                        push_time,
-                        pull_time,
-                        art["scan_status"],
-                        art["scan_severity"],
-                        art["vuln_critical"],
-                        art["vuln_high"],
-                        art["vuln_medium"],
-                        art["vuln_low"],
-                        art["vuln_fixable"],
-                        now,
-                        rows[0]["id"],
-                    ),
+                    """INSERT INTO cd_registry_artifacts
+                    (repo_id,tag,digest,artifact_id,artifact_digest,size_bytes,push_time,pull_time,
+                     scan_status,scan_severity,vuln_critical,vuln_high,vuln_medium,vuln_low,vuln_fixable,last_sync)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON DUPLICATE KEY UPDATE digest=VALUES(digest),artifact_id=VALUES(artifact_id),
+                    artifact_digest=VALUES(artifact_digest),size_bytes=VALUES(size_bytes),push_time=VALUES(push_time),
+                    pull_time=VALUES(pull_time),scan_status=VALUES(scan_status),scan_severity=VALUES(scan_severity),
+                    vuln_critical=VALUES(vuln_critical),vuln_high=VALUES(vuln_high),vuln_medium=VALUES(vuln_medium),
+                    vuln_low=VALUES(vuln_low),vuln_fixable=VALUES(vuln_fixable),last_sync=VALUES(last_sync)""",
+                    values,
                 )
             else:
                 conn.execute(
                     """INSERT INTO cd_registry_artifacts
-                    (repo_id,tag,digest,size_bytes,push_time,pull_time,
+                    (repo_id,tag,digest,artifact_id,artifact_digest,size_bytes,push_time,pull_time,
                      scan_status,scan_severity,vuln_critical,vuln_high,vuln_medium,vuln_low,vuln_fixable,last_sync)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        repo_id,
-                        art["tag"],
-                        art["digest"],
-                        art["size_bytes"],
-                        push_time,
-                        pull_time,
-                        art["scan_status"],
-                        art["scan_severity"],
-                        art["vuln_critical"],
-                        art["vuln_high"],
-                        art["vuln_medium"],
-                        art["vuln_low"],
-                        art["vuln_fixable"],
-                        now,
-                    ),
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(repo_id,tag) DO UPDATE SET digest=excluded.digest,artifact_id=excluded.artifact_id,
+                    artifact_digest=excluded.artifact_digest,size_bytes=excluded.size_bytes,push_time=excluded.push_time,
+                    pull_time=excluded.pull_time,scan_status=excluded.scan_status,scan_severity=excluded.scan_severity,
+                    vuln_critical=excluded.vuln_critical,vuln_high=excluded.vuln_high,vuln_medium=excluded.vuln_medium,
+                    vuln_low=excluded.vuln_low,vuln_fixable=excluded.vuln_fixable,last_sync=excluded.last_sync""",
+                    values,
                 )
-            count += 1
 
-        current_tags = {art["tag"] for art in raw if art.get("tag")}
+        current_tags = set(current)
         if current_tags:
             placeholders = ",".join("?" for _ in current_tags)
             conn.execute(
                 f"DELETE FROM cd_registry_artifacts WHERE repo_id=? AND tag NOT IN ({placeholders})",  # nosec
                 (repo_id, *current_tags),
             )
+        else:
+            conn.execute("DELETE FROM cd_registry_artifacts WHERE repo_id=?", (repo_id,))
 
-        return count
+        return len(current)
 
     def sync_all(self) -> dict:
         """全量同步所有 CI 映射的仓库"""

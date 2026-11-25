@@ -7,6 +7,7 @@ import ipaddress
 import time
 import urllib.parse
 from datetime import datetime, timezone
+from string import Formatter
 from urllib.parse import urlparse
 
 from backend.config import settings
@@ -85,6 +86,59 @@ _DEFAULT_TEMPLATES = {
     ),
 }
 
+BOT_TEMPLATE_FIELDS = frozenset({"time", "project", "tag", "status", "image", "target", "mode"})
+
+ALERT_TEMPLATE_FIELDS = frozenset(
+    {
+        "time",
+        "server",
+        "host",
+        "resource_name",
+        "value",
+        "threshold",
+        "name",
+        "type_name",
+        "resource",
+        "unit",
+        "raw",
+        "entity",
+        "metric",
+    }
+)
+
+
+def _template_field_roots(template: str) -> set:
+    roots = set()
+    for _, field_name, format_spec, _ in Formatter().parse(template):
+        if field_name is None:
+            continue
+        if not field_name:
+            raise ValueError("empty field name")
+        roots.add(field_name.split(".")[0].split("[")[0])
+        if format_spec:
+            roots |= _template_field_roots(format_spec)
+    return roots
+
+
+def is_valid_template(template: str, fields) -> bool:
+    if not template or not template.strip():
+        return True
+    try:
+        roots = _template_field_roots(template)
+    except ValueError:
+        return False
+    return roots <= set(fields)
+
+
+def render_template(template: str, values: dict, fallback: str) -> str:
+    if not template or not template.strip():
+        return fallback
+    try:
+        return template.format(**values)
+    except Exception:
+        return fallback
+
+
 # ── 中英文状态/模式映射 ──
 _LANG_MAP = {
     "zh": {
@@ -144,20 +198,22 @@ def notify_deploy(
 
     with db.conn() as conn:
         bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
-        if not bot:
-            return
-        tpl_raw = bot.get("template", "")
-        tpl = (tpl_raw or "").strip() or _DEFAULT_TEMPLATES.get(lang, _DEFAULT_TEMPLATES["en"]).strip()
-        msg = tpl.format(
-            time=now,
-            project=project_key,
-            tag=tag,
-            status=display_status,
-            image=image,
-            target=target_str,
-            mode=display_mode,
-        )
-        send_webhook(bot["webhook_url"], msg, bot.get("type", ""))
+
+    if not bot:
+        return
+    bot = dict(bot)
+    values = {
+        "time": now,
+        "project": project_key,
+        "tag": tag,
+        "status": display_status,
+        "image": image,
+        "target": target_str,
+        "mode": display_mode,
+    }
+    default_msg = _DEFAULT_TEMPLATES.get(lang, _DEFAULT_TEMPLATES["en"]).format(**values)
+    msg = render_template(bot.get("template", ""), values, default_msg)
+    send_webhook(bot["webhook_url"], msg, bot.get("type", ""))
 
 
 def notify_approval(db, bot_id: int, message: str):
@@ -166,6 +222,6 @@ def notify_approval(db, bot_id: int, message: str):
         return
     with db.conn() as conn:
         bot = conn.execute("SELECT * FROM cd_bots WHERE id=?", (bot_id,)).fetchone()
-        if not bot:
-            return
-        send_webhook(bot["webhook_url"], message, bot.get("type", ""))
+    if not bot:
+        return
+    send_webhook(bot["webhook_url"], message, bot.get("type", ""))

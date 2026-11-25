@@ -16,7 +16,7 @@
 import json
 import logging
 import threading
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from datetime import datetime
 
 from backend.time_utils import utc_now_str
@@ -33,6 +33,7 @@ from backend.deploy_run import (
 from backend.exceptions import AppException, ConflictError, NotFoundError, ValidationError
 from backend.services.ci_service import CiService
 from backend.services.deploy_executor import execute_from_params
+from backend.services.deploy_service import resolve_target_servers
 from backend.services.notification import notify_approval
 from backend.services.registry_provider import registry_base_url
 
@@ -115,30 +116,18 @@ def get_rule(db, project: str) -> dict | None:
     return match_rule(list_all_rules(db), project)
 
 
-def resolve_target_envs(db, server_ids: str = "") -> set[str]:
-    """解析目标服务器的环境标签(cd_servers.tags,逗号分隔).server_ids 空 → 全部服务器.
-
-    fail-closed:server_ids 非空但解析不出任何合法 id 时抛 ValidationError,
-    不静默返回空集合(空交集会使 require_envs 规则失效,审批被静默跳过).
-    """
-    server_ids = (server_ids or "").strip()
-    if not server_ids:
-        with db.conn() as conn:
-            rows = conn.execute("SELECT tags FROM cd_servers").fetchall()
-    else:
-        ids = [int(s) for s in server_ids.split(",") if s.strip().isdigit()]
-        if not ids:
-            raise ValidationError(f"server_ids 无效: {server_ids}", error_key="errors.deploy_validation")
-        ph = ",".join("?" * len(ids))
-        with db.conn() as conn:
-            rows = conn.execute(f"SELECT tags FROM cd_servers WHERE id IN ({ph})", ids).fetchall()  # nosec
+def resolve_target_envs(db, server_ids: str = "", deploy_type: str = "") -> set[str]:
+    """解析严格校验后的目标环境标签;非法、缺失或类型不符的 ID 一律拒绝."""
+    rows = resolve_target_servers(db, server_ids, deploy_type)
     envs: set[str] = set()
-    for r in rows:
-        envs.update(_parse_csv(r.get("tags") or ""))
+    for row in rows:
+        envs.update(_parse_csv(row.get("tags") or ""))
     return envs
 
 
-def approval_required(db, project: str, server_ids: str = "", for_rollback: bool = False) -> dict | None:
+def approval_required(
+    db, project: str, server_ids: str = "", for_rollback: bool = False, deploy_type: str = ""
+) -> dict | None:
     """判断部署是否需要审批,需要则返回规则 dict,否则 None.
 
     require_envs 为空 → 所有部署都需审批;否则仅目标环境命中 require_envs 时需审批.
@@ -151,7 +140,7 @@ def approval_required(db, project: str, server_ids: str = "", for_rollback: bool
     require_envs = set(_parse_csv(rule.get("require_envs") or ""))
     if not require_envs:
         return rule
-    envs = resolve_target_envs(db, server_ids)
+    envs = resolve_target_envs(db, server_ids, deploy_type)
     if require_envs & envs:
         return rule
     return None
@@ -161,7 +150,19 @@ def approval_required(db, project: str, server_ids: str = "", for_rollback: bool
 
 
 def create_approval(
-    db, *, project, tag, image, deploy_type, envs, params_json, requester, scheduled_at="", status=PENDING, approver=""
+    db,
+    *,
+    project,
+    tag,
+    image,
+    deploy_type,
+    envs,
+    params_json,
+    requester,
+    scheduled_at="",
+    status=PENDING,
+    approver="",
+    conn=None,
 ) -> int:
     """创建审批单,返回审批单 id.
 
@@ -169,8 +170,8 @@ def create_approval(
     无审批规则但指定了定时时,调用方传入 status=APPROVED 直接写入一张'已批准'定时单
     (无人工审批人,approver 留空),由后台调度器到点自动执行.
     """
-    with db.conn() as conn:
-        cur = conn.execute(
+    with nullcontext(conn) if conn is not None else db.conn() as active_conn:
+        cur = active_conn.execute(
             "INSERT INTO cd_approvals "
             "(project, tag, image, deploy_type, envs, params_json, status, requester, approver, scheduled_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -419,37 +420,47 @@ def gate_deploy(
       定时发布在无审批规则的项目同样生效.
     """
     sched = _parse_scheduled_at(scheduled_at)
-    rule = approval_required(db, project, server_ids, for_rollback=for_rollback)
+    params = dict(params or {})
+    targets = resolve_target_servers(db, server_ids, deploy_type)
+    if targets:
+        server_ids = ",".join(str(row["id"]) for row in targets)
+        if deploy_type.startswith("k8s/"):
+            params["cluster_id"] = targets[0]["id"]
+        else:
+            params["server_ids"] = server_ids
+    rule = approval_required(db, project, server_ids, for_rollback=for_rollback, deploy_type=deploy_type)
     if not rule and not sched:
         return None
     image = _resolve_display_image(db, project, tag)
-    envs = resolve_target_envs(db, server_ids)
+    envs = resolve_target_envs(db, server_ids, deploy_type)
     params_json = json.dumps(params, ensure_ascii=False)
-    approval_id = create_approval(
-        db,
-        project=project,
-        tag=tag,
-        image=image,
-        deploy_type=deploy_type,
-        envs=envs,
-        params_json=params_json,
-        requester=requester,
-        scheduled_at=sched,
-        status=PENDING if rule else APPROVED,
-    )
-
-    create_pending_deploy_record(
-        db,
-        deploy_type=deploy_type,
-        project=project,
-        tag=tag,
-        image=image,
-        triggered_by=requester,
-        deploy_note=str((params or {}).get("deploy_note") or ""),
-        params_json=params_json,
-        rollback_type=str((params or {}).get("rollback_type") or "manual"),
-        approval_id=approval_id,
-    )
+    with db.conn() as conn:
+        approval_id = create_approval(
+            db,
+            project=project,
+            tag=tag,
+            image=image,
+            deploy_type=deploy_type,
+            envs=envs,
+            params_json=params_json,
+            requester=requester,
+            scheduled_at=sched,
+            status=PENDING if rule else APPROVED,
+            conn=conn,
+        )
+        create_pending_deploy_record(
+            db,
+            deploy_type=deploy_type,
+            project=project,
+            tag=tag,
+            image=image,
+            triggered_by=requester,
+            deploy_note=str(params.get("deploy_note") or ""),
+            params_json=params_json,
+            rollback_type=str(params.get("rollback_type") or "manual"),
+            approval_id=approval_id,
+            conn=conn,
+        )
     if rule:
         _notify_request(db, rule, project, tag, requester, envs, lang)
         message = "部署已提交审批" + (f"，定时 {sched} 自动执行" if sched else "")

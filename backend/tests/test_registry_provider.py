@@ -303,6 +303,33 @@ class TestRegistryV2Provider(unittest.TestCase):
         self.assertEqual(arts[0]["digest"], "sha256:1")
         self.assertEqual(self.ci.get_json.call_count, 1)
 
+    def test_list_artifacts_rejects_page_limit_truncation(self):
+        """超过页数上限必须失败，不能把截断结果当成完整快照交给同步清理。"""
+        self.ci.get_json.return_value = {"items": ["v1"], "total_pages": self.provider.TAGS_MAX_PAGES + 1}
+        with self.assertRaisesRegex(RegistryUnavailableError, "超过同步上限"):
+            self.provider.list_artifacts("a/b")
+        self.assertEqual(self.ci.get_json.call_count, 1)
+
+    def test_list_artifacts_rejects_invalid_pagination_metadata(self):
+        for value in ("invalid", 0, -1):
+            with self.subTest(total_pages=value):
+                self.ci.get_json.return_value = {"items": ["v1"], "total_pages": value}
+                with self.assertRaisesRegex(RegistryUnavailableError, "分页元数据错误"):
+                    self.provider.list_artifacts("a/b")
+
+    def test_list_artifacts_rejects_invalid_later_page(self):
+        self.ci.get_json.side_effect = [
+            {"items": ["v1"], "total_pages": 2},
+            {"unexpected": []},
+        ]
+        with self.assertRaisesRegex(RegistryUnavailableError, "第 2 页响应格式错误"):
+            self.provider.list_artifacts("a/b")
+
+    def test_list_artifacts_rejects_invalid_first_page(self):
+        self.ci.get_json.return_value = {"unexpected": []}
+        with self.assertRaisesRegex(RegistryUnavailableError, "响应格式错误"):
+            self.provider.list_artifacts("a/b")
+
     def test_list_artifacts_dict_tags(self):
         self.ci.get_json.return_value = [{"name": "v1"}, {"name": "v2"}]
         arts = self.provider.list_artifacts("a/b")

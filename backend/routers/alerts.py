@@ -5,8 +5,9 @@ from pydantic import BaseModel
 
 from backend.auth import get_db, require_perm, verify_token
 from backend.database import Database
-from backend.exceptions import NotFoundError
+from backend.exceptions import NotFoundError, ValidationError
 from backend.responses import ok
+from backend.services.notification import ALERT_TEMPLATE_FIELDS, is_valid_template
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -42,6 +43,8 @@ def create_alert(
     _user: dict = Depends(require_perm("cd.monitor.alert")),
 ):
     """创建告警规则"""
+    if not is_valid_template(req.template, ALERT_TEMPLATE_FIELDS):
+        raise ValidationError("告警模板格式无效", error_key="errors.template_invalid")
     with db.conn() as conn:
         conn.execute(
             "INSERT INTO cd_alert_rules (name, target_type, resource_type, server_ids, threshold, bot_id, template, enabled, cooldown_minutes, duration_minutes) "
@@ -70,6 +73,8 @@ def update_alert(
     _user: dict = Depends(require_perm("cd.monitor.alert")),
 ):
     """更新告警规则"""
+    if not is_valid_template(req.template, ALERT_TEMPLATE_FIELDS):
+        raise ValidationError("告警模板格式无效", error_key="errors.template_invalid")
     with db.conn() as conn:
         existing = conn.execute("SELECT id FROM cd_alert_rules WHERE id=?", (rule_id,)).fetchone()
         if not existing:
