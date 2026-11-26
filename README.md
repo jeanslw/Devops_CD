@@ -5,7 +5,7 @@ A FastAPI-based continuous deployment service that works alongside [Devops-Glue 
 [![Releases](https://img.shields.io/github/v/release/jeanslw/Devops_CD?style=flat-square&label=Release)](https://github.com/jeanslw/devops_cd/releases/latest)
 [![CI Pipeline](https://github.com/jeanslw/Devops_CD/actions/workflows/ci.yml/badge.svg)](https://github.com/jeanslw/Devops_CD/actions/workflows/ci.yml)
 [![Security Check](https://github.com/jeanslw/Devops_CD/actions/workflows/security.yml/badge.svg)](https://github.com/jeanslw/Devops_CD/actions/workflows/security.yml)
-[![Last Commit](https://img.shields.io/github/last-commit/jeanslw/Devops-Glue?style=flat-square&label=Last%20Commit)](https://github.com/jeanslw/Devops_CD/commits/main/)
+[![Last Commit](https://img.shields.io/github/last-commit/jeanslw/Devops_CD?style=flat-square&label=Last%20Commit)](https://github.com/jeanslw/Devops_CD/commits/main/)
 [![Docker Tag](https://img.shields.io/docker/v/jeanslw/devops-cd/latest?label=version&logo=docker)](https://hub.docker.com/r/jeanslw/devops-cd/tags)
 [![Docker Pulls](https://img.shields.io/docker/pulls/jeanslw/devops-cd)](https://hub.docker.com/r/jeanslw/devops-cd)
 [![Paired](https://img.shields.io/badge/relyon-Devops_Glue-green?logo=php)](https://github.com/jeanslw/devops-glue)
